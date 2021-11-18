@@ -1,0 +1,10 @@
+[flake8]
+ignore=E203,W503
+max-line-length = 88
+select = B,B9,BLK,C,E,F,I,S,W
+max-complexity = 10
+application-import-names = meta_memcache,tests
+import-order-style = cryptography
+per-file-ignores =
+    __init__.py:F401
+    tests/*:S101,S403

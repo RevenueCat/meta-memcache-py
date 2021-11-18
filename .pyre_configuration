@@ -1,0 +1,11 @@
+{
+  "source_directories": [
+    "src"
+  ],
+  "exclude": [
+    "uhashring.*"
+  ],
+  "search_path": [
+    {"site-package": "uhashring"}
+  ]
+}

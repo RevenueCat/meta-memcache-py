@@ -1,0 +1,17 @@
+[[package]]
+name = "uhashring"
+version = "2.1"
+description = "Full featured consistent hashing python library compatible with ketama."
+category = "main"
+optional = false
+python-versions = ">=3.6"
+
+[metadata]
+lock-version = "1.1"
+python-versions = "^3.8"
+content-hash = "2360286d9791ea2e9b8cb018cf7a5ea48bd0f8dba04fc521ba427f68f5ca9daa"
+
+[metadata.files]
+uhashring = [
+    {file = "uhashring-2.1.tar.gz", hash = "sha256:b21340d0d32497a67f34f5177a64908115fdc23264ed87fa7d1eca79ef9641fa"},
+]
