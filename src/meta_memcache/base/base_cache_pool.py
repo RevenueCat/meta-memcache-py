@@ -36,7 +36,7 @@ class BaseCachePool(ABC):
 
     @abstractmethod
     def _get_pool(self, key: Key) -> ConnectionPool:
-        pass
+        ...
 
     def _encode_key(self, key: Key) -> Tuple[bytes, bool]:
         if key.is_unicode or len(key.key) > MAX_KEY_SIZE:
@@ -81,7 +81,7 @@ class BaseCachePool(ABC):
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
     ) -> Union[Miss, Value, Success, NotStored, Conflict]:
         """
-        Gets a connection for key key and executes the command
+        Gets a connection for the key and executes the command
 
         You can override to implement retries, having
         a fallback pool, etc.
@@ -154,9 +154,7 @@ class BaseCachePool(ABC):
             token_flags=token_flags,
         )
         if not isinstance(result, (Miss, Value, Success)):
-            raise MemcacheError(
-                f"Unexpected response for Meta Delete command: {result}"
-            )
+            raise MemcacheError(f"Unexpected response for Meta Get command: {result}")
         return result
 
     def ms(
@@ -182,9 +180,7 @@ class BaseCachePool(ABC):
             token_flags=token_flags,
         )
         if not isinstance(result, (Success, NotStored, Conflict, Miss)):
-            raise MemcacheError(
-                f"Unexpected response for Meta Delete command: {result}"
-            )
+            raise MemcacheError(f"Unexpected response for Meta Set command: {result}")
         return result
 
     def md(

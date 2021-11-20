@@ -174,7 +174,6 @@ class MemcacheSocket:
                 prev = i + 1
         if prev <= i:
             chunks.append(header[prev:])
-        # print([bytes(c) for c in chunks])
         return chunks
 
     def _get_header(self) -> List[memoryview]:

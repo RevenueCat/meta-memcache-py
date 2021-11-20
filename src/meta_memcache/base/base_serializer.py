@@ -15,8 +15,8 @@ class BaseSerializer(ABC):
         self,
         value: Any,  # pyre-ignore[2]
     ) -> EncodedValue:
-        pass
+        ...
 
     @abstractmethod
     def unserialize(self, data: Blob, encoding_id: int) -> Any:  # pyre-ignore[3]
-        pass
+        ...

@@ -120,15 +120,6 @@ class CachePool(BaseCachePool):
         i = 0
         while True:
             if i > 0:
-                print(
-                    "sleep",
-                    min(
-                        lease_policy.miss_max_retry_wait,
-                        lease_policy.miss_retry_wait
-                        * pow(lease_policy.wait_backoff_factor, i - 1),
-                    ),
-                )
-                print(time.time)
                 time.sleep(
                     min(
                         lease_policy.miss_max_retry_wait,
@@ -139,7 +130,6 @@ class CachePool(BaseCachePool):
             i += 1
 
             result = self.mg(key, flags=flags, int_flags=int_flags)
-            print(result)
 
             if isinstance(result, Value):
                 # It is a hit.
