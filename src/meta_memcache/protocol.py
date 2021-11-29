@@ -15,10 +15,10 @@ class Key(NamedTuple):
 
 
 class MetaCommand(Enum):
-    MG = b"mg"  # Meta Get
-    MS = b"ms"  # Meta Set
-    MD = b"md"  # Meta Delete
-    MA = b"ma"  # Meta Arithmetic
+    META_GET = b"mg"  # Meta Get
+    META_SET = b"ms"  # Meta Set
+    META_DELETE = b"md"  # Meta Delete
+    META_ARITHMETIC = b"ma"  # Meta Arithmetic
 
 
 class Flag(Enum):

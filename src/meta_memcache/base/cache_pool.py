@@ -30,7 +30,7 @@ class CachePool(BaseCachePool):
             if stale_policy and stale_policy.mark_stale_on_cas_mismatch:
                 flags.add(Flag.MARK_STALE)
 
-        result = self.ms(
+        result = self.meta_set(
             key=key,
             value=value,
             ttl=ttl,
@@ -57,7 +57,7 @@ class CachePool(BaseCachePool):
             flags.add(Flag.MARK_STALE)
             int_flags[IntFlag.CACHE_TTL] = stale_policy.mark_stale_on_deletion_ttl
 
-        result = self.md(
+        result = self.meta_delete(
             key=key,
             flags=flags,
             int_flags=int_flags,
@@ -70,7 +70,7 @@ class CachePool(BaseCachePool):
         int_flags = {IntFlag.CACHE_TTL: ttl}
         if no_reply:
             flags.add(Flag.NOREPLY)
-        result = self.mg(key, flags=flags, int_flags=int_flags)
+        result = self.meta_get(key, flags=flags, int_flags=int_flags)
 
         return isinstance(result, Success)
 
@@ -129,7 +129,7 @@ class CachePool(BaseCachePool):
                 )
             i += 1
 
-            result = self.mg(key, flags=flags, int_flags=int_flags)
+            result = self.meta_get(key, flags=flags, int_flags=int_flags)
 
             if isinstance(result, Value):
                 # It is a hit.
@@ -189,7 +189,7 @@ class CachePool(BaseCachePool):
         if touch_ttl is not None and touch_ttl >= 0:
             int_flags[IntFlag.CACHE_TTL] = touch_ttl
 
-        result = self.mg(key, flags=flags, int_flags=int_flags)
+        result = self.meta_get(key, flags=flags, int_flags=int_flags)
         if isinstance(result, Value):
             # It is a hit
             cas = result.int_flags.get(IntFlag.CAS)
@@ -281,7 +281,7 @@ class CachePool(BaseCachePool):
             no_reply=no_reply,
             cas=cas,
         )
-        result = self.ma(
+        result = self.meta_arithmetic(
             key=key, flags=flags, int_flags=int_flags, token_flags=token_flags
         )
         return isinstance(result, Success)
@@ -304,7 +304,7 @@ class CachePool(BaseCachePool):
         )
         int_flags[IntFlag.MA_INITIAL_VALUE] = abs(initial_value)
         int_flags[IntFlag.MISS_LEASE_TTL] = initial_ttl
-        result = self.ma(
+        result = self.meta_arithmetic(
             key=key, flags=flags, int_flags=int_flags, token_flags=token_flags
         )
         return isinstance(result, Success)
@@ -322,7 +322,7 @@ class CachePool(BaseCachePool):
             refresh_ttl=refresh_ttl,
             cas=cas,
         )
-        result = self.ma(
+        result = self.meta_arithmetic(
             key=key, flags=flags, int_flags=int_flags, token_flags=token_flags
         )
         if isinstance(result, Value):
@@ -346,7 +346,7 @@ class CachePool(BaseCachePool):
         )
         int_flags[IntFlag.MA_INITIAL_VALUE] = abs(initial_value)
         int_flags[IntFlag.MISS_LEASE_TTL] = initial_ttl
-        result = self.ma(
+        result = self.meta_arithmetic(
             key=key, flags=flags, int_flags=int_flags, token_flags=token_flags
         )
         if isinstance(result, Value):

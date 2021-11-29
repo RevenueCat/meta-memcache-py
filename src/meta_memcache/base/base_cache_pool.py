@@ -99,7 +99,7 @@ class BaseCachePool(ABC):
                 )
         except MemcacheServerError:
             if self._write_failure_tracker:
-                if command in (MetaCommand.MD, MetaCommand.MS):
+                if command in (MetaCommand.META_DELETE, MetaCommand.META_SET):
                     self._write_failure_tracker.add_key(key)
             raise
 
@@ -139,7 +139,7 @@ class BaseCachePool(ABC):
                 result.value = self._serializer.unserialize(data, encoding_id)
         return result
 
-    def mg(
+    def meta_get(
         self,
         key: Key,
         flags: Optional[Set[Flag]] = None,
@@ -147,7 +147,7 @@ class BaseCachePool(ABC):
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
     ) -> Union[Miss, Value, Success]:
         result = self._exec(
-            command=MetaCommand.MG,
+            command=MetaCommand.META_GET,
             key=key,
             flags=flags,
             int_flags=int_flags,
@@ -157,7 +157,7 @@ class BaseCachePool(ABC):
             raise MemcacheError(f"Unexpected response for Meta Get command: {result}")
         return result
 
-    def ms(
+    def meta_set(
         self,
         key: Key,
         value: Any,  # pyre-ignore[2]
@@ -172,7 +172,7 @@ class BaseCachePool(ABC):
         int_flags[IntFlag.SET_CLIENT_FLAG] = encoded_value.encoding_id
 
         result = self._exec(
-            command=MetaCommand.MS,
+            command=MetaCommand.META_SET,
             key=key,
             value=encoded_value.data,
             flags=flags,
@@ -183,7 +183,7 @@ class BaseCachePool(ABC):
             raise MemcacheError(f"Unexpected response for Meta Set command: {result}")
         return result
 
-    def md(
+    def meta_delete(
         self,
         key: Key,
         flags: Optional[Set[Flag]] = None,
@@ -191,7 +191,7 @@ class BaseCachePool(ABC):
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
     ) -> Union[Success, NotStored, Conflict, Miss]:
         result = self._exec(
-            command=MetaCommand.MD,
+            command=MetaCommand.META_DELETE,
             key=key,
             flags=flags,
             int_flags=int_flags,
@@ -203,7 +203,7 @@ class BaseCachePool(ABC):
             )
         return result
 
-    def ma(
+    def meta_arithmetic(
         self,
         key: Key,
         flags: Optional[Set[Flag]] = None,
@@ -211,7 +211,7 @@ class BaseCachePool(ABC):
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
     ) -> Union[Success, NotStored, Conflict, Miss, Value]:
         result = self._exec(
-            command=MetaCommand.MA,
+            command=MetaCommand.META_ARITHMETIC,
             key=key,
             flags=flags,
             int_flags=int_flags,
