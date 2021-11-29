@@ -691,3 +691,70 @@ def test_write_failure_tracker(
         assert "uh-oh" in str(e)
     write_failure_tracker.add_key.assert_called_once_with(Key("foo"))
     write_failure_tracker.add_key.reset_mock()
+
+
+def test_delta_cmd(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> None:
+    memcache_socket.get_response.return_value = Miss()
+
+    cache_pool.delta(key=Key("foo"), delta=1, no_reply=True)
+    memcache_socket.sendall.assert_called_once_with(b"ma foo D1 q\r\n")
+    memcache_socket.sendall.reset_mock()
+
+    cache_pool.delta(key=Key("foo"), delta=1, refresh_ttl=60, no_reply=True)
+    memcache_socket.sendall.assert_called_once_with(b"ma foo D1 T60 q\r\n")
+    memcache_socket.sendall.reset_mock()
+
+    cache_pool.delta(key=Key("foo"), delta=-2, no_reply=True)
+    memcache_socket.sendall.assert_called_once_with(b"ma foo D2 M- q\r\n")
+    memcache_socket.sendall.reset_mock()
+
+    cache_pool.delta_initialize(
+        key=Key("foo"),
+        delta=1,
+        initial_value=10,
+        initial_ttl=60,
+        no_reply=True,
+        cas=123,
+    )
+    memcache_socket.sendall.assert_called_once_with(b"ma foo D1 J10 N60 c123 q\r\n")
+    memcache_socket.sendall.reset_mock()
+
+    memcache_socket.get_response.assert_not_called()
+
+    result = cache_pool.delta(key=Key("foo"), delta=1)
+    assert result is False
+    memcache_socket.sendall.assert_called_once_with(b"ma foo D1\r\n")
+    memcache_socket.sendall.reset_mock()
+    memcache_socket.get_response.reset_mock()
+
+    result = cache_pool.delta_and_get(key=Key("foo"), delta=1)
+    assert result is None
+    memcache_socket.sendall.assert_called_once_with(b"ma foo D1 v\r\n")
+    memcache_socket.sendall.reset_mock()
+    memcache_socket.get_response.reset_mock()
+
+    result = cache_pool.delta_initialize_and_get(
+        key=Key("foo"), delta=1, initial_value=0, initial_ttl=60
+    )
+    assert result is None
+    memcache_socket.sendall.assert_called_once_with(b"ma foo D1 J0 N60 v\r\n")
+    memcache_socket.sendall.reset_mock()
+    memcache_socket.get_response.reset_mock()
+
+    memcache_socket.get_response.return_value = Success()
+
+    result = cache_pool.delta(key=Key("foo"), delta=1)
+    assert result is True
+    memcache_socket.sendall.assert_called_once_with(b"ma foo D1\r\n")
+    memcache_socket.sendall.reset_mock()
+    memcache_socket.get_response.reset_mock()
+
+    memcache_socket.get_response.return_value = Value(size=2)
+    memcache_socket.get_value.return_value = b"10"
+
+    result = cache_pool.delta_and_get(key=Key("foo"), delta=1)
+    assert result == 10
+    memcache_socket.sendall.assert_called_once_with(b"ma foo D1 v\r\n")
+    memcache_socket.sendall.reset_mock()
+    memcache_socket.get_response.reset_mock()
+    memcache_socket.get_value.reset_mock()

@@ -74,7 +74,7 @@ class CachePool(BaseCachePool):
 
         return isinstance(result, Success)
 
-    # pyre-ignore[3]
+    # pyre-ignore[3]  Yeah, we return 'Any'
     def get_or_lease(
         self,
         key: Key,
@@ -90,7 +90,7 @@ class CachePool(BaseCachePool):
         )
         return value
 
-    # pyre-ignore[3]
+    # pyre-ignore[3]  Yeah, we return 'Any'
     def get_or_lease_cas(
         self,
         key: Key,
@@ -156,7 +156,7 @@ class CachePool(BaseCachePool):
                 # because on miss a lease empty value is generated
                 raise MemcacheError("Unexpected response")
 
-    # pyre-ignore[3]
+    # pyre-ignore[3]  Yeah, we return 'Any'
     def get(
         self,
         key: Key,
@@ -168,7 +168,7 @@ class CachePool(BaseCachePool):
         )
         return value
 
-    # pyre-ignore[3]
+    # pyre-ignore[3]  Yeah, we return 'Any'
     def get_cas(
         self,
         key: Key,
@@ -326,7 +326,7 @@ class CachePool(BaseCachePool):
             key=key, flags=flags, int_flags=int_flags, token_flags=token_flags
         )
         if isinstance(result, Value):
-            return result.value
+            return int(result.value)
         return None
 
     def delta_initialize_and_get(
@@ -350,5 +350,5 @@ class CachePool(BaseCachePool):
             key=key, flags=flags, int_flags=int_flags, token_flags=token_flags
         )
         if isinstance(result, Value):
-            return result.value
+            return int(result.value)
         return None
