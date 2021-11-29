@@ -203,4 +203,22 @@ class BaseCachePool(ABC):
             )
         return result
 
-    # TODO: Implement Meta Arithmetic
+    def ma(
+        self,
+        key: Key,
+        flags: Optional[Set[Flag]] = None,
+        int_flags: Optional[Dict[IntFlag, int]] = None,
+        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+    ) -> Union[Success, NotStored, Conflict, Miss, Value]:
+        result = self._exec(
+            command=MetaCommand.MA,
+            key=key,
+            flags=flags,
+            int_flags=int_flags,
+            token_flags=token_flags,
+        )
+        if not isinstance(result, (Success, NotStored, Conflict, Miss, Value)):
+            raise MemcacheError(
+                f"Unexpected response for Meta Delete command: {result}"
+            )
+        return result

@@ -18,6 +18,7 @@ class MetaCommand(Enum):
     MG = b"mg"  # Meta Get
     MS = b"ms"  # Meta Set
     MD = b"md"  # Meta Delete
+    MA = b"ma"  # Meta Arithmetic
 
 
 class Flag(Enum):
@@ -47,12 +48,15 @@ class IntFlag(Enum):
     SET_CLIENT_FLAG = b"F"
     LAST_READ_AGE = b"l"
     HIT_AFTER_WRITE = b"h"
+    MA_INITIAL_VALUE = b"J"
+    MA_DELTA_VALUE = b"D"
     CAS = b"c"
 
 
 class TokenFlag(Enum):
     OPAQUE = b"O"
     KEY = b"k"
+    MA_MODE = b"M"  # mode switch. I or + / D or - for incr / decr
 
 
 # Store maps of byte values (int) to enum value

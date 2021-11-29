@@ -1,10 +1,10 @@
 import time
-from typing import Any, Optional, Tuple, Type, TypeVar
+from typing import Any, Dict, Optional, Set, Tuple, Type, TypeVar
 
 from meta_memcache.base.base_cache_pool import BaseCachePool
 from meta_memcache.configuration import LeasePolicy, RecachePolicy, StalePolicy
 from meta_memcache.errors import MemcacheError
-from meta_memcache.protocol import Flag, IntFlag, Key, Miss, Success, Value
+from meta_memcache.protocol import Flag, IntFlag, Key, Miss, Success, TokenFlag, Value
 
 T = TypeVar("T")
 
@@ -239,3 +239,116 @@ class CachePool(BaseCachePool):
             else:
                 value = None
         return value, cas
+
+    def _get_delta_flags(
+        self,
+        delta: int,
+        refresh_ttl: Optional[int] = None,
+        no_reply: bool = False,
+        cas: Optional[int] = None,
+        return_value: bool = False,
+    ) -> Tuple[Set[Flag], Dict[IntFlag, int], Dict[TokenFlag, bytes]]:
+        flags = set()
+        int_flags = {
+            IntFlag.MA_DELTA_VALUE: abs(delta),
+        }
+        token_flags = {}
+
+        if return_value:
+            flags.add(Flag.RETURN_VALUE)
+        if no_reply:
+            flags.add(Flag.NOREPLY)
+        if refresh_ttl is not None:
+            int_flags[IntFlag.CACHE_TTL] = refresh_ttl
+        if cas is not None:
+            int_flags[IntFlag.CAS] = cas
+        if delta < 0:
+            token_flags[TokenFlag.MA_MODE] = b"-"
+
+        return flags, int_flags, token_flags
+
+    def delta(
+        self,
+        key: Key,
+        delta: int,
+        refresh_ttl: Optional[int] = None,
+        no_reply: bool = False,
+        cas: Optional[int] = None,
+    ) -> bool:
+        flags, int_flags, token_flags = self._get_delta_flags(
+            delta=delta,
+            refresh_ttl=refresh_ttl,
+            no_reply=no_reply,
+            cas=cas,
+        )
+        result = self.ma(
+            key=key, flags=flags, int_flags=int_flags, token_flags=token_flags
+        )
+        return isinstance(result, Success)
+
+    def delta_initialize(
+        self,
+        key: Key,
+        delta: int,
+        initial_value: int,
+        initial_ttl: int,
+        refresh_ttl: Optional[int] = None,
+        no_reply: bool = False,
+        cas: Optional[int] = None,
+    ) -> bool:
+        flags, int_flags, token_flags = self._get_delta_flags(
+            delta=delta,
+            refresh_ttl=refresh_ttl,
+            no_reply=no_reply,
+            cas=cas,
+        )
+        int_flags[IntFlag.MA_INITIAL_VALUE] = abs(initial_value)
+        int_flags[IntFlag.MISS_LEASE_TTL] = initial_ttl
+        result = self.ma(
+            key=key, flags=flags, int_flags=int_flags, token_flags=token_flags
+        )
+        return isinstance(result, Success)
+
+    def delta_and_get(
+        self,
+        key: Key,
+        delta: int,
+        refresh_ttl: Optional[int] = None,
+        cas: Optional[int] = None,
+    ) -> Optional[int]:
+        flags, int_flags, token_flags = self._get_delta_flags(
+            return_value=True,
+            delta=delta,
+            refresh_ttl=refresh_ttl,
+            cas=cas,
+        )
+        result = self.ma(
+            key=key, flags=flags, int_flags=int_flags, token_flags=token_flags
+        )
+        if isinstance(result, Value):
+            return result.value
+        return None
+
+    def delta_initialize_and_get(
+        self,
+        key: Key,
+        delta: int,
+        initial_value: int,
+        initial_ttl: int,
+        refresh_ttl: Optional[int] = None,
+        cas: Optional[int] = None,
+    ) -> Optional[int]:
+        flags, int_flags, token_flags = self._get_delta_flags(
+            return_value=True,
+            delta=delta,
+            refresh_ttl=refresh_ttl,
+            cas=cas,
+        )
+        int_flags[IntFlag.MA_INITIAL_VALUE] = abs(initial_value)
+        int_flags[IntFlag.MISS_LEASE_TTL] = initial_ttl
+        result = self.ma(
+            key=key, flags=flags, int_flags=int_flags, token_flags=token_flags
+        )
+        if isinstance(result, Value):
+            return result.value
+        return None
