@@ -60,21 +60,21 @@ class MemcacheSocket:
         self._buf = bytearray(self._buffer_size)
         self._buf_view = memoryview(self._buf)
 
-    def set_socket(self, c: socket.socket) -> None:
+    def set_socket(self, conn: socket.socket) -> None:
         """
         This replaces the internal socket and resets the buffer
         """
-        self._c = c
+        self._conn = conn
         self._pos = 0
         self._read = 0
 
     def close(self) -> None:
-        self._c.close()
+        self._conn.close()
         self._pos = 0
         self._read = 0
 
     def _recv_info_buffer(self) -> int:
-        read = self._c.recv_into(self._buf_view[self._read :])
+        read = self._conn.recv_into(self._buf_view[self._read :])
         self._read += read
         return read
 
@@ -183,7 +183,7 @@ class MemcacheSocket:
         return self._tokenize_header(header)
 
     def sendall(self, data: Blob) -> None:
-        self._c.sendall(data)
+        self._conn.sendall(data)
 
     def get_response(
         self,

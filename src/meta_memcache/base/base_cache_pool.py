@@ -99,9 +99,9 @@ class BaseCachePool(ABC):
         a fallback pool, etc.
         """
         try:
-            with self._get_pool(key).get_connection() as c:
+            with self._get_pool(key).get_connection() as conn:
                 self._conn_send_cmd(
-                    c,
+                    conn,
                     command=command,
                     key=key,
                     value=value,
@@ -109,7 +109,7 @@ class BaseCachePool(ABC):
                     int_flags=int_flags,
                     token_flags=token_flags,
                 )
-                return self._conn_recv_response(c, flags=flags)
+                return self._conn_recv_response(conn, flags=flags)
         except MemcacheServerError:
             if self._write_failure_tracker:
                 if command in (MetaCommand.META_DELETE, MetaCommand.META_SET):
@@ -138,10 +138,10 @@ class BaseCachePool(ABC):
         results: Dict[Key, Union[Miss, Value, Success, NotStored, Conflict]] = {}
         try:
             for pool, pool_keys in pool_key_map.items():
-                with pool.get_connection() as c:
+                with pool.get_connection() as conn:
                     for key in pool_keys:
                         self._conn_send_cmd(
-                            c,
+                            conn,
                             command=command,
                             key=key,
                             value=key_value_map.get(key),
@@ -150,7 +150,7 @@ class BaseCachePool(ABC):
                             token_flags=token_flags,
                         )
                     for key in pool_keys:
-                        results[key] = self._conn_recv_response(c, flags=flags)
+                        results[key] = self._conn_recv_response(conn, flags=flags)
         except MemcacheServerError:
             if self._write_failure_tracker and command in (
                 MetaCommand.META_DELETE,
@@ -163,7 +163,7 @@ class BaseCachePool(ABC):
 
     def _conn_send_cmd(
         self,
-        c: MemcacheSocket,
+        conn: MemcacheSocket,
         command: MetaCommand,
         key: Key,
         value: Optional[bytes] = None,
@@ -183,13 +183,13 @@ class BaseCachePool(ABC):
             token_flags=token_flags,
         )
         if value:
-            c.sendall(cmd + value + ENDL)
+            conn.sendall(cmd + value + ENDL)
         else:
-            c.sendall(cmd)
+            conn.sendall(cmd)
 
     def _conn_recv_response(
         self,
-        c: MemcacheSocket,
+        conn: MemcacheSocket,
         flags: Optional[Set[Flag]] = None,
     ) -> Union[Miss, Value, Success, NotStored, Conflict]:
         """
@@ -197,10 +197,10 @@ class BaseCachePool(ABC):
         """
         if flags and Flag.NOREPLY in flags:
             return Success(flags=set([Flag.NOREPLY]))
-        result = c.get_response()
+        result = conn.get_response()
         if isinstance(result, Value):
             # TODO: Confirm this works for empty values!
-            data = c.get_value(result.size)
+            data = conn.get_value(result.size)
             if result.size > 0:
                 encoding_id = result.int_flags.get(IntFlag.CLIENT_FLAG, 0)
                 result.value = self._serializer.unserialize(data, encoding_id)

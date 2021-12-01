@@ -118,7 +118,7 @@ def test_set_cmd(
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
 
-    cache_pool.set(key=Key("foo"), value=b"123", ttl=300, cas=666)
+    cache_pool.set(key=Key("foo"), value=b"123", ttl=300, cas_token=666)
     memcache_socket.sendall.assert_called_once_with(
         b"ms foo 3 F16 T300 c666\r\n123\r\n"
     )
@@ -127,7 +127,7 @@ def test_set_cmd(
     memcache_socket.get_response.reset_mock()
 
     cache_pool.set(
-        key=Key("foo"), value=b"123", ttl=300, cas=666, stale_policy=StalePolicy()
+        key=Key("foo"), value=b"123", ttl=300, cas_token=666, stale_policy=StalePolicy()
     )
     memcache_socket.sendall.assert_called_once_with(
         b"ms foo 3 F16 T300 c666\r\n123\r\n"
@@ -140,7 +140,7 @@ def test_set_cmd(
         key=Key("foo"),
         value=b"123",
         ttl=300,
-        cas=666,
+        cas_token=666,
         stale_policy=StalePolicy(mark_stale_on_cas_mismatch=True),
     )
     memcache_socket.sendall.assert_called_once_with(
@@ -176,7 +176,7 @@ def test_delete_cmd(
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
 
-    cache_pool.delete(key=Key("foo"), cas=666)
+    cache_pool.delete(key=Key("foo"), cas_token=666)
     memcache_socket.sendall.assert_called_once_with(b"md foo c666\r\n")
     memcache_socket.get_response.assert_called_once_with()
     memcache_socket.sendall.reset_mock()
@@ -289,9 +289,9 @@ def test_get_cmd(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> 
 def test_get_miss(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> None:
     memcache_socket.get_response.return_value = Miss()
 
-    result, cas = cache_pool.get_cas_typed(key=Key("foo"), cls=Foo)
+    result, cas_token = cache_pool.get_cas_typed(key=Key("foo"), cls=Foo)
     assert result is None
-    assert cas is None
+    assert cas_token is None
     memcache_socket.sendall.assert_called_once_with(b"mg foo c f h l t v\r\n")
     memcache_socket.sendall.reset_mock()
 
@@ -300,9 +300,9 @@ def test_get_miss(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) ->
     memcache_socket.sendall.assert_called_once_with(b"mg foo c f h l t v\r\n")
     memcache_socket.sendall.reset_mock()
 
-    result, cas = cache_pool.get_cas(key=Key("foo"))
+    result, cas_token = cache_pool.get_cas(key=Key("foo"))
     assert result is None
-    assert cas is None
+    assert cas_token is None
     memcache_socket.sendall.assert_called_once_with(b"mg foo c f h l t v\r\n")
     memcache_socket.sendall.reset_mock()
 
@@ -313,31 +313,31 @@ def test_get_miss(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) ->
 
 
 def test_get_value(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> None:
-    expected_cas = 123
+    expected_cas_token = 123
     expected_value = Foo("hello world")
     encoded_value = MixedSerializer().serialize(expected_value)
     memcache_socket.get_response.return_value = Value(
         size=len(encoded_value.data),
         int_flags={
             IntFlag.CLIENT_FLAG: encoded_value.encoding_id,
-            IntFlag.CAS: expected_cas,
+            IntFlag.CAS_TOKEN: expected_cas_token,
         },
     )
     memcache_socket.get_value.return_value = encoded_value.data
 
-    result, cas = cache_pool.get_cas_typed(
+    result, cas_token = cache_pool.get_cas_typed(
         key=Key("foo"),
         cls=Foo,
     )
     assert result == expected_value
-    assert cas == expected_cas
+    assert cas_token == expected_cas_token
 
     result = cache_pool.get_typed(key=Key("foo"), cls=Foo)
     assert result == expected_value
 
-    result, cas = cache_pool.get_cas(key=Key("foo"))
+    result, cas_token = cache_pool.get_cas(key=Key("foo"))
     assert result == expected_value
-    assert cas == expected_cas
+    assert cas_token == expected_cas_token
 
     result = cache_pool.get(key=Key("foo"))
     assert result == expected_value
@@ -357,21 +357,21 @@ def test_get_other(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -
 def test_value_wrong_type(
     memcache_socket: MemcacheSocket, cache_pool: FakeCachePool
 ) -> None:
-    expected_cas = 123
+    expected_cas_token = 123
     expected_value = Foo("hello world")
     encoded_value = MixedSerializer().serialize(expected_value)
     memcache_socket.get_response.return_value = Value(
         size=len(encoded_value.data),
         int_flags={
             IntFlag.CLIENT_FLAG: encoded_value.encoding_id,
-            IntFlag.CAS: expected_cas,
+            IntFlag.CAS_TOKEN: expected_cas_token,
         },
     )
     memcache_socket.get_value.return_value = encoded_value.data
 
-    result, cas = cache_pool.get_cas_typed(key=Key("foo"), cls=Bar)
+    result, cas_token = cache_pool.get_cas_typed(key=Key("foo"), cls=Bar)
     assert result is None
-    assert cas == expected_cas
+    assert cas_token == expected_cas_token
     memcache_socket.get_value.assert_called_once_with(len(encoded_value.data))
 
     try:
@@ -398,7 +398,7 @@ def time(mocker: MockerFixture) -> MagicMock:
 def test_recache_win_returns_miss(
     memcache_socket: MemcacheSocket, cache_pool: FakeCachePool, time: MagicMock
 ) -> None:
-    expected_cas = 123
+    expected_cas_token = 123
     expected_value = Foo("hello world")
     encoded_value = MixedSerializer().serialize(expected_value)
     memcache_socket.get_response.return_value = Value(
@@ -406,20 +406,20 @@ def test_recache_win_returns_miss(
         flags=set([Flag.WIN, Flag.STALE]),
         int_flags={
             IntFlag.CLIENT_FLAG: encoded_value.encoding_id,
-            IntFlag.CAS: expected_cas,
+            IntFlag.CAS_TOKEN: expected_cas_token,
         },
     )
     memcache_socket.get_value.return_value = encoded_value.data
 
-    result, cas = cache_pool.get_cas(key=Key("foo"))
+    result, cas_token = cache_pool.get_cas(key=Key("foo"))
     assert result is None
-    assert cas == expected_cas
+    assert cas_token == expected_cas_token
 
 
 def test_recache_lost_returns_stale_value(
     memcache_socket: MemcacheSocket, cache_pool: FakeCachePool, time: MagicMock
 ) -> None:
-    expected_cas = 123
+    expected_cas_token = 123
     expected_value = Foo("hello world")
     encoded_value = MixedSerializer().serialize(expected_value)
     memcache_socket.get_response.return_value = Value(
@@ -427,36 +427,36 @@ def test_recache_lost_returns_stale_value(
         flags=set([Flag.LOST, Flag.STALE]),
         int_flags={
             IntFlag.CLIENT_FLAG: encoded_value.encoding_id,
-            IntFlag.CAS: expected_cas,
+            IntFlag.CAS_TOKEN: expected_cas_token,
         },
     )
     memcache_socket.get_value.return_value = encoded_value.data
 
-    result, cas = cache_pool.get_cas(key=Key("foo"))
+    result, cas_token = cache_pool.get_cas(key=Key("foo"))
     assert result == expected_value
-    assert cas == expected_cas
+    assert cas_token == expected_cas_token
 
 
 def test_get_or_lease_hit(
     memcache_socket: MemcacheSocket, cache_pool: FakeCachePool, time: MagicMock
 ) -> None:
-    expected_cas = 123
+    expected_cas_token = 123
     expected_value = Foo("hello world")
     encoded_value = MixedSerializer().serialize(expected_value)
     memcache_socket.get_response.return_value = Value(
         size=len(encoded_value.data),
         int_flags={
             IntFlag.CLIENT_FLAG: encoded_value.encoding_id,
-            IntFlag.CAS: expected_cas,
+            IntFlag.CAS_TOKEN: expected_cas_token,
         },
     )
     memcache_socket.get_value.return_value = encoded_value.data
 
-    result, cas = cache_pool.get_or_lease_cas(
+    result, cas_token = cache_pool.get_or_lease_cas(
         key=Key("foo"), lease_policy=LeasePolicy()
     )
     assert result == expected_value
-    assert cas == expected_cas
+    assert cas_token == expected_cas_token
     memcache_socket.sendall.assert_called_once_with(b"mg foo N30 c f h l t v\r\n")
     memcache_socket.get_value.assert_called_once_with(len(encoded_value.data))
     time.sleep.assert_not_called()
@@ -465,21 +465,21 @@ def test_get_or_lease_hit(
 def test_get_or_lease_miss_win(
     memcache_socket: MemcacheSocket, cache_pool: FakeCachePool, time: MagicMock
 ) -> None:
-    expected_cas = 123
+    expected_cas_token = 123
     memcache_socket.get_response.return_value = Value(
         size=0,
         flags=set([Flag.WIN]),
         int_flags={
-            IntFlag.CAS: expected_cas,
+            IntFlag.CAS_TOKEN: expected_cas_token,
         },
     )
     memcache_socket.get_value.return_value = b""
 
-    result, cas = cache_pool.get_or_lease_cas(
+    result, cas_token = cache_pool.get_or_lease_cas(
         key=Key("foo"), lease_policy=LeasePolicy()
     )
     assert result is None
-    assert cas == expected_cas
+    assert cas_token == expected_cas_token
     memcache_socket.sendall.assert_called_once_with(b"mg foo N30 c f h l t v\r\n")
     memcache_socket.get_value.assert_called_once_with(0)
     time.sleep.assert_not_called()
@@ -488,7 +488,7 @@ def test_get_or_lease_miss_win(
 def test_get_or_lease_miss_lost_then_data(
     memcache_socket: MemcacheSocket, cache_pool: FakeCachePool, time: MagicMock
 ) -> None:
-    expected_cas = 123
+    expected_cas_token = 123
     expected_value = Foo("hello world")
     encoded_value = MixedSerializer().serialize(expected_value)
     memcache_socket.get_response.side_effect = [
@@ -496,31 +496,31 @@ def test_get_or_lease_miss_lost_then_data(
             size=0,
             flags=set([Flag.LOST]),
             int_flags={
-                IntFlag.CAS: expected_cas - 1,
+                IntFlag.CAS_TOKEN: expected_cas_token - 1,
             },
         ),
         Value(
             size=0,
             flags=set([Flag.LOST]),
             int_flags={
-                IntFlag.CAS: expected_cas - 1,
+                IntFlag.CAS_TOKEN: expected_cas_token - 1,
             },
         ),
         Value(
             size=len(encoded_value.data),
             int_flags={
                 IntFlag.CLIENT_FLAG: encoded_value.encoding_id,
-                IntFlag.CAS: expected_cas,
+                IntFlag.CAS_TOKEN: expected_cas_token,
             },
         ),
     ]
     memcache_socket.get_value.side_effect = [b"", b"", encoded_value.data]
 
-    result, cas = cache_pool.get_or_lease_cas(
+    result, cas_token = cache_pool.get_or_lease_cas(
         key=Key("foo"), lease_policy=LeasePolicy()
     )
     assert result == expected_value
-    assert cas == expected_cas
+    assert cas_token == expected_cas_token
     memcache_socket.sendall.assert_has_calls(
         [
             call(b"mg foo N30 c f h l t v\r\n"),
@@ -541,37 +541,37 @@ def test_get_or_lease_miss_lost_then_data(
 def test_get_or_lease_miss_lost_then_win(
     memcache_socket: MemcacheSocket, cache_pool: FakeCachePool, time: MagicMock
 ) -> None:
-    expected_cas = 123
+    expected_cas_token = 123
     memcache_socket.get_response.side_effect = [
         Value(
             size=0,
             flags=set([Flag.LOST]),
             int_flags={
-                IntFlag.CAS: expected_cas - 1,
+                IntFlag.CAS_TOKEN: expected_cas_token - 1,
             },
         ),
         Value(
             size=0,
             flags=set([Flag.LOST]),
             int_flags={
-                IntFlag.CAS: expected_cas - 1,
+                IntFlag.CAS_TOKEN: expected_cas_token - 1,
             },
         ),
         Value(
             size=0,
             flags=set([Flag.WIN]),
             int_flags={
-                IntFlag.CAS: expected_cas,
+                IntFlag.CAS_TOKEN: expected_cas_token,
             },
         ),
     ]
     memcache_socket.get_value.side_effect = [b"", b"", b""]
 
-    result, cas = cache_pool.get_or_lease_cas(
+    result, cas_token = cache_pool.get_or_lease_cas(
         key=Key("foo"), lease_policy=LeasePolicy()
     )
     assert result is None
-    assert cas == expected_cas
+    assert cas_token == expected_cas_token
     memcache_socket.sendall.assert_has_calls(
         [
             call(b"mg foo N30 c f h l t v\r\n"),
@@ -592,24 +592,24 @@ def test_get_or_lease_miss_lost_then_win(
 def test_get_or_lease_miss_runs_out_of_retries(
     memcache_socket: MemcacheSocket, cache_pool: FakeCachePool, time: MagicMock
 ) -> None:
-    expected_cas = 123
+    expected_cas_token = 123
     memcache_socket.get_response.return_value = Value(
         size=0,
         flags=set([Flag.LOST]),
         int_flags={
-            IntFlag.CAS: expected_cas,
+            IntFlag.CAS_TOKEN: expected_cas_token,
         },
     )
     memcache_socket.get_value.return_value = b""
 
-    result, cas = cache_pool.get_or_lease_cas(
+    result, cas_token = cache_pool.get_or_lease_cas(
         key=Key("foo"),
         lease_policy=LeasePolicy(
             miss_retries=4, wait_backoff_factor=10, miss_max_retry_wait=15
         ),
     )
     assert result is None
-    assert cas == expected_cas
+    assert cas_token == expected_cas_token
     memcache_socket.sendall.assert_has_calls(
         [
             call(b"mg foo N30 c f h l t v\r\n"),
@@ -714,7 +714,7 @@ def test_delta_cmd(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -
         initial_value=10,
         initial_ttl=60,
         no_reply=True,
-        cas=123,
+        cas_token=123,
     )
     memcache_socket.sendall.assert_called_once_with(b"ma foo D1 J10 N60 c123 q\r\n")
     memcache_socket.sendall.reset_mock()

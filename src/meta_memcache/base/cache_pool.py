@@ -16,7 +16,7 @@ class CachePool(BaseCachePool):
         value: Any,  # pyre-ignore[2]
         ttl: int,
         no_reply: bool = False,
-        cas: Optional[int] = None,
+        cas_token: Optional[int] = None,
         stale_policy: Optional[StalePolicy] = None,
     ) -> bool:
         flags = set()
@@ -25,8 +25,8 @@ class CachePool(BaseCachePool):
         int_flags = {
             IntFlag.CACHE_TTL: ttl,
         }
-        if cas is not None:
-            int_flags[IntFlag.CAS] = cas
+        if cas_token is not None:
+            int_flags[IntFlag.CAS_TOKEN] = cas_token
             if stale_policy and stale_policy.mark_stale_on_cas_mismatch:
                 flags.add(Flag.MARK_STALE)
 
@@ -43,7 +43,7 @@ class CachePool(BaseCachePool):
     def delete(
         self,
         key: Key,
-        cas: Optional[int] = None,
+        cas_token: Optional[int] = None,
         no_reply: bool = False,
         stale_policy: Optional[StalePolicy] = None,
     ) -> bool:
@@ -51,8 +51,8 @@ class CachePool(BaseCachePool):
         int_flags = {}
         if no_reply:
             flags.add(Flag.NOREPLY)
-        if cas is not None:
-            int_flags[IntFlag.CAS] = cas
+        if cas_token is not None:
+            int_flags[IntFlag.CAS_TOKEN] = cas_token
         if stale_policy and stale_policy.mark_stale_on_deletion_ttl > 0:
             flags.add(Flag.MARK_STALE)
             int_flags[IntFlag.CACHE_TTL] = stale_policy.mark_stale_on_deletion_ttl
@@ -106,7 +106,7 @@ class CachePool(BaseCachePool):
             Flag.RETURN_VALUE,
             Flag.RETURN_TTL,
             Flag.RETURN_CLIENT_FLAG,
-            Flag.RETURN_CAS,
+            Flag.RETURN_CAS_TOKEN,
             Flag.RETURN_LAST_ACCESS,
             Flag.RETURN_FETCHED,
         }
@@ -133,11 +133,11 @@ class CachePool(BaseCachePool):
 
             if isinstance(result, Value):
                 # It is a hit.
-                cas = result.int_flags.get(IntFlag.CAS)
+                cas_token = result.int_flags.get(IntFlag.CAS_TOKEN)
                 if Flag.WIN in result.flags:
                     # Win flag present, meaning we got the lease to
                     # recache/cache the item. We need to mimic a miss.
-                    return None, cas
+                    return None, cas_token
                 if result.size == 0 and Flag.LOST in result.flags:
                     # The value is empty, this is a miss lease,
                     # and we lost, so we must keep retrying and
@@ -146,11 +146,11 @@ class CachePool(BaseCachePool):
                         continue
                     else:
                         # We run of retries, behave as a miss
-                        return None, cas
+                        return None, cas_token
                 else:
                     # There is data, either the is no lease or
                     # we lost and should use the stale value.
-                    return result.value, cas
+                    return result.value, cas_token
             else:
                 # With MISS_LEASE_TTL we should always get a value
                 # because on miss a lease empty value is generated
@@ -217,7 +217,7 @@ class CachePool(BaseCachePool):
             Flag.RETURN_VALUE,
             Flag.RETURN_TTL,
             Flag.RETURN_CLIENT_FLAG,
-            Flag.RETURN_CAS,
+            Flag.RETURN_CAS_TOKEN,
             Flag.RETURN_LAST_ACCESS,
             Flag.RETURN_FETCHED,
         }
@@ -230,13 +230,13 @@ class CachePool(BaseCachePool):
         result = self.meta_get(key, flags=flags, int_flags=int_flags)
         if isinstance(result, Value):
             # It is a hit
-            cas = result.int_flags.get(IntFlag.CAS)
+            cas_token = result.int_flags.get(IntFlag.CAS_TOKEN)
             if Flag.WIN in result.flags:
                 # Win flag present, meaning we got the lease to
                 # recache the item. We need to mimic a miss.
-                return None, cas
+                return None, cas_token
             else:
-                return result.value, cas
+                return result.value, cas_token
         elif isinstance(result, Miss):
             return None, None
         else:
@@ -267,7 +267,7 @@ class CachePool(BaseCachePool):
         recache_policy: Optional[RecachePolicy] = None,
         error_on_type_mismatch: bool = False,
     ) -> Tuple[Optional[T], Optional[int]]:
-        value, cas = self.get_cas(
+        value, cas_token = self.get_cas(
             key=key, touch_ttl=touch_ttl, recache_policy=recache_policy
         )
 
@@ -276,14 +276,14 @@ class CachePool(BaseCachePool):
                 raise ValueError(f"Expecting {cls} got {value}")
             else:
                 value = None
-        return value, cas
+        return value, cas_token
 
     def _get_delta_flags(
         self,
         delta: int,
         refresh_ttl: Optional[int] = None,
         no_reply: bool = False,
-        cas: Optional[int] = None,
+        cas_token: Optional[int] = None,
         return_value: bool = False,
     ) -> Tuple[Set[Flag], Dict[IntFlag, int], Dict[TokenFlag, bytes]]:
         flags = set()
@@ -298,8 +298,8 @@ class CachePool(BaseCachePool):
             flags.add(Flag.NOREPLY)
         if refresh_ttl is not None:
             int_flags[IntFlag.CACHE_TTL] = refresh_ttl
-        if cas is not None:
-            int_flags[IntFlag.CAS] = cas
+        if cas_token is not None:
+            int_flags[IntFlag.CAS_TOKEN] = cas_token
         if delta < 0:
             token_flags[TokenFlag.MA_MODE] = b"-"
 
@@ -311,13 +311,13 @@ class CachePool(BaseCachePool):
         delta: int,
         refresh_ttl: Optional[int] = None,
         no_reply: bool = False,
-        cas: Optional[int] = None,
+        cas_token: Optional[int] = None,
     ) -> bool:
         flags, int_flags, token_flags = self._get_delta_flags(
             delta=delta,
             refresh_ttl=refresh_ttl,
             no_reply=no_reply,
-            cas=cas,
+            cas_token=cas_token,
         )
         result = self.meta_arithmetic(
             key=key, flags=flags, int_flags=int_flags, token_flags=token_flags
@@ -332,13 +332,13 @@ class CachePool(BaseCachePool):
         initial_ttl: int,
         refresh_ttl: Optional[int] = None,
         no_reply: bool = False,
-        cas: Optional[int] = None,
+        cas_token: Optional[int] = None,
     ) -> bool:
         flags, int_flags, token_flags = self._get_delta_flags(
             delta=delta,
             refresh_ttl=refresh_ttl,
             no_reply=no_reply,
-            cas=cas,
+            cas_token=cas_token,
         )
         int_flags[IntFlag.MA_INITIAL_VALUE] = abs(initial_value)
         int_flags[IntFlag.MISS_LEASE_TTL] = initial_ttl
@@ -352,13 +352,13 @@ class CachePool(BaseCachePool):
         key: Key,
         delta: int,
         refresh_ttl: Optional[int] = None,
-        cas: Optional[int] = None,
+        cas_token: Optional[int] = None,
     ) -> Optional[int]:
         flags, int_flags, token_flags = self._get_delta_flags(
             return_value=True,
             delta=delta,
             refresh_ttl=refresh_ttl,
-            cas=cas,
+            cas_token=cas_token,
         )
         result = self.meta_arithmetic(
             key=key, flags=flags, int_flags=int_flags, token_flags=token_flags
@@ -374,13 +374,13 @@ class CachePool(BaseCachePool):
         initial_value: int,
         initial_ttl: int,
         refresh_ttl: Optional[int] = None,
-        cas: Optional[int] = None,
+        cas_token: Optional[int] = None,
     ) -> Optional[int]:
         flags, int_flags, token_flags = self._get_delta_flags(
             return_value=True,
             delta=delta,
             refresh_ttl=refresh_ttl,
-            cas=cas,
+            cas_token=cas_token,
         )
         int_flags[IntFlag.MA_INITIAL_VALUE] = abs(initial_value)
         int_flags[IntFlag.MISS_LEASE_TTL] = initial_ttl

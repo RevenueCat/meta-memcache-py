@@ -25,7 +25,7 @@ class Flag(Enum):
     BINARY = b"b"
     NOREPLY = b"q"
     RETURN_CLIENT_FLAG = b"f"
-    RETURN_CAS = b"c"
+    RETURN_CAS_TOKEN = b"c"
     RETURN_VALUE = b"v"
     RETURN_TTL = b"t"
     RETURN_SIZE = b"s"
@@ -50,7 +50,7 @@ class IntFlag(Enum):
     HIT_AFTER_WRITE = b"h"
     MA_INITIAL_VALUE = b"J"
     MA_DELTA_VALUE = b"D"
-    CAS = b"c"
+    CAS_TOKEN = b"c"
 
 
 class TokenFlag(Enum):
