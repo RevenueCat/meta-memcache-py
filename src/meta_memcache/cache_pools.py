@@ -173,7 +173,7 @@ class ShardedWithGutterCachePool(ShardedCachePool):
                         int_flags[flag] = self._gutter_ttl
 
             with self._get_gutter_pool(key).get_connection() as c:
-                return self._exec_on_connection(
+                self._conn_send_cmd(
                     c,
                     command=command,
                     key=key,
@@ -182,3 +182,4 @@ class ShardedWithGutterCachePool(ShardedCachePool):
                     int_flags=int_flags,
                     token_flags=token_flags,
                 )
+                return self._conn_recv_response(c, flags=flags)

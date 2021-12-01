@@ -1,6 +1,18 @@
 import base64
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, Optional, Set, Tuple, Union
+from collections import defaultdict
+from typing import (
+    Any,
+    Callable,
+    DefaultDict,
+    Dict,
+    Final,
+    List,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
 
 from meta_memcache.base.base_serializer import BaseSerializer
 from meta_memcache.base.base_write_failure_tracker import BaseWriteFailureTracker
@@ -32,7 +44,7 @@ class BaseCachePool(ABC):
     ) -> None:
         self._serializer = serializer
         self._binary_key_encoding_fn = binary_key_encoding_fn
-        self._write_failure_tracker = write_failure_tracker
+        self._write_failure_tracker: Final = write_failure_tracker
 
     @abstractmethod
     def _get_pool(self, key: Key) -> ConnectionPool:
@@ -88,7 +100,7 @@ class BaseCachePool(ABC):
         """
         try:
             with self._get_pool(key).get_connection() as c:
-                return self._exec_on_connection(
+                self._conn_send_cmd(
                     c,
                     command=command,
                     key=key,
@@ -97,13 +109,59 @@ class BaseCachePool(ABC):
                     int_flags=int_flags,
                     token_flags=token_flags,
                 )
+                return self._conn_recv_response(c, flags=flags)
         except MemcacheServerError:
             if self._write_failure_tracker:
                 if command in (MetaCommand.META_DELETE, MetaCommand.META_SET):
                     self._write_failure_tracker.add_key(key)
             raise
 
-    def _exec_on_connection(
+    def _exec_multi(
+        self,
+        command: MetaCommand,
+        keys: List[Key],
+        values: Optional[List[bytes]] = None,
+        flags: Optional[Set[Flag]] = None,
+        int_flags: Optional[Dict[IntFlag, int]] = None,
+        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+    ) -> Dict[Key, Union[Miss, Value, Success, NotStored, Conflict]]:
+        """
+        Groups keys by destination, gets a connection and executes the commands
+        """
+        if values and len(values) != len(keys):
+            raise ValueError("Values needs to match the number of keys")
+        key_value_map = {k: v for k, v in zip(keys, values or [])}
+        pool_key_map: DefaultDict[ConnectionPool, List[Key]] = defaultdict(list)
+        for key in keys:
+            pool_key_map[self._get_pool(key)].append(key)
+
+        results: Dict[Key, Union[Miss, Value, Success, NotStored, Conflict]] = {}
+        try:
+            for pool, pool_keys in pool_key_map.items():
+                with pool.get_connection() as c:
+                    for key in pool_keys:
+                        self._conn_send_cmd(
+                            c,
+                            command=command,
+                            key=key,
+                            value=key_value_map.get(key),
+                            flags=flags,
+                            int_flags=int_flags,
+                            token_flags=token_flags,
+                        )
+                    for key in pool_keys:
+                        results[key] = self._conn_recv_response(c, flags=flags)
+        except MemcacheServerError:
+            if self._write_failure_tracker and command in (
+                MetaCommand.META_DELETE,
+                MetaCommand.META_SET,
+            ):
+                for k in keys:
+                    self._write_failure_tracker.add_key(k)
+            raise
+        return results
+
+    def _conn_send_cmd(
         self,
         c: MemcacheSocket,
         command: MetaCommand,
@@ -112,9 +170,9 @@ class BaseCachePool(ABC):
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
-    ) -> Union[Miss, Value, Success, NotStored, Conflict]:
+    ) -> None:
         """
-        Execute command on a connection and read response back
+        Execute command on a connection
         """
         cmd = self._build_cmd(
             command,
@@ -128,6 +186,15 @@ class BaseCachePool(ABC):
             c.sendall(cmd + value + ENDL)
         else:
             c.sendall(cmd)
+
+    def _conn_recv_response(
+        self,
+        c: MemcacheSocket,
+        flags: Optional[Set[Flag]] = None,
+    ) -> Union[Miss, Value, Success, NotStored, Conflict]:
+        """
+        Read response on a connection
+        """
         if flags and Flag.NOREPLY in flags:
             return Success(flags=set([Flag.NOREPLY]))
         result = c.get_response()
@@ -138,6 +205,29 @@ class BaseCachePool(ABC):
                 encoding_id = result.int_flags.get(IntFlag.CLIENT_FLAG, 0)
                 result.value = self._serializer.unserialize(data, encoding_id)
         return result
+
+    def meta_multiget(
+        self,
+        keys: List[Key],
+        flags: Optional[Set[Flag]] = None,
+        int_flags: Optional[Dict[IntFlag, int]] = None,
+        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+    ) -> Dict[Key, Union[Miss, Value, Success]]:
+
+        results: Dict[Key, Union[Miss, Value, Success]] = {}
+        for key, result in self._exec_multi(
+            command=MetaCommand.META_GET,
+            keys=keys,
+            flags=flags,
+            int_flags=int_flags,
+            token_flags=token_flags,
+        ).items():
+            if not isinstance(result, (Miss, Value, Success)):
+                raise MemcacheError(
+                    f"Unexpected response for Meta Get command: {result}"
+                )
+            results[key] = result
+        return results
 
     def meta_get(
         self,

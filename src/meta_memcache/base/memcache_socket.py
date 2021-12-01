@@ -54,8 +54,8 @@ class MemcacheSocket:
       the most likely scenario), the buffer is reset with no cost.
     """
 
-    def __init__(self, c: socket.socket, buffer_size: int = 4096) -> None:
-        self.set_socket(c)
+    def __init__(self, conn: socket.socket, buffer_size: int = 4096) -> None:
+        self.set_socket(conn)
         self._buffer_size = buffer_size
         self._buf = bytearray(self._buffer_size)
         self._buf_view = memoryview(self._buf)
@@ -90,7 +90,7 @@ class MemcacheSocket:
         buffer for the termination mark.
         """
         msg_termination_buf = bytearray(ENDL_LEN)
-        read: int = self._c.recvmsg_into(
+        read: int = self._conn.recvmsg_into(
             [sized_buf, memoryview(msg_termination_buf)], flags=socket.MSG_WAITALL
         )
         if read != len(sized_buf) + ENDL_LEN or msg_termination_buf != ENDL:

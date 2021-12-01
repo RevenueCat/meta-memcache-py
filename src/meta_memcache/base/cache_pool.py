@@ -1,5 +1,5 @@
 import time
-from typing import Any, Dict, Optional, Set, Tuple, Type, TypeVar
+from typing import Any, Dict, List, Optional, Set, Tuple, Type, TypeVar
 
 from meta_memcache.base.base_cache_pool import BaseCachePool
 from meta_memcache.configuration import LeasePolicy, RecachePolicy, StalePolicy
@@ -167,6 +167,44 @@ class CachePool(BaseCachePool):
             key=key, touch_ttl=touch_ttl, recache_policy=recache_policy
         )
         return value
+
+    # pyre-ignore[3]  Yeah, we return 'Any'
+    def multi_get(
+        self,
+        keys: List[Key],
+        touch_ttl: Optional[int] = None,
+        recache_policy: Optional[RecachePolicy] = None,
+    ) -> Dict[Key, Optional[Any]]:
+        flags = {
+            Flag.RETURN_VALUE,
+            Flag.RETURN_TTL,
+            Flag.RETURN_CLIENT_FLAG,
+            Flag.RETURN_LAST_ACCESS,
+            Flag.RETURN_FETCHED,
+        }
+        int_flags = {}
+        if recache_policy:
+            int_flags[IntFlag.RECACHE_TTL] = recache_policy.ttl
+        if touch_ttl is not None and touch_ttl >= 0:
+            int_flags[IntFlag.CACHE_TTL] = touch_ttl
+
+        results = {}
+        for key, result in self.meta_multiget(
+            keys, flags=flags, int_flags=int_flags
+        ).items():
+            if isinstance(result, Value):
+                # It is a hit
+                if Flag.WIN in result.flags:
+                    # Win flag present, meaning we got the lease to
+                    # recache the item. We need to mimic a miss.
+                    results[key] = None
+                else:
+                    results[key] = result.value
+            elif isinstance(result, Miss):
+                results[key] = None
+            else:
+                raise MemcacheError("Unexpected response")
+        return results
 
     # pyre-ignore[3]  Yeah, we return 'Any'
     def get_cas(

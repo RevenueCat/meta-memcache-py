@@ -758,3 +758,35 @@ def test_delta_cmd(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
     memcache_socket.get_value.reset_mock()
+
+
+def test_multi_get(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> None:
+    memcache_socket.get_response.side_effect = [
+        Miss(),
+        Value(size=2, int_flags={IntFlag.CLIENT_FLAG: MixedSerializer.BINARY}),
+        Value(size=2, flags=set([Flag.WIN])),
+    ]
+    memcache_socket.get_value.return_value = b"OK"
+
+    results = cache_pool.multi_get(
+        keys=[
+            Key("miss"),
+            Key("found"),
+            Key("lease"),
+        ]
+    )
+    assert memcache_socket.sendall.mock_calls == [
+        call(b"mg miss f h l t v\r\n"),
+        call(b"mg found f h l t v\r\n"),
+        call(b"mg lease f h l t v\r\n"),
+    ]
+    assert memcache_socket.get_response.call_count == 3
+    assert memcache_socket.get_value.mock_calls == [
+        call(2),
+        call(2),
+    ]
+    assert results == {
+        Key("miss"): None,
+        Key("found"): b"OK",
+        Key("lease"): None,
+    }
