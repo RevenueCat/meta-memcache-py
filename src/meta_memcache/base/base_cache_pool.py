@@ -1,18 +1,7 @@
 import base64
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from typing import (
-    Any,
-    Callable,
-    DefaultDict,
-    Dict,
-    Final,
-    List,
-    Optional,
-    Set,
-    Tuple,
-    Union,
-)
+from typing import Any, Callable, DefaultDict, Dict, Final, List, Optional, Set, Tuple
 
 from meta_memcache.base.base_serializer import BaseSerializer
 from meta_memcache.base.base_write_failure_tracker import BaseWriteFailureTracker
@@ -25,12 +14,15 @@ from meta_memcache.protocol import (
     Flag,
     IntFlag,
     Key,
+    MemcacheResponse,
     MetaCommand,
     Miss,
     NotStored,
+    ReadResponse,
     Success,
     TokenFlag,
     Value,
+    WriteResponse,
 )
 from meta_memcache.settings import MAX_KEY_SIZE
 
@@ -91,7 +83,7 @@ class BaseCachePool(ABC):
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
-    ) -> Union[Miss, Value, Success, NotStored, Conflict]:
+    ) -> MemcacheResponse:
         """
         Gets a connection for the key and executes the command
 
@@ -124,7 +116,7 @@ class BaseCachePool(ABC):
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
-    ) -> Dict[Key, Union[Miss, Value, Success, NotStored, Conflict]]:
+    ) -> Dict[Key, MemcacheResponse]:
         """
         Groups keys by destination, gets a connection and executes the commands
         """
@@ -135,7 +127,7 @@ class BaseCachePool(ABC):
         for key in keys:
             pool_key_map[self._get_pool(key)].append(key)
 
-        results: Dict[Key, Union[Miss, Value, Success, NotStored, Conflict]] = {}
+        results: Dict[Key, MemcacheResponse] = {}
         try:
             for pool, pool_keys in pool_key_map.items():
                 with pool.get_connection() as conn:
@@ -191,7 +183,7 @@ class BaseCachePool(ABC):
         self,
         conn: MemcacheSocket,
         flags: Optional[Set[Flag]] = None,
-    ) -> Union[Miss, Value, Success, NotStored, Conflict]:
+    ) -> MemcacheResponse:
         """
         Read response on a connection
         """
@@ -212,9 +204,9 @@ class BaseCachePool(ABC):
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
-    ) -> Dict[Key, Union[Miss, Value, Success]]:
+    ) -> Dict[Key, ReadResponse]:
 
-        results: Dict[Key, Union[Miss, Value, Success]] = {}
+        results: Dict[Key, ReadResponse] = {}
         for key, result in self._exec_multi(
             command=MetaCommand.META_GET,
             keys=keys,
@@ -235,7 +227,7 @@ class BaseCachePool(ABC):
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
-    ) -> Union[Miss, Value, Success]:
+    ) -> ReadResponse:
         result = self._exec(
             command=MetaCommand.META_GET,
             key=key,
@@ -255,7 +247,7 @@ class BaseCachePool(ABC):
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
-    ) -> Union[Success, NotStored, Conflict, Miss]:
+    ) -> WriteResponse:
         encoded_value = self._serializer.serialize(value)
         if int_flags is None:
             int_flags = {}
@@ -279,7 +271,7 @@ class BaseCachePool(ABC):
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
-    ) -> Union[Success, NotStored, Conflict, Miss]:
+    ) -> WriteResponse:
         result = self._exec(
             command=MetaCommand.META_DELETE,
             key=key,
@@ -299,7 +291,7 @@ class BaseCachePool(ABC):
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
-    ) -> Union[Success, NotStored, Conflict, Miss, Value]:
+    ) -> WriteResponse:
         result = self._exec(
             command=MetaCommand.META_ARITHMETIC,
             key=key,

@@ -1,4 +1,4 @@
-from typing import Callable, Dict, Iterable, List, Optional, Set, Union
+from typing import Callable, Dict, Iterable, List, Optional, Set
 
 from uhashring import HashRing
 
@@ -8,16 +8,12 @@ from meta_memcache.base.connection_pool import ConnectionPool
 from meta_memcache.configuration import IPPort, default_binary_key_encoding
 from meta_memcache.errors import MemcacheServerError
 from meta_memcache.protocol import (
-    Conflict,
     Flag,
     IntFlag,
     Key,
+    MemcacheResponse,
     MetaCommand,
-    Miss,
-    NotStored,
-    Success,
     TokenFlag,
-    Value,
 )
 from meta_memcache.serializer import BaseSerializer, MixedSerializer
 
@@ -141,7 +137,7 @@ class ShardedWithGutterCachePool(ShardedCachePool):
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
-    ) -> Union[Miss, Value, Success, NotStored, Conflict]:
+    ) -> MemcacheResponse:
         """
         Implements the gutter logic
 

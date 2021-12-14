@@ -120,7 +120,7 @@ class StalePolicy(NamedTuple):
     * Deletions can mark items stale instead of deleting them
     * Stale items automatically do recache control, one client
       will get the miss, others will receive the stale value
-      until the winer refreshes the value in cache.
+      until the winner refreshes the value in the cache.
     * cas mismatches (due to race / further invalidation) can
       store the value as stale instead of failing
     """
@@ -132,6 +132,6 @@ class StalePolicy(NamedTuple):
 def default_binary_key_encoding(key: Key) -> bytes:
     """
     Generate binary key from Key, used for keys with unicode,
-    binaru or those too long.
+    binary or those too long.
     """
     return hashlib.blake2b(key.key.encode(), digest_size=18).digest()

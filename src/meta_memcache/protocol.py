@@ -65,12 +65,16 @@ int_flags_values: Dict[int, IntFlag] = {f.value[0]: f for f in IntFlag}
 token_flags_values: Dict[int, TokenFlag] = {f.value[0]: f for f in TokenFlag}
 
 
-class Miss:
+class MemcacheResponse:
+    pass
+
+
+class Miss(MemcacheResponse):
     pass
 
 
 @dataclass
-class Success:
+class Success(MemcacheResponse):
     flags: Set[Flag]
     int_flags: Dict[IntFlag, int]
     token_flags: Dict[TokenFlag, bytes]
@@ -105,13 +109,17 @@ class Value(Success):
 
 
 @dataclass
-class NotStored:
+class NotStored(MemcacheResponse):
     pass
 
 
 @dataclass
-class Conflict:
+class Conflict(MemcacheResponse):
     pass
+
+
+ReadResponse = Union[Miss, Value, Success]
+WriteResponse = Union[Success, NotStored, Conflict, Miss]
 
 
 Blob = Union[bytes, bytearray, memoryview]
