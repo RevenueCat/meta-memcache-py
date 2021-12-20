@@ -65,14 +65,14 @@ class BaseCachePool(ABC):
         if is_binary:
             cmd_flags.append(Flag.BINARY.value)
         if flags:
-            cmd_flags.extend(sorted(flag.value for flag in flags))
+            cmd_flags.extend(flag.value for flag in flags)
         if int_flags:
             for flag, int_value in int_flags.items():
                 cmd_flags.append(flag.value + str(int_value).encode("ascii"))
         if token_flags:
             for flag, bytes_value in token_flags.items():
                 cmd_flags.append(flag.value + bytes_value)
-        cmd.extend(sorted(cmd_flags))
+        cmd.extend(cmd_flags)
         return b" ".join(cmd) + ENDL
 
     def _exec(

@@ -53,4 +53,4 @@ def tests(session: Session) -> None:
         "pytest-cov",
         "pytest-mock",
     )
-    session.run("pytest", *args)
+    session.run("pytest", *args, env={"PYTHONHASHSEED": "0"})
