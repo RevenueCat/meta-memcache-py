@@ -5,7 +5,7 @@ from uhashring import HashRing
 from meta_memcache.base.base_write_failure_tracker import BaseWriteFailureTracker
 from meta_memcache.base.cache_pool import CachePool
 from meta_memcache.base.connection_pool import ConnectionPool
-from meta_memcache.configuration import IPPort, default_binary_key_encoding
+from meta_memcache.configuration import ServerAddress, default_binary_key_encoding
 from meta_memcache.errors import MemcacheServerError
 from meta_memcache.protocol import (
     Flag,
@@ -21,7 +21,7 @@ from meta_memcache.serializer import BaseSerializer, MixedSerializer
 class MultiServerCachePool(CachePool):
     def __init__(
         self,
-        server_pool: Dict[IPPort, ConnectionPool],
+        server_pool: Dict[ServerAddress, ConnectionPool],
         serializer: Optional[BaseSerializer] = None,
         binary_key_encoding_fn: Callable[[Key], bytes] = default_binary_key_encoding,
         write_failure_tracker: Optional[BaseWriteFailureTracker] = None,
@@ -37,7 +37,7 @@ class MultiServerCachePool(CachePool):
 class ShardedCachePool(MultiServerCachePool):
     def __init__(
         self,
-        server_pool: Dict[IPPort, ConnectionPool],
+        server_pool: Dict[ServerAddress, ConnectionPool],
         serializer: Optional[BaseSerializer] = None,
         binary_key_encoding_fn: Callable[[Key], bytes] = default_binary_key_encoding,
         write_failure_tracker: Optional[BaseWriteFailureTracker] = None,
@@ -48,7 +48,7 @@ class ShardedCachePool(MultiServerCachePool):
             binary_key_encoding_fn=binary_key_encoding_fn,
             write_failure_tracker=write_failure_tracker,
         )
-        self._servers: List[IPPort] = list(sorted(server_pool.keys()))
+        self._servers: List[ServerAddress] = list(sorted(server_pool.keys()))
         self._ring: HashRing = HashRing(self._servers)
 
     def _get_pool(self, key: Key) -> ConnectionPool:
@@ -57,15 +57,15 @@ class ShardedCachePool(MultiServerCachePool):
         return self._server_pool[server]
 
     @classmethod
-    def from_ipport_list(
+    def from_server_addresses(
         cls,
-        servers: Iterable[IPPort],
-        connection_pool_factory_fn: Callable[[IPPort], ConnectionPool],
+        servers: Iterable[ServerAddress],
+        connection_pool_factory_fn: Callable[[ServerAddress], ConnectionPool],
         serializer: Optional[BaseSerializer] = None,
         binary_key_encoding_fn: Callable[[Key], bytes] = default_binary_key_encoding,
         write_failure_tracker: Optional[BaseWriteFailureTracker] = None,
     ) -> "MultiServerCachePool":
-        server_pool: Dict[IPPort, ConnectionPool] = {
+        server_pool: Dict[ServerAddress, ConnectionPool] = {
             server: connection_pool_factory_fn(server) for server in servers
         }
         return cls(
@@ -79,8 +79,8 @@ class ShardedCachePool(MultiServerCachePool):
 class ShardedWithGutterCachePool(ShardedCachePool):
     def __init__(
         self,
-        server_pool: Dict[IPPort, ConnectionPool],
-        gutter_server_pool: Dict[IPPort, ConnectionPool],
+        server_pool: Dict[ServerAddress, ConnectionPool],
+        gutter_server_pool: Dict[ServerAddress, ConnectionPool],
         gutter_ttl: int,
         serializer: Optional[BaseSerializer] = None,
         binary_key_encoding_fn: Callable[[Key], bytes] = default_binary_key_encoding,
@@ -93,25 +93,27 @@ class ShardedWithGutterCachePool(ShardedCachePool):
             write_failure_tracker=write_failure_tracker,
         )
         self._gutter_server_pool = gutter_server_pool
-        self._gutter_servers: List[IPPort] = list(sorted(gutter_server_pool.keys()))
+        self._gutter_servers: List[ServerAddress] = list(
+            sorted(gutter_server_pool.keys())
+        )
         self._gutter_ttl = gutter_ttl
         self._gutter_ring: HashRing = HashRing(self._gutter_servers)
 
     @classmethod
-    def from_ipport_list(
+    def from_server_addresses(
         cls,
-        servers: Iterable[IPPort],
-        gutter_servers: Iterable[IPPort],
+        servers: Iterable[ServerAddress],
+        gutter_servers: Iterable[ServerAddress],
         gutter_ttl: int,
-        connection_pool_factory_fn: Callable[[IPPort], ConnectionPool],
+        connection_pool_factory_fn: Callable[[ServerAddress], ConnectionPool],
         serializer: Optional[BaseSerializer] = None,
         binary_key_encoding_fn: Callable[[Key], bytes] = default_binary_key_encoding,
         write_failure_tracker: Optional[BaseWriteFailureTracker] = None,
     ) -> "MultiServerCachePool":
-        server_pool: Dict[IPPort, ConnectionPool] = {
+        server_pool: Dict[ServerAddress, ConnectionPool] = {
             server: connection_pool_factory_fn(server) for server in servers
         }
-        gutter_server_pool: Dict[IPPort, ConnectionPool] = {
+        gutter_server_pool: Dict[ServerAddress, ConnectionPool] = {
             server: connection_pool_factory_fn(server) for server in gutter_servers
         }
 
