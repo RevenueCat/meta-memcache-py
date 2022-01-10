@@ -157,14 +157,12 @@ Invalidation...
         stale_policy: Optional[StalePolicy] = None,
     ) -> bool:
 
-    def touch(self, key: Key, ttl: int, no_reply: bool = False) -> bool:
-        flags = set()
-        int_flags = {IntFlag.CACHE_TTL: ttl}
-        if no_reply:
-            flags.add(Flag.NOREPLY)
-        result = self.meta_get(key, flags=flags, int_flags=int_flags)
-
-        return isinstance(result, Success)
+    def touch(
+        self,
+        key: Key,
+        ttl: int,
+        no_reply: bool = False,
+    ) -> bool:
 
     def get_or_lease(
         self,
@@ -274,7 +272,12 @@ Finally in
 [`cache_pools.py`](https://github.com/RevenueCat/meta-memcache-py/blob/main/src/meta_memcache/cache_pools.py)
 a few classes implement the pool-level semantics:
 * `ShardedCachePool`: implements a consistent hashing cache pool using uhashring's `HashRing`.
-* `ShardedWithGutterCachePool`: implements a 'gutter pool' (See [Scaling Memcache at Facebook](http://www.cs.utah.edu/~stutsman/cs6963/public/papers/memcached.pdf)), so when a server of the primary pool is down, requests are sent to the 'gutter' pool, with TTLs overriden and lowered on the fly, so they provide some level of caching instead of hitting the backend for each request.
+* `ShardedWithGutterCachePool`: implements a sharded cache pool like above, but
+  with a 'gutter pool' (See
+  [Scaling Memcache at Facebook](http://www.cs.utah.edu/~stutsman/cs6963/public/papers/memcached.pdf)),
+  so when a server of the primary pool is down, requests are sent to the
+  'gutter' pool, with TTLs overriden and lowered on the fly, so they provide
+  some level of caching instead of hitting the backend for each request.
 
 These pools also provide a write failure tracker feature, usefull if you are
 serious about cache consistency. If you have transient network issues, some
