@@ -1,9 +1,11 @@
 [tool.poetry]
 name = "meta-memcache"
-version = "0.1.0"
+version = "0.2.0"
 description = "Modern, pure python, memcache client with support for new meta commands."
 license = "MIT"
 readme = "README.md"
+homepage = "https://github.com/RevenueCat/meta-memcache-py"
+repository = "https://github.com/RevenueCat/meta-memcache-py"
 authors = ["Guillermo Perez <bisho@revenuecat.com>"]
 
 [tool.poetry.dependencies]
