@@ -35,7 +35,7 @@ class ConnectionPool:
         mark_down_period_s: float = DEFAULT_MARK_DOWN_PERIOD_S,
         read_buffer_size: int = DEFAULT_READ_BUFFER_SIZE,
     ) -> None:
-        self._server = server
+        self.server = server
         self._socket_factory_fn = socket_factory_fn
         self._initial_pool_size: int = min(initial_pool_size, max_pool_size)
         self._max_pool_size = max_pool_size
@@ -73,7 +73,7 @@ class ConnectionPool:
         if marked_down_until := self._marked_down_until:
             if time.time() < marked_down_until:
                 raise MemcacheServerError(
-                    self._server, f"Server marked down: {self._server}"
+                    self.server, f"Server marked down: {self.server}"
                 )
             self._marked_down_until = None
 
@@ -83,7 +83,7 @@ class ConnectionPool:
             self._errors = next(self._errors_counter)
             self._marked_down_until = time.time() + self._mark_down_period_s
             raise MemcacheServerError(
-                self._server, f"Server marked down: {self._server}"
+                self.server, f"Server marked down: {self.server}"
             ) from e
 
         self._created = next(self._created_counter)

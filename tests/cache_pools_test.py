@@ -27,15 +27,15 @@ def test_sharded_cache_pool(mocker: MockerFixture) -> None:
     )
     connection_pool = cache_pool._get_pool(Key("foo"))
     assert isinstance(connection_pool, ConnectionPool)
-    assert connection_pool._server == "2.2.2.2:11211"
+    assert connection_pool.server == "2.2.2.2:11211"
 
     connection_pool = cache_pool._get_pool(Key("bar"))
     assert isinstance(connection_pool, ConnectionPool)
-    assert connection_pool._server == "1.1.1.1:11211"
+    assert connection_pool.server == "1.1.1.1:11211"
 
     connection_pool = cache_pool._get_pool(Key("bar", routing_key="foo"))
     assert isinstance(connection_pool, ConnectionPool)
-    assert connection_pool._server == "2.2.2.2:11211"
+    assert connection_pool.server == "2.2.2.2:11211"
 
 
 def test_sharded_cache_pool_different_order_same_results(mocker: MockerFixture) -> None:
@@ -52,15 +52,15 @@ def test_sharded_cache_pool_different_order_same_results(mocker: MockerFixture) 
     )
     connection_pool = cache_pool._get_pool(Key("foo"))
     assert isinstance(connection_pool, ConnectionPool)
-    assert connection_pool._server == "2.2.2.2:11211"
+    assert connection_pool.server == "2.2.2.2:11211"
 
     connection_pool = cache_pool._get_pool(Key("bar"))
     assert isinstance(connection_pool, ConnectionPool)
-    assert connection_pool._server == "1.1.1.1:11211"
+    assert connection_pool.server == "1.1.1.1:11211"
 
     connection_pool = cache_pool._get_pool(Key("bar", routing_key="foo"))
     assert isinstance(connection_pool, ConnectionPool)
-    assert connection_pool._server == "2.2.2.2:11211"
+    assert connection_pool.server == "2.2.2.2:11211"
 
 
 def test_sharded_cache_pool_honors_server_id(mocker: MockerFixture) -> None:
@@ -82,9 +82,9 @@ def test_sharded_cache_pool_honors_server_id(mocker: MockerFixture) -> None:
         connection_pool_factory_fn=connection_pool_factory_builder(),
     )
     connection_pool = cache_pool_a._get_pool(Key("foo"))
-    assert connection_pool._server == "1"
+    assert connection_pool.server == "1"
     connection_pool = cache_pool_b._get_pool(Key("foo"))
-    assert connection_pool._server == "1"
+    assert connection_pool.server == "1"
 
 
 def test_sharded_with_gutter_cache_pool(mocker: MockerFixture) -> None:
@@ -117,7 +117,7 @@ def test_sharded_with_gutter_cache_pool(mocker: MockerFixture) -> None:
 
     connection_pool = cache_pool._get_pool(Key("foo"))
     assert isinstance(connection_pool, ConnectionPool)
-    assert connection_pool._server == "ko2:11211"
+    assert connection_pool.server == "ko2:11211"
     assert connection_pool._pool.qsize() == 0
     assert connection_pool.get_counters() == PoolCounters(
         available=0,
@@ -129,7 +129,7 @@ def test_sharded_with_gutter_cache_pool(mocker: MockerFixture) -> None:
 
     connection_pool = cache_pool._get_pool(Key("bar"))
     assert isinstance(connection_pool, ConnectionPool)
-    assert connection_pool._server == "ok1:11211"
+    assert connection_pool.server == "ok1:11211"
     assert connection_pool._pool.qsize() == 2
     assert connection_pool.get_counters() == PoolCounters(
         available=2,
