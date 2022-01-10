@@ -1,18 +1,32 @@
 import hashlib
 import socket
-from typing import Callable, NamedTuple
+from typing import Callable, NamedTuple, Optional
 
 from meta_memcache.base.connection_pool import ConnectionPool
 from meta_memcache.protocol import Key
 from meta_memcache.settings import DEFAULT_MARK_DOWN_PERIOD_S
 
 
-class IPPort(NamedTuple):
-    ip: str
+class ServerAddress(NamedTuple):
+    host: str
     port: int
+    # ShardedCachePool with HashRing uses str(Server) to
+    # configure the ring of servers and the shardmap. You can
+    # override this id to control the HashRing configuration,
+    # for example, to mimic bmemcached sharding, you should
+    # user server_id = <host>:<port>_<user>_<password>
+    # If you want to replace servers in-place you can
+    # use numerical server_ids, and change the destination
+    # IP maintaining the server_id for clean swaps.
+    server_id: Optional[str] = None
 
     def __str__(self) -> str:
-        return f"{self.ip}:{self.port}"
+        if self.server_id is not None:
+            return self.server_id
+        elif ":" in self.host:
+            return f"[{self.host}]:{self.port}"
+        else:
+            return f"{self.host}:{self.port}"
 
 
 def socket_factory_builder(
@@ -53,7 +67,7 @@ def connection_pool_factory_builder(
     recv_timeout: float = 1,
     no_delay: bool = True,
     read_buffer_size: int = 4096,
-) -> Callable[[IPPort], ConnectionPool]:
+) -> Callable[[ServerAddress], ConnectionPool]:
     """
     Helper to generate a connection_pool_builder with desired settings
 
@@ -62,12 +76,12 @@ def connection_pool_factory_builder(
     you can write and constomize it to your own.
     """
 
-    def connection_pool_builder(ip_port: IPPort) -> ConnectionPool:
+    def connection_pool_builder(server_address: ServerAddress) -> ConnectionPool:
         return ConnectionPool(
-            server=str(ip_port),
+            server=str(server_address),
             socket_factory_fn=socket_factory_builder(
-                host=ip_port.ip,
-                port=ip_port.port,
+                host=server_address.host,
+                port=server_address.port,
                 connection_timeout=connection_timeout,
                 recv_timeout=recv_timeout,
                 no_delay=no_delay,

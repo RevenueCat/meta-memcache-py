@@ -4,8 +4,8 @@ from typing import Tuple
 from pytest_mock import MockerFixture
 
 from meta_memcache import (
-    IPPort,
     Key,
+    ServerAddress,
     ShardedCachePool,
     ShardedWithGutterCachePool,
     connection_pool_factory_builder,
@@ -17,75 +17,99 @@ from meta_memcache.settings import DEFAULT_MARK_DOWN_PERIOD_S
 
 def test_sharded_cache_pool(mocker: MockerFixture) -> None:
     mocker.patch("meta_memcache.configuration.socket", autospec=True)
-    cache_pool = ShardedCachePool.from_ipport_list(
+    cache_pool = ShardedCachePool.from_server_addresses(
         servers=[
-            IPPort(ip="1.1.1.1", port=11211),
-            IPPort(ip="2.2.2.2", port=11211),
-            IPPort(ip="3.3.3.3", port=11211),
+            ServerAddress(host="1.1.1.1", port=11211),
+            ServerAddress(host="2.2.2.2", port=11211),
+            ServerAddress(host="3.3.3.3", port=11211),
         ],
         connection_pool_factory_fn=connection_pool_factory_builder(),
     )
     connection_pool = cache_pool._get_pool(Key("foo"))
     assert isinstance(connection_pool, ConnectionPool)
-    assert connection_pool._server == "2.2.2.2:11211"
+    assert connection_pool.server == "2.2.2.2:11211"
 
     connection_pool = cache_pool._get_pool(Key("bar"))
     assert isinstance(connection_pool, ConnectionPool)
-    assert connection_pool._server == "1.1.1.1:11211"
+    assert connection_pool.server == "1.1.1.1:11211"
 
     connection_pool = cache_pool._get_pool(Key("bar", routing_key="foo"))
     assert isinstance(connection_pool, ConnectionPool)
-    assert connection_pool._server == "2.2.2.2:11211"
+    assert connection_pool.server == "2.2.2.2:11211"
 
 
 def test_sharded_cache_pool_different_order_same_results(mocker: MockerFixture) -> None:
     mocker.patch("meta_memcache.configuration.socket", autospec=True)
-    server_list = [
-        IPPort(ip="1.1.1.1", port=11211),
-        IPPort(ip="2.2.2.2", port=11211),
-        IPPort(ip="3.3.3.3", port=11211),
+    server_addresses = [
+        ServerAddress(host="1.1.1.1", port=11211),
+        ServerAddress(host="2.2.2.2", port=11211),
+        ServerAddress(host="3.3.3.3", port=11211),
     ]
-    random.shuffle(server_list)
-    cache_pool = ShardedCachePool.from_ipport_list(
-        servers=server_list,
+    random.shuffle(server_addresses)
+    cache_pool = ShardedCachePool.from_server_addresses(
+        servers=server_addresses,
         connection_pool_factory_fn=connection_pool_factory_builder(),
     )
     connection_pool = cache_pool._get_pool(Key("foo"))
     assert isinstance(connection_pool, ConnectionPool)
-    assert connection_pool._server == "2.2.2.2:11211"
+    assert connection_pool.server == "2.2.2.2:11211"
 
     connection_pool = cache_pool._get_pool(Key("bar"))
     assert isinstance(connection_pool, ConnectionPool)
-    assert connection_pool._server == "1.1.1.1:11211"
+    assert connection_pool.server == "1.1.1.1:11211"
 
     connection_pool = cache_pool._get_pool(Key("bar", routing_key="foo"))
     assert isinstance(connection_pool, ConnectionPool)
-    assert connection_pool._server == "2.2.2.2:11211"
+    assert connection_pool.server == "2.2.2.2:11211"
+
+
+def test_sharded_cache_pool_honors_server_id(mocker: MockerFixture) -> None:
+    mocker.patch("meta_memcache.configuration.socket", autospec=True)
+    server_addresses = [
+        ServerAddress(host="1.1.1.1", port=11211, server_id="1"),
+        ServerAddress(host="2.2.2.2", port=11211, server_id="2"),
+    ]
+    cache_pool_a = ShardedCachePool.from_server_addresses(
+        servers=server_addresses,
+        connection_pool_factory_fn=connection_pool_factory_builder(),
+    )
+    server_addresses = [
+        ServerAddress(host="1.1.1.1", port=11211, server_id="2"),
+        ServerAddress(host="2.2.2.2", port=11211, server_id="1"),
+    ]
+    cache_pool_b = ShardedCachePool.from_server_addresses(
+        servers=server_addresses,
+        connection_pool_factory_fn=connection_pool_factory_builder(),
+    )
+    connection_pool = cache_pool_a._get_pool(Key("foo"))
+    assert connection_pool.server == "1"
+    connection_pool = cache_pool_b._get_pool(Key("foo"))
+    assert connection_pool.server == "1"
 
 
 def test_sharded_with_gutter_cache_pool(mocker: MockerFixture) -> None:
     server_is_bad = True
 
-    def connect(ip_port: Tuple[str, int]) -> None:
-        ip, port = ip_port
-        if server_is_bad and ip.startswith("ko"):
-            raise MemcacheServerError(server=f"{ip}:{port}", message="uh-oh")
+    def connect(server_address: Tuple[str, int]) -> None:
+        host, port = server_address
+        if server_is_bad and host.startswith("ko"):
+            raise MemcacheServerError(server=f"{host}:{port}", message="uh-oh")
 
     time = mocker.patch("meta_memcache.base.connection_pool.time")
     time.time.return_value = 123
     socket = mocker.patch("meta_memcache.configuration.socket", autospec=True)
     c = socket.socket()
     c.connect.side_effect = connect
-    cache_pool = ShardedWithGutterCachePool.from_ipport_list(
+    cache_pool = ShardedWithGutterCachePool.from_server_addresses(
         servers=[
-            IPPort(ip="ok1", port=11211),
-            IPPort(ip="ko2", port=11211),
-            IPPort(ip="ok3", port=11211),
+            ServerAddress(host="ok1", port=11211),
+            ServerAddress(host="ko2", port=11211),
+            ServerAddress(host="ok3", port=11211),
         ],
         gutter_servers=[
-            IPPort(ip="gutter1", port=11211),
-            IPPort(ip="gutter2", port=11211),
-            IPPort(ip="gutter3", port=11211),
+            ServerAddress(host="gutter1", port=11211),
+            ServerAddress(host="gutter2", port=11211),
+            ServerAddress(host="gutter3", port=11211),
         ],
         gutter_ttl=60,
         connection_pool_factory_fn=connection_pool_factory_builder(initial_pool_size=2),
@@ -93,7 +117,7 @@ def test_sharded_with_gutter_cache_pool(mocker: MockerFixture) -> None:
 
     connection_pool = cache_pool._get_pool(Key("foo"))
     assert isinstance(connection_pool, ConnectionPool)
-    assert connection_pool._server == "ko2:11211"
+    assert connection_pool.server == "ko2:11211"
     assert connection_pool._pool.qsize() == 0
     assert connection_pool.get_counters() == PoolCounters(
         available=0,
@@ -105,7 +129,7 @@ def test_sharded_with_gutter_cache_pool(mocker: MockerFixture) -> None:
 
     connection_pool = cache_pool._get_pool(Key("bar"))
     assert isinstance(connection_pool, ConnectionPool)
-    assert connection_pool._server == "ok1:11211"
+    assert connection_pool.server == "ok1:11211"
     assert connection_pool._pool.qsize() == 2
     assert connection_pool.get_counters() == PoolCounters(
         available=2,
