@@ -4,7 +4,7 @@ from uhashring import HashRing
 
 from meta_memcache.base.base_write_failure_tracker import BaseWriteFailureTracker
 from meta_memcache.base.cache_pool import CachePool
-from meta_memcache.base.connection_pool import ConnectionPool
+from meta_memcache.base.connection_pool import ConnectionPool, PoolCounters
 from meta_memcache.configuration import ServerAddress, default_binary_key_encoding
 from meta_memcache.errors import MemcacheServerError
 from meta_memcache.protocol import (
@@ -32,6 +32,11 @@ class MultiServerCachePool(CachePool):
             write_failure_tracker=write_failure_tracker,
         )
         self._server_pool = server_pool
+
+    def get_counters(self) -> Dict[ServerAddress, PoolCounters]:
+        return {
+            server: pool.get_counters() for server, pool in self._server_pool.items()
+        }
 
 
 class ShardedCachePool(MultiServerCachePool):
