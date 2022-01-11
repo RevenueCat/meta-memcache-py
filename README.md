@@ -49,8 +49,9 @@ def connection_pool_factory_builder(
 * `initial_pool_size`: How many connections open for each host in the pool
 * `max_pool_size`: Maximum number of connections to keep open for each host in
   the pool. Note that if there are no connections available in the pool, the
-  client will open a newuconnection always instead of of just blocking waiting
-  for a free connection.
+  client will open a new connection always, instead of just blocking waiting
+  for a free connection. If you see too many connection creations in the
+  stats, you might need to increase this setting.
 * `mark_down_period_s`: When a network failure is detected, the destination host
   is marked down, and requests will fail fast, instead of trying to reconnect
   causing clients to block. A single client request will be checking if the host
@@ -85,7 +86,7 @@ You can control the routing of the keys setting a custom `routing_key`:
 ```python:
 Key("key:1:2", routing_key="key:1")
 ```
-This is usefull if you have several keys related with each other. You can use the
+This is useful if you have several keys related with each other. You can use the
 same routing key, and they will be placed in the same server. This is handy for
 speed of retrieval (single request instead of fan-out) and/or consistency (all
 will be gone or present, since they are stored in the same server). Note this is
@@ -126,9 +127,54 @@ Implements the connection pool handling as well as the memcache protocol,
 focusing on the new
 [Memcache MetaCommands](https://github.com/memcached/memcached/blob/master/doc/protocol.txt#L79):
 meta get, meta set, meta delete and meta arithmetic. They implement the full set
-of flags, and features, but are very low level. You won't use this unless you
-are implementing some custom high-level command. See below for the usual
-memcache api.
+of flags, and features, but are very low level.
+
+```python:
+    def meta_multiget(
+        self,
+        keys: List[Key],
+        flags: Optional[Set[Flag]] = None,
+        int_flags: Optional[Dict[IntFlag, int]] = None,
+        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+    ) -> Dict[Key, ReadResponse]:
+
+    def meta_get(
+        self,
+        key: Key,
+        flags: Optional[Set[Flag]] = None,
+        int_flags: Optional[Dict[IntFlag, int]] = None,
+        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+    ) -> ReadResponse:
+
+    def meta_set(
+        self,
+        key: Key,
+        value: Any,
+        ttl: int,
+        flags: Optional[Set[Flag]] = None,
+        int_flags: Optional[Dict[IntFlag, int]] = None,
+        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+    ) -> WriteResponse:
+
+    def meta_delete(
+        self,
+        key: Key,
+        flags: Optional[Set[Flag]] = None,
+        int_flags: Optional[Dict[IntFlag, int]] = None,
+        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+    ) -> WriteResponse:
+
+    def meta_arithmetic(
+        self,
+        key: Key,
+        flags: Optional[Set[Flag]] = None,
+        int_flags: Optional[Dict[IntFlag, int]] = None,
+        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+    ) -> WriteResponse:
+```
+
+You won't use this api unless you are implementing some custom high-level
+command. See below for the usual memcache api.
 
 ## High level commands:
 
@@ -262,8 +308,8 @@ Invalidation...
 ```
 
 # Anti-dogpiling techniques
-Some commands receive `RecachePolicy`, `StalePolicy` and `LeasePolicy`
-for the advanced anti-dogpiling control needed in high-qps environments:
+Some commands receive `RecachePolicy`, `StalePolicy` and `LeasePolicy` for the
+advanced anti-dogpiling control needed in high-qps environments:
 
 ```
 class RecachePolicy(NamedTuple):
@@ -329,7 +375,7 @@ a few classes implement the pool-level semantics:
   'gutter' pool, with TTLs overriden and lowered on the fly, so they provide
   some level of caching instead of hitting the backend for each request.
 
-These pools also provide a write failure tracker feature, usefull if you are
+These pools also provide a write failure tracker feature, useful if you are
 serious about cache consistency. If you have transient network issues, some
 writes might fail, and if the server comes back without being restarted or the
 cache flushed, the data will be stale. This allows for failed writes to be
@@ -339,3 +385,29 @@ cache consistency guaranteed.
 It should be trivial to implement your own cache pool if you need custom
 sharding, shadowing, pools that support live migrations, etc. Feel free to
 contribute!
+
+## Stats:
+The cache pools offer a `get_counters()` that offers information of the state of
+the servers and their connection pools:
+
+```
+    def get_counters(self) -> Dict[ServerAddress, PoolCounters]:
+```
+
+The counters are:
+```
+class PoolCounters(NamedTuple):
+    # Available connections in the pool, ready to use
+    available: int
+    # The # of connections active, currently in use, out of the pool
+    active: int
+    # Current stablished connections (available + active)
+    stablished: int
+    # Total # of connections created. If this keeps growing
+    # might mean the pool size is too small and we are
+    # constantly needing to create new connections:
+    total_created: int
+    # Total # of connection or socket errors
+    total_errors: int
+```
+
