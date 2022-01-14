@@ -56,7 +56,17 @@ class IntFlag(Enum):
 class TokenFlag(Enum):
     OPAQUE = b"O"
     KEY = b"k"
-    MA_MODE = b"M"  # mode switch. I or + / D or - for incr / decr
+    # 'M' (mode switch):
+    # * Meta Arithmetic:
+    #  - I or +: increment
+    #  - D or -: decrement
+    # * Meta Set: See SetMode Enum in base/cache_pool.py
+    #  - E: "add" command. LRU bump and return NS if item exists. Else add.
+    #  - A: "append" command. If item exists, append the new value to its data.
+    #  - P: "prepend" command. If item exists, prepend the new value to its data.
+    #  - R: "replace" command. Set only if item already exists.
+    #  - S: "set" command. The default mode, added for completeness.
+    MODE = b"M"
 
 
 # Store maps of byte values (int) to enum value

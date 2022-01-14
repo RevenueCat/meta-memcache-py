@@ -1,3 +1,4 @@
+from enum import Enum
 import time
 from typing import Any, Dict, List, Optional, Set, Tuple, Type, TypeVar, Union
 
@@ -9,6 +10,14 @@ from meta_memcache.protocol import Flag, IntFlag, Key, Miss, Success, TokenFlag,
 T = TypeVar("T")
 
 
+class SetMode(Enum):
+    SET = b"S"  # Default
+    ADD = b"E"  # LRU bump and return NS if item exists. Else add.
+    APPEND = b"A"  # If item exists, append the new value to its data.
+    PREPEND = b"P"  # If item exists, prepend the new value to its data.
+    REPLACE = b"R"  # Set only if item already exists.
+
+
 class CachePool(BaseCachePool):
     def set(
         self,
@@ -18,6 +27,7 @@ class CachePool(BaseCachePool):
         no_reply: bool = False,
         cas_token: Optional[int] = None,
         stale_policy: Optional[StalePolicy] = None,
+        set_mode: SetMode = SetMode.SET,
     ) -> bool:
         key = key if isinstance(key, Key) else Key(key)
         flags = set()
@@ -30,6 +40,10 @@ class CachePool(BaseCachePool):
             int_flags[IntFlag.CAS_TOKEN] = cas_token
             if stale_policy and stale_policy.mark_stale_on_cas_mismatch:
                 flags.add(Flag.MARK_STALE)
+        if set_mode == SetMode.SET:
+            token_flags = None
+        else:
+            token_flags = {TokenFlag.MODE: set_mode.value}
 
         result = self.meta_set(
             key=key,
@@ -37,6 +51,7 @@ class CachePool(BaseCachePool):
             ttl=ttl,
             flags=flags,
             int_flags=int_flags,
+            token_flags=token_flags,
         )
 
         return isinstance(result, Success)
@@ -313,7 +328,7 @@ class CachePool(BaseCachePool):
         if cas_token is not None:
             int_flags[IntFlag.CAS_TOKEN] = cas_token
         if delta < 0:
-            token_flags[TokenFlag.MA_MODE] = b"-"
+            token_flags[TokenFlag.MODE] = b"-"
 
         return flags, int_flags, token_flags
 
