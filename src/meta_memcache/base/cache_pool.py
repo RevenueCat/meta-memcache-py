@@ -1,5 +1,5 @@
 import time
-from typing import Any, Dict, List, Optional, Set, Tuple, Type, TypeVar
+from typing import Any, Dict, List, Optional, Set, Tuple, Type, TypeVar, Union
 
 from meta_memcache.base.base_cache_pool import BaseCachePool
 from meta_memcache.configuration import LeasePolicy, RecachePolicy, StalePolicy
@@ -12,13 +12,14 @@ T = TypeVar("T")
 class CachePool(BaseCachePool):
     def set(
         self,
-        key: Key,
+        key: Union[Key, str],
         value: Any,  # pyre-ignore[2]
         ttl: int,
         no_reply: bool = False,
         cas_token: Optional[int] = None,
         stale_policy: Optional[StalePolicy] = None,
     ) -> bool:
+        key = key if isinstance(key, Key) else Key(key)
         flags = set()
         if no_reply:
             flags.add(Flag.NOREPLY)
@@ -42,11 +43,12 @@ class CachePool(BaseCachePool):
 
     def delete(
         self,
-        key: Key,
+        key: Union[Key, str],
         cas_token: Optional[int] = None,
         no_reply: bool = False,
         stale_policy: Optional[StalePolicy] = None,
     ) -> bool:
+        key = key if isinstance(key, Key) else Key(key)
         flags = set()
         int_flags = {}
         if no_reply:
@@ -65,7 +67,13 @@ class CachePool(BaseCachePool):
 
         return isinstance(result, Success)
 
-    def touch(self, key: Key, ttl: int, no_reply: bool = False) -> bool:
+    def touch(
+        self,
+        key: Union[Key, str],
+        ttl: int,
+        no_reply: bool = False,
+    ) -> bool:
+        key = key if isinstance(key, Key) else Key(key)
         flags = set()
         int_flags = {IntFlag.CACHE_TTL: ttl}
         if no_reply:
@@ -77,7 +85,7 @@ class CachePool(BaseCachePool):
     # pyre-ignore[3]  Yeah, we return 'Any'
     def get_or_lease(
         self,
-        key: Key,
+        key: Union[Key, str],
         lease_policy: LeasePolicy,
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
@@ -93,11 +101,12 @@ class CachePool(BaseCachePool):
     # pyre-ignore[3]  Yeah, we return 'Any'
     def get_or_lease_cas(
         self,
-        key: Key,
+        key: Union[Key, str],
         lease_policy: LeasePolicy,
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Tuple[Optional[Any], Optional[int]]:
+        key = key if isinstance(key, Key) else Key(key)
         if lease_policy.miss_retries <= 0:
             raise ValueError(
                 "Wrong lease_policy: miss_retries needs to be greater than 0"
@@ -159,7 +168,7 @@ class CachePool(BaseCachePool):
     # pyre-ignore[3]  Yeah, we return 'Any'
     def get(
         self,
-        key: Key,
+        key: Union[Key, str],
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Optional[Any]:
@@ -171,7 +180,7 @@ class CachePool(BaseCachePool):
     # pyre-ignore[3]  Yeah, we return 'Any'
     def multi_get(
         self,
-        keys: List[Key],
+        keys: List[Union[Key, str]],
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Dict[Key, Optional[Any]]:
@@ -190,7 +199,9 @@ class CachePool(BaseCachePool):
 
         results = {}
         for key, result in self.meta_multiget(
-            keys, flags=flags, int_flags=int_flags
+            keys=[key if isinstance(key, Key) else Key(key) for key in keys],
+            flags=flags,
+            int_flags=int_flags,
         ).items():
             if isinstance(result, Value):
                 # It is a hit
@@ -209,10 +220,11 @@ class CachePool(BaseCachePool):
     # pyre-ignore[3]  Yeah, we return 'Any'
     def get_cas(
         self,
-        key: Key,
+        key: Union[Key, str],
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Tuple[Optional[Any], Optional[int]]:
+        key = key if isinstance(key, Key) else Key(key)
         flags = {
             Flag.RETURN_VALUE,
             Flag.RETURN_TTL,
@@ -244,7 +256,7 @@ class CachePool(BaseCachePool):
 
     def get_typed(
         self,
-        key: Key,
+        key: Union[Key, str],
         cls: Type[T],
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
@@ -261,7 +273,7 @@ class CachePool(BaseCachePool):
 
     def get_cas_typed(
         self,
-        key: Key,
+        key: Union[Key, str],
         cls: Type[T],
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
@@ -307,12 +319,13 @@ class CachePool(BaseCachePool):
 
     def delta(
         self,
-        key: Key,
+        key: Union[Key, str],
         delta: int,
         refresh_ttl: Optional[int] = None,
         no_reply: bool = False,
         cas_token: Optional[int] = None,
     ) -> bool:
+        key = key if isinstance(key, Key) else Key(key)
         flags, int_flags, token_flags = self._get_delta_flags(
             delta=delta,
             refresh_ttl=refresh_ttl,
@@ -326,7 +339,7 @@ class CachePool(BaseCachePool):
 
     def delta_initialize(
         self,
-        key: Key,
+        key: Union[Key, str],
         delta: int,
         initial_value: int,
         initial_ttl: int,
@@ -334,6 +347,7 @@ class CachePool(BaseCachePool):
         no_reply: bool = False,
         cas_token: Optional[int] = None,
     ) -> bool:
+        key = key if isinstance(key, Key) else Key(key)
         flags, int_flags, token_flags = self._get_delta_flags(
             delta=delta,
             refresh_ttl=refresh_ttl,
@@ -349,11 +363,12 @@ class CachePool(BaseCachePool):
 
     def delta_and_get(
         self,
-        key: Key,
+        key: Union[Key, str],
         delta: int,
         refresh_ttl: Optional[int] = None,
         cas_token: Optional[int] = None,
     ) -> Optional[int]:
+        key = key if isinstance(key, Key) else Key(key)
         flags, int_flags, token_flags = self._get_delta_flags(
             return_value=True,
             delta=delta,
@@ -369,13 +384,14 @@ class CachePool(BaseCachePool):
 
     def delta_initialize_and_get(
         self,
-        key: Key,
+        key: Union[Key, str],
         delta: int,
         initial_value: int,
         initial_ttl: int,
         refresh_ttl: Optional[int] = None,
         cas_token: Optional[int] = None,
     ) -> Optional[int]:
+        key = key if isinstance(key, Key) else Key(key)
         flags, int_flags, token_flags = self._get_delta_flags(
             return_value=True,
             delta=delta,

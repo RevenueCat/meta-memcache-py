@@ -74,6 +74,12 @@ def test_set_cmd(
 ) -> None:
     memcache_socket.get_response.return_value = Success()
 
+    cache_pool.set(key="foo", value="bar", ttl=300)
+    memcache_socket.sendall.assert_called_once_with(b"ms foo 3 T300 F0\r\nbar\r\n")
+    memcache_socket.get_response.assert_called_once_with()
+    memcache_socket.sendall.reset_mock()
+    memcache_socket.get_response.reset_mock()
+
     cache_pool.set(key=Key("foo"), value="bar", ttl=300)
     memcache_socket.sendall.assert_called_once_with(b"ms foo 3 T300 F0\r\nbar\r\n")
     memcache_socket.get_response.assert_called_once_with()
@@ -170,6 +176,12 @@ def test_delete_cmd(
 ) -> None:
     memcache_socket.get_response.return_value = Success()
 
+    cache_pool.delete(key="foo")
+    memcache_socket.sendall.assert_called_once_with(b"md foo\r\n")
+    memcache_socket.get_response.assert_called_once_with()
+    memcache_socket.sendall.reset_mock()
+    memcache_socket.get_response.reset_mock()
+
     cache_pool.delete(key=Key("foo"))
     memcache_socket.sendall.assert_called_once_with(b"md foo\r\n")
     memcache_socket.get_response.assert_called_once_with()
@@ -223,6 +235,12 @@ def test_touch_cmd(
 ) -> None:
     memcache_socket.get_response.return_value = Success()
 
+    cache_pool.touch(key="foo", ttl=60)
+    memcache_socket.sendall.assert_called_once_with(b"mg foo T60\r\n")
+    memcache_socket.get_response.assert_called_once_with()
+    memcache_socket.sendall.reset_mock()
+    memcache_socket.get_response.reset_mock()
+
     cache_pool.touch(key=Key("foo"), ttl=60)
     memcache_socket.sendall.assert_called_once_with(b"mg foo T60\r\n")
     memcache_socket.get_response.assert_called_once_with()
@@ -238,6 +256,10 @@ def test_touch_cmd(
 
 def test_get_cmd(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> None:
     memcache_socket.get_response.return_value = Miss()
+
+    cache_pool.get(key="foo")
+    memcache_socket.sendall.assert_called_once_with(b"mg foo t l v c h f\r\n")
+    memcache_socket.sendall.reset_mock()
 
     cache_pool.get(key=Key("foo"))
     memcache_socket.sendall.assert_called_once_with(b"mg foo t l v c h f\r\n")
@@ -695,6 +717,10 @@ def test_write_failure_tracker(
 
 def test_delta_cmd(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> None:
     memcache_socket.get_response.return_value = Miss()
+
+    cache_pool.delta(key="foo", delta=1, no_reply=True)
+    memcache_socket.sendall.assert_called_once_with(b"ma foo q D1\r\n")
+    memcache_socket.sendall.reset_mock()
 
     cache_pool.delta(key=Key("foo"), delta=1, no_reply=True)
     memcache_socket.sendall.assert_called_once_with(b"ma foo q D1\r\n")

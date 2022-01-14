@@ -80,6 +80,10 @@ cache_pool.set(key=Key("bar"), value=1, ttl=1000)
 ```
 
 ## Keys:
+### String or `Key` named tuple
+On the high-level commands you can use either plain strings as keys
+or the more advanced `Key` object that allows extra features like
+custom routing and unicode keys.
 
 ### Custom routing:
 You can control the routing of the keys setting a custom `routing_key`:
@@ -190,7 +194,7 @@ Invalidation...
 ```python:
     def set(
         self,
-        key: Key,
+        key: Union[Key, str],
         value: Any,
         ttl: int,
         no_reply: bool = False,
@@ -200,7 +204,7 @@ Invalidation...
 
     def delete(
         self,
-        key: Key,
+        key: Union[Key, str],
         cas_token: Optional[int] = None,
         no_reply: bool = False,
         stale_policy: Optional[StalePolicy] = None,
@@ -208,14 +212,14 @@ Invalidation...
 
     def touch(
         self,
-        key: Key,
+        key: Union[Key, str],
         ttl: int,
         no_reply: bool = False,
     ) -> bool:
 
     def get_or_lease(
         self,
-        key: Key,
+        key: Union[Key, str],
         lease_policy: LeasePolicy,
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
@@ -223,7 +227,7 @@ Invalidation...
 
     def get_or_lease_cas(
         self,
-        key: Key,
+        key: Union[Key, str],
         lease_policy: LeasePolicy,
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
@@ -231,28 +235,28 @@ Invalidation...
 
     def get(
         self,
-        key: Key,
+        key: Union[Key, str],
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Optional[Any]:
 
     def multi_get(
         self,
-        keys: List[Key],
+        keys: List[Union[Key, str]],
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Dict[Key, Optional[Any]]:
 
     def get_cas(
         self,
-        key: Key,
+        key: Union[Key, str],
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Tuple[Optional[Any], Optional[int]]:
 
     def get_typed(
         self,
-        key: Key,
+        key: Union[Key, str],
         cls: Type[T],
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
@@ -261,7 +265,7 @@ Invalidation...
 
     def get_cas_typed(
         self,
-        key: Key,
+        key: Union[Key, str],
         cls: Type[T],
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
@@ -270,7 +274,7 @@ Invalidation...
 
     def delta(
         self,
-        key: Key,
+        key: Union[Key, str],
         delta: int,
         refresh_ttl: Optional[int] = None,
         no_reply: bool = False,
@@ -279,7 +283,7 @@ Invalidation...
 
     def delta_initialize(
         self,
-        key: Key,
+        key: Union[Key, str],
         delta: int,
         initial_value: int,
         initial_ttl: int,
@@ -290,7 +294,7 @@ Invalidation...
 
     def delta_and_get(
         self,
-        key: Key,
+        key: Union[Key, str],
         delta: int,
         refresh_ttl: Optional[int] = None,
         cas_token: Optional[int] = None,
@@ -298,7 +302,7 @@ Invalidation...
 
     def delta_initialize_and_get(
         self,
-        key: Key,
+        key: Union[Key, str],
         delta: int,
         initial_value: int,
         initial_ttl: int,
