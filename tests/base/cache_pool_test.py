@@ -6,9 +6,8 @@ from unittest.mock import MagicMock, call
 import pytest
 from pytest_mock import MockerFixture
 
-from meta_memcache import Key, MemcacheError
+from meta_memcache import CachePool, Key, MemcacheError, SetMode
 from meta_memcache.base.base_write_failure_tracker import BaseWriteFailureTracker
-from meta_memcache.base.cache_pool import CachePool
 from meta_memcache.base.connection_pool import ConnectionPool
 from meta_memcache.base.memcache_socket import MemcacheSocket
 from meta_memcache.configuration import (
@@ -114,6 +113,30 @@ def test_set_cmd(
     memcache_socket.sendall.assert_called_once_with(
         b"ms foo " + str(len(data)).encode() + b" T300 F24\r\n" + data + b"\r\n"
     )
+    memcache_socket.get_response.assert_called_once_with()
+    memcache_socket.sendall.reset_mock()
+    memcache_socket.get_response.reset_mock()
+
+    cache_pool.set(key=Key("foo"), value=123, ttl=300, set_mode=SetMode.ADD)
+    memcache_socket.sendall.assert_called_once_with(b"ms foo 3 T300 F2 ME\r\n123\r\n")
+    memcache_socket.get_response.assert_called_once_with()
+    memcache_socket.sendall.reset_mock()
+    memcache_socket.get_response.reset_mock()
+
+    cache_pool.set(key=Key("foo"), value=123, ttl=300, set_mode=SetMode.APPEND)
+    memcache_socket.sendall.assert_called_once_with(b"ms foo 3 T300 F2 MA\r\n123\r\n")
+    memcache_socket.get_response.assert_called_once_with()
+    memcache_socket.sendall.reset_mock()
+    memcache_socket.get_response.reset_mock()
+
+    cache_pool.set(key=Key("foo"), value=123, ttl=300, set_mode=SetMode.PREPEND)
+    memcache_socket.sendall.assert_called_once_with(b"ms foo 3 T300 F2 MP\r\n123\r\n")
+    memcache_socket.get_response.assert_called_once_with()
+    memcache_socket.sendall.reset_mock()
+    memcache_socket.get_response.reset_mock()
+
+    cache_pool.set(key=Key("foo"), value=123, ttl=300, set_mode=SetMode.REPLACE)
+    memcache_socket.sendall.assert_called_once_with(b"ms foo 3 T300 F2 MR\r\n123\r\n")
     memcache_socket.get_response.assert_called_once_with()
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()

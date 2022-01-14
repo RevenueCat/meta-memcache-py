@@ -1,6 +1,7 @@
 __version__ = "0.1.0"
 
 from meta_memcache.base.base_write_failure_tracker import BaseWriteFailureTracker
+from meta_memcache.base.cache_pool import CachePool, SetMode
 from meta_memcache.cache_pools import ShardedCachePool, ShardedWithGutterCachePool
 from meta_memcache.configuration import (
     LeasePolicy,

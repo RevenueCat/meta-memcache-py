@@ -200,6 +200,7 @@ Invalidation...
         no_reply: bool = False,
         cas_token: Optional[int] = None,
         stale_policy: Optional[StalePolicy] = None,
+        set_mode: SetMode = SetMode.SET,  # Other are ADD, REPLACE, APPEND...
     ) -> bool:
 
     def delete(
