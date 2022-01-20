@@ -392,8 +392,8 @@ sharding, shadowing, pools that support live migrations, etc. Feel free to
 contribute!
 
 ## Stats:
-The cache pools offer a `get_counters()` that offers information of the state of
-the servers and their connection pools:
+The cache pools offer a `get_counters()` that return information about the state
+of the servers and their connection pools:
 
 ```
     def get_counters(self) -> Dict[ServerAddress, PoolCounters]:
