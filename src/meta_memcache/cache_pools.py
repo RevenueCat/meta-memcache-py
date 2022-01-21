@@ -69,7 +69,7 @@ class ShardedCachePool(MultiServerCachePool):
         serializer: Optional[BaseSerializer] = None,
         binary_key_encoding_fn: Callable[[Key], bytes] = default_binary_key_encoding,
         write_failure_tracker: Optional[BaseWriteFailureTracker] = None,
-    ) -> "MultiServerCachePool":
+    ) -> "ShardedCachePool":
         server_pool: Dict[ServerAddress, ConnectionPool] = {
             server: connection_pool_factory_fn(server) for server in servers
         }
@@ -114,7 +114,7 @@ class ShardedWithGutterCachePool(ShardedCachePool):
         serializer: Optional[BaseSerializer] = None,
         binary_key_encoding_fn: Callable[[Key], bytes] = default_binary_key_encoding,
         write_failure_tracker: Optional[BaseWriteFailureTracker] = None,
-    ) -> "MultiServerCachePool":
+    ) -> "ShardedWithGutterCachePool":
         server_pool: Dict[ServerAddress, ConnectionPool] = {
             server: connection_pool_factory_fn(server) for server in servers
         }
