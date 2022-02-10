@@ -157,7 +157,7 @@ class CachePool(BaseCachePool):
 
             if isinstance(result, Value):
                 # It is a hit.
-                cas_token = result.int_flags.get(IntFlag.CAS_TOKEN)
+                cas_token = result.int_flags.get(IntFlag.RETURNED_CAS_TOKEN)
                 if Flag.WIN in result.flags:
                     # Win flag present, meaning we got the lease to
                     # recache/cache the item. We need to mimic a miss.
@@ -257,7 +257,7 @@ class CachePool(BaseCachePool):
         result = self.meta_get(key, flags=flags, int_flags=int_flags)
         if isinstance(result, Value):
             # It is a hit
-            cas_token = result.int_flags.get(IntFlag.CAS_TOKEN)
+            cas_token = result.int_flags.get(IntFlag.RETURNED_CAS_TOKEN)
             if Flag.WIN in result.flags:
                 # Win flag present, meaning we got the lease to
                 # recache the item. We need to mimic a miss.
