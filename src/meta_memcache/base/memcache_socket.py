@@ -7,8 +7,8 @@ from meta_memcache.protocol import (
     ENDL,
     ENDL_LEN,
     MIN_HEADER_SIZE,
+    NOOP,
     SPACE,
-    Blob,
     Conflict,
     Miss,
     NotStored,
@@ -70,6 +70,7 @@ class MemcacheSocket:
         )
         self._buf = bytearray(self._buffer_size)
         self._buf_view = memoryview(self._buf)
+        self._noop_expected = 0
 
     def get_version(self) -> ServerVersion:
         return self._version
@@ -196,12 +197,24 @@ class MemcacheSocket:
         self._pos = endl_pos + ENDL_LEN
         return self._tokenize_header(header)
 
-    def sendall(self, data: Blob) -> None:
+    def sendall(self, data: bytes, with_noop: bool = False) -> None:
+        if with_noop:
+            self._noop_expected += 1
+            data += NOOP
         self._conn.sendall(data)
+
+    def _read_until_noop_header(self) -> None:
+        while self._noop_expected > 0:
+            response_code, *_chunks = self._get_header()
+            if response_code == b"MN":
+                self._noop_expected -= 1
 
     def get_response(
         self,
     ) -> Union[Value, Success, NotStored, Conflict, Miss]:
+        if self._noop_expected > 0:
+            self._read_until_noop_header()
+
         header = self._get_header()
         response_code, *chunks = header
         try:

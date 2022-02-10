@@ -100,11 +100,11 @@ def test_get_response_1_6_6(
     ms = MemcacheSocket(fake_socket, version=ServerVersion.AWS_1_6_6)
     result = ms.get_response()
     assert isinstance(result, Success)
-    assert result.int_flags == {IntFlag.CAS_TOKEN: 1}
+    assert result.int_flags == {IntFlag.RETURNED_CAS_TOKEN: 1}
 
     result = ms.get_response()
     assert isinstance(result, Value)
-    assert result.int_flags == {IntFlag.CAS_TOKEN: 1}
+    assert result.int_flags == {IntFlag.RETURNED_CAS_TOKEN: 1}
     assert result.size == 2
 
 
