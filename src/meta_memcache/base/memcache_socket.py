@@ -12,9 +12,11 @@ from meta_memcache.protocol import (
     Conflict,
     Miss,
     NotStored,
+    ServerVersion,
     Success,
     Value,
     flag_values,
+    get_store_success_response_header,
     int_flags_values,
     token_flags_values,
 )
@@ -54,11 +56,23 @@ class MemcacheSocket:
       the most likely scenario), the buffer is reset with no cost.
     """
 
-    def __init__(self, conn: socket.socket, buffer_size: int = 4096) -> None:
+    def __init__(
+        self,
+        conn: socket.socket,
+        buffer_size: int = 4096,
+        version: ServerVersion = ServerVersion.STABLE,
+    ) -> None:
         self.set_socket(conn)
         self._buffer_size = buffer_size
+        self._version = version
+        self._store_success_response_header: bytes = get_store_success_response_header(
+            version
+        )
         self._buf = bytearray(self._buffer_size)
         self._buf_view = memoryview(self._buf)
+
+    def get_version(self) -> ServerVersion:
+        return self._version
 
     def set_socket(self, conn: socket.socket) -> None:
         """
@@ -197,7 +211,7 @@ class MemcacheSocket:
                 value_size = int(chunks.pop(0))
                 result = Value(value_size)
                 self._add_flags(result, chunks)
-            elif response_code == b"HD":
+            elif response_code == self._store_success_response_header:
                 # Stored or no value, return Success
                 result = Success()
                 self._add_flags(result, chunks)

@@ -3,7 +3,7 @@ import socket
 from typing import Callable, NamedTuple, Optional
 
 from meta_memcache.base.connection_pool import ConnectionPool
-from meta_memcache.protocol import Key
+from meta_memcache.protocol import Key, ServerVersion
 from meta_memcache.settings import DEFAULT_MARK_DOWN_PERIOD_S
 
 
@@ -19,6 +19,7 @@ class ServerAddress(NamedTuple):
     # use numerical server_ids, and change the destination
     # IP maintaining the server_id for clean swaps.
     server_id: Optional[str] = None
+    version: ServerVersion = ServerVersion.STABLE
 
     def __str__(self) -> str:
         if self.server_id is not None:
@@ -90,6 +91,7 @@ def connection_pool_factory_builder(
             max_pool_size=max_pool_size,
             mark_down_period_s=mark_down_period_s,
             read_buffer_size=read_buffer_size,
+            version=server_address.version,
         )
 
     return connection_pool_builder

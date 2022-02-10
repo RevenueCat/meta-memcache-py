@@ -19,6 +19,7 @@ from meta_memcache.protocol import (
     Key,
     Miss,
     NotStored,
+    ServerVersion,
     Success,
     TokenFlag,
     Value,

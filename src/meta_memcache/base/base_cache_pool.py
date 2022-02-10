@@ -19,10 +19,12 @@ from meta_memcache.protocol import (
     Miss,
     NotStored,
     ReadResponse,
+    ServerVersion,
     Success,
     TokenFlag,
     Value,
     WriteResponse,
+    encode_size,
 )
 from meta_memcache.settings import MAX_KEY_SIZE
 
@@ -56,11 +58,12 @@ class BaseCachePool(ABC):
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        version: ServerVersion = ServerVersion.STABLE,
     ) -> bytes:
         encoded_key, is_binary = self._encode_key(key)
         cmd = [command.value, encoded_key]
         if size is not None:
-            cmd.append(str(size).encode("ascii"))
+            cmd.append(encode_size(size, version=version))
         cmd_flags = []
         if is_binary:
             cmd_flags.append(Flag.BINARY.value)
@@ -173,6 +176,7 @@ class BaseCachePool(ABC):
             flags=flags,
             int_flags=int_flags,
             token_flags=token_flags,
+            version=conn.get_version(),
         )
         if value:
             conn.sendall(cmd + value + ENDL)

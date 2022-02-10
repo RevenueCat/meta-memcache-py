@@ -1,6 +1,6 @@
-from enum import Enum
 import time
-from typing import Any, Dict, List, Optional, Set, Tuple, Type, TypeVar, Union
+from enum import Enum
+from typing import Any, Dict, Iterable, Optional, Set, Tuple, Type, TypeVar, Union
 
 from meta_memcache.base.base_cache_pool import BaseCachePool
 from meta_memcache.configuration import LeasePolicy, RecachePolicy, StalePolicy
@@ -195,7 +195,7 @@ class CachePool(BaseCachePool):
     # pyre-ignore[3]  Yeah, we return 'Any'
     def multi_get(
         self,
-        keys: List[Union[Key, str]],
+        keys: Iterable[Union[Key, str]],
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Dict[Key, Optional[Any]]:
