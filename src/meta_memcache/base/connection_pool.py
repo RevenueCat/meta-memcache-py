@@ -7,6 +7,7 @@ from typing import Callable, Generator, NamedTuple, Optional
 
 from meta_memcache.base.memcache_socket import MemcacheSocket
 from meta_memcache.errors import MemcacheServerError
+from meta_memcache.protocol import ServerVersion
 from meta_memcache.settings import DEFAULT_MARK_DOWN_PERIOD_S, DEFAULT_READ_BUFFER_SIZE
 
 
@@ -34,6 +35,7 @@ class ConnectionPool:
         max_pool_size: int,
         mark_down_period_s: float = DEFAULT_MARK_DOWN_PERIOD_S,
         read_buffer_size: int = DEFAULT_READ_BUFFER_SIZE,
+        version: ServerVersion = ServerVersion.STABLE,
     ) -> None:
         self.server = server
         self._socket_factory_fn = socket_factory_fn
@@ -49,6 +51,7 @@ class ConnectionPool:
         self._marked_down_until: Optional[float] = None
         self._pool: Queue[MemcacheSocket] = Queue(self._max_pool_size)
         self._read_buffer_size = read_buffer_size
+        self._version = version
         for _ in range(self._initial_pool_size):
             try:
                 self._pool.put_nowait(self._create_connection())
@@ -87,7 +90,7 @@ class ConnectionPool:
             ) from e
 
         self._created = next(self._created_counter)
-        return MemcacheSocket(conn, self._read_buffer_size)
+        return MemcacheSocket(conn, self._read_buffer_size, version=self._version)
 
     def _discard_connection(self, conn: MemcacheSocket, error: bool = False) -> None:
         try:

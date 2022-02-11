@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, IntEnum
 from typing import Any, Dict, NamedTuple, Optional, Set, Union
 
 ENDL = b"\r\n"
@@ -134,3 +134,28 @@ WriteResponse = Union[Success, NotStored, Conflict, Miss]
 
 
 Blob = Union[bytes, bytearray, memoryview]
+
+
+class ServerVersion(IntEnum):
+    """
+    If more versions with breaking changes are
+    added, bump stable to the next int. Code
+    will be able to use > / < / = to code
+    the behavior of the different versions.
+    """
+
+    AWS_1_6_6 = 1
+    STABLE = 2
+
+
+def get_store_success_response_header(version: ServerVersion) -> bytes:
+    if version == ServerVersion.AWS_1_6_6:
+        return b"OK"
+    return b"HD"
+
+
+def encode_size(size: int, version: ServerVersion) -> bytes:
+    if version == ServerVersion.AWS_1_6_6:
+        return b"S" + str(size).encode("ascii")
+    else:
+        return str(size).encode("ascii")

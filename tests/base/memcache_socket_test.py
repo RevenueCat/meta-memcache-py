@@ -12,6 +12,7 @@ from meta_memcache.protocol import (
     IntFlag,
     Miss,
     NotStored,
+    ServerVersion,
     Success,
     TokenFlag,
     Value,
@@ -87,6 +88,23 @@ def test_get_response(
     result = ms.get_response()
     assert isinstance(result, Value)
     assert result.int_flags == {IntFlag.RETURNED_CAS_TOKEN: 1}
+    assert result.size == 2
+
+
+def test_get_response_1_6_6(
+    fake_socket: socket.socket,
+) -> None:
+    fake_socket.recv_into.side_effect = recv_into_mock(
+        [b"OK c1\r\nVA 2 c1", b"\r\nOK\r\n"]
+    )
+    ms = MemcacheSocket(fake_socket, version=ServerVersion.AWS_1_6_6)
+    result = ms.get_response()
+    assert isinstance(result, Success)
+    assert result.int_flags == {IntFlag.CAS_TOKEN: 1}
+
+    result = ms.get_response()
+    assert isinstance(result, Value)
+    assert result.int_flags == {IntFlag.CAS_TOKEN: 1}
     assert result.size == 2
 
 

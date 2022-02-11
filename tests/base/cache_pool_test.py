@@ -17,7 +17,15 @@ from meta_memcache.configuration import (
     default_binary_key_encoding,
 )
 from meta_memcache.errors import MemcacheServerError
-from meta_memcache.protocol import Flag, IntFlag, Miss, NotStored, Success, Value
+from meta_memcache.protocol import (
+    Flag,
+    IntFlag,
+    Miss,
+    NotStored,
+    ServerVersion,
+    Success,
+    Value,
+)
 from meta_memcache.serializer import MixedSerializer
 
 
@@ -48,7 +56,16 @@ def write_failure_tracker(mocker: MockerFixture) -> BaseWriteFailureTracker:
 
 @pytest.fixture
 def memcache_socket(mocker: MockerFixture) -> MemcacheSocket:
-    return mocker.MagicMock(sped=MemcacheSocket)
+    memcache_socket = mocker.MagicMock(spec=MemcacheSocket)
+    memcache_socket.get_version.return_value = ServerVersion.STABLE
+    return memcache_socket
+
+
+@pytest.fixture
+def memcache_socket_1_6_6(mocker: MockerFixture) -> MemcacheSocket:
+    memcache_socket = mocker.MagicMock(spec=MemcacheSocket)
+    memcache_socket.get_version.return_value = ServerVersion.AWS_1_6_6
+    return memcache_socket
 
 
 @pytest.fixture
@@ -57,8 +74,24 @@ def cache_pool(
     memcache_socket: MemcacheSocket,
     write_failure_tracker: BaseWriteFailureTracker,
 ) -> FakeCachePool:
-    connection_pool = mocker.MagicMock(sped=ConnectionPool)
+    connection_pool = mocker.MagicMock(spec=ConnectionPool)
     connection_pool.get_connection().__enter__.return_value = memcache_socket
+    return FakeCachePool(
+        connection_pool=connection_pool,
+        serializer=MixedSerializer(),
+        binary_key_encoding_fn=default_binary_key_encoding,
+        write_failure_tracker=write_failure_tracker,
+    )
+
+
+@pytest.fixture
+def cache_pool_1_6_6(
+    mocker: MockerFixture,
+    memcache_socket_1_6_6: MemcacheSocket,
+    write_failure_tracker: BaseWriteFailureTracker,
+) -> FakeCachePool:
+    connection_pool = mocker.MagicMock(spec=ConnectionPool)
+    connection_pool.get_connection().__enter__.return_value = memcache_socket_1_6_6
     return FakeCachePool(
         connection_pool=connection_pool,
         serializer=MixedSerializer(),
@@ -178,6 +211,19 @@ def test_set_cmd(
     memcache_socket.get_response.assert_called_once_with()
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
+
+
+def test_set_cmd_1_6_6(
+    memcache_socket_1_6_6: MemcacheSocket,
+    cache_pool_1_6_6: FakeCachePool,
+) -> None:
+    memcache_socket_1_6_6.get_response.return_value = Success()
+
+    cache_pool_1_6_6.set(key="foo", value="bar", ttl=300)
+    memcache_socket_1_6_6.sendall.assert_called_once_with(
+        b"ms foo S3 T300 F0\r\nbar\r\n"
+    )
+    memcache_socket_1_6_6.get_response.assert_called_once_with()
 
 
 def test_set_success_fail(
