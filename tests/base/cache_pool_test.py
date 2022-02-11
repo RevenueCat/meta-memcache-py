@@ -149,7 +149,7 @@ def test_set_cmd(
 
     cache_pool.set(key=Key("foo"), value=b"123", ttl=300, cas_token=666)
     memcache_socket.sendall.assert_called_once_with(
-        b"ms foo 3 T300 c666 F16\r\n123\r\n"
+        b"ms foo 3 T300 C666 F16\r\n123\r\n"
     )
     memcache_socket.get_response.assert_called_once_with()
     memcache_socket.sendall.reset_mock()
@@ -159,7 +159,7 @@ def test_set_cmd(
         key=Key("foo"), value=b"123", ttl=300, cas_token=666, stale_policy=StalePolicy()
     )
     memcache_socket.sendall.assert_called_once_with(
-        b"ms foo 3 T300 c666 F16\r\n123\r\n"
+        b"ms foo 3 T300 C666 F16\r\n123\r\n"
     )
     memcache_socket.get_response.assert_called_once_with()
     memcache_socket.sendall.reset_mock()
@@ -173,7 +173,7 @@ def test_set_cmd(
         stale_policy=StalePolicy(mark_stale_on_cas_mismatch=True),
     )
     memcache_socket.sendall.assert_called_once_with(
-        b"ms foo 3 I T300 c666 F16\r\n123\r\n"
+        b"ms foo 3 I T300 C666 F16\r\n123\r\n"
     )
     memcache_socket.get_response.assert_called_once_with()
     memcache_socket.sendall.reset_mock()
@@ -212,7 +212,7 @@ def test_delete_cmd(
     memcache_socket.get_response.reset_mock()
 
     cache_pool.delete(key=Key("foo"), cas_token=666)
-    memcache_socket.sendall.assert_called_once_with(b"md foo c666\r\n")
+    memcache_socket.sendall.assert_called_once_with(b"md foo C666\r\n")
     memcache_socket.get_response.assert_called_once_with()
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
@@ -365,7 +365,7 @@ def test_get_value(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -
         size=len(encoded_value.data),
         int_flags={
             IntFlag.CLIENT_FLAG: encoded_value.encoding_id,
-            IntFlag.CAS_TOKEN: expected_cas_token,
+            IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
         },
     )
     memcache_socket.get_value.return_value = encoded_value.data
@@ -409,7 +409,7 @@ def test_value_wrong_type(
         size=len(encoded_value.data),
         int_flags={
             IntFlag.CLIENT_FLAG: encoded_value.encoding_id,
-            IntFlag.CAS_TOKEN: expected_cas_token,
+            IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
         },
     )
     memcache_socket.get_value.return_value = encoded_value.data
@@ -451,7 +451,7 @@ def test_recache_win_returns_miss(
         flags=set([Flag.WIN, Flag.STALE]),
         int_flags={
             IntFlag.CLIENT_FLAG: encoded_value.encoding_id,
-            IntFlag.CAS_TOKEN: expected_cas_token,
+            IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
         },
     )
     memcache_socket.get_value.return_value = encoded_value.data
@@ -472,7 +472,7 @@ def test_recache_lost_returns_stale_value(
         flags=set([Flag.LOST, Flag.STALE]),
         int_flags={
             IntFlag.CLIENT_FLAG: encoded_value.encoding_id,
-            IntFlag.CAS_TOKEN: expected_cas_token,
+            IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
         },
     )
     memcache_socket.get_value.return_value = encoded_value.data
@@ -492,7 +492,7 @@ def test_get_or_lease_hit(
         size=len(encoded_value.data),
         int_flags={
             IntFlag.CLIENT_FLAG: encoded_value.encoding_id,
-            IntFlag.CAS_TOKEN: expected_cas_token,
+            IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
         },
     )
     memcache_socket.get_value.return_value = encoded_value.data
@@ -515,7 +515,7 @@ def test_get_or_lease_miss_win(
         size=0,
         flags=set([Flag.WIN]),
         int_flags={
-            IntFlag.CAS_TOKEN: expected_cas_token,
+            IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
         },
     )
     memcache_socket.get_value.return_value = b""
@@ -541,21 +541,21 @@ def test_get_or_lease_miss_lost_then_data(
             size=0,
             flags=set([Flag.LOST]),
             int_flags={
-                IntFlag.CAS_TOKEN: expected_cas_token - 1,
+                IntFlag.RETURNED_CAS_TOKEN: expected_cas_token - 1,
             },
         ),
         Value(
             size=0,
             flags=set([Flag.LOST]),
             int_flags={
-                IntFlag.CAS_TOKEN: expected_cas_token - 1,
+                IntFlag.RETURNED_CAS_TOKEN: expected_cas_token - 1,
             },
         ),
         Value(
             size=len(encoded_value.data),
             int_flags={
                 IntFlag.CLIENT_FLAG: encoded_value.encoding_id,
-                IntFlag.CAS_TOKEN: expected_cas_token,
+                IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
             },
         ),
     ]
@@ -592,21 +592,21 @@ def test_get_or_lease_miss_lost_then_win(
             size=0,
             flags=set([Flag.LOST]),
             int_flags={
-                IntFlag.CAS_TOKEN: expected_cas_token - 1,
+                IntFlag.RETURNED_CAS_TOKEN: expected_cas_token - 1,
             },
         ),
         Value(
             size=0,
             flags=set([Flag.LOST]),
             int_flags={
-                IntFlag.CAS_TOKEN: expected_cas_token - 1,
+                IntFlag.RETURNED_CAS_TOKEN: expected_cas_token - 1,
             },
         ),
         Value(
             size=0,
             flags=set([Flag.WIN]),
             int_flags={
-                IntFlag.CAS_TOKEN: expected_cas_token,
+                IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
             },
         ),
     ]
@@ -642,7 +642,7 @@ def test_get_or_lease_miss_runs_out_of_retries(
         size=0,
         flags=set([Flag.LOST]),
         int_flags={
-            IntFlag.CAS_TOKEN: expected_cas_token,
+            IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
         },
     )
     memcache_socket.get_value.return_value = b""
@@ -765,7 +765,7 @@ def test_delta_cmd(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -
         no_reply=True,
         cas_token=123,
     )
-    memcache_socket.sendall.assert_called_once_with(b"ma foo q D1 c123 J10 N60\r\n")
+    memcache_socket.sendall.assert_called_once_with(b"ma foo q D1 C123 J10 N60\r\n")
     memcache_socket.sendall.reset_mock()
 
     memcache_socket.get_response.assert_not_called()

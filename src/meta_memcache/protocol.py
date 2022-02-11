@@ -50,7 +50,8 @@ class IntFlag(Enum):
     HIT_AFTER_WRITE = b"h"
     MA_INITIAL_VALUE = b"J"
     MA_DELTA_VALUE = b"D"
-    CAS_TOKEN = b"c"
+    RETURNED_CAS_TOKEN = b"c"
+    CAS_TOKEN = b"C"
 
 
 class TokenFlag(Enum):

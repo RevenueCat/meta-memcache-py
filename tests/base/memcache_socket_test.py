@@ -82,11 +82,11 @@ def test_get_response(
     ms = MemcacheSocket(fake_socket)
     result = ms.get_response()
     assert isinstance(result, Success)
-    assert result.int_flags == {IntFlag.CAS_TOKEN: 1}
+    assert result.int_flags == {IntFlag.RETURNED_CAS_TOKEN: 1}
 
     result = ms.get_response()
     assert isinstance(result, Value)
-    assert result.int_flags == {IntFlag.CAS_TOKEN: 1}
+    assert result.int_flags == {IntFlag.RETURNED_CAS_TOKEN: 1}
     assert result.size == 2
 
 
@@ -97,7 +97,7 @@ def test_get_value(
     ms = MemcacheSocket(fake_socket)
     result = ms.get_response()
     assert isinstance(result, Value)
-    assert result.int_flags == {IntFlag.CAS_TOKEN: 1}
+    assert result.int_flags == {IntFlag.RETURNED_CAS_TOKEN: 1}
     assert result.size == 2
     ms.get_value(2)
 
@@ -114,7 +114,7 @@ def test_get_value_large(
     ms = MemcacheSocket(fake_socket, buffer_size=100)
     result = ms.get_response()
     assert isinstance(result, Value)
-    assert result.int_flags == {IntFlag.CAS_TOKEN: 1}
+    assert result.int_flags == {IntFlag.RETURNED_CAS_TOKEN: 1}
     assert result.flags == set([Flag.WIN])
     assert result.token_flags == {TokenFlag.OPAQUE: b"xxx"}
     assert result.size == 200
