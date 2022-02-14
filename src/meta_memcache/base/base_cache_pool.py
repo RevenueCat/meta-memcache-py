@@ -178,10 +178,18 @@ class BaseCachePool(ABC):
             token_flags=token_flags,
             version=conn.get_version(),
         )
+        # write meta commands with NOREPLY can potentially return errors
+        # they are not fully silent, so we need to add a no-op to the wire.
+        with_noop = (
+            command != MetaCommand.META_GET
+            and flags is not None
+            and Flag.NOREPLY in flags
+        )
+
         if value:
-            conn.sendall(cmd + value + ENDL)
+            conn.sendall(cmd + value + ENDL, with_noop=with_noop)
         else:
-            conn.sendall(cmd)
+            conn.sendall(cmd, with_noop=with_noop)
 
     def _conn_recv_response(
         self,

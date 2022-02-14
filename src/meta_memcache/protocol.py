@@ -3,6 +3,7 @@ from enum import Enum, IntEnum
 from typing import Any, Dict, NamedTuple, Optional, Set, Union
 
 ENDL = b"\r\n"
+NOOP: bytes = b"mn" + ENDL
 ENDL_LEN = 2
 SPACE: int = ord(" ")
 MIN_HEADER_SIZE = 4

@@ -1,5 +1,6 @@
 import random
 from typing import Tuple
+from meta_memcache.protocol import NOOP
 
 from pytest_mock import MockerFixture
 
@@ -145,7 +146,7 @@ def test_sharded_with_gutter_cache_pool(mocker: MockerFixture) -> None:
     cache_pool.set(key=Key("bar"), value=1, ttl=1000, no_reply=True)
     get_pool.assert_called_once_with(Key("bar"))
     get_gutter_pool.assert_not_called()
-    c.sendall.assert_called_once_with(b"ms bar 1 q T1000 F2\r\n1\r\n")
+    c.sendall.assert_called_once_with(b"ms bar 1 q T1000 F2\r\n1\r\n" + NOOP)
     c.sendall.reset_mock()
     get_pool.reset_mock()
     get_gutter_pool.reset_mock()
@@ -153,7 +154,7 @@ def test_sharded_with_gutter_cache_pool(mocker: MockerFixture) -> None:
     cache_pool.set(key=Key("foo"), value=1, ttl=1000, no_reply=True)
     get_pool.assert_called_once_with(Key("foo"))
     get_gutter_pool.assert_called_once_with(Key("foo"))
-    c.sendall.assert_called_once_with(b"ms foo 1 q T60 F2\r\n1\r\n")
+    c.sendall.assert_called_once_with(b"ms foo 1 q T60 F2\r\n1\r\n" + NOOP)
     c.sendall.reset_mock()
     get_pool.reset_mock()
     get_gutter_pool.reset_mock()
@@ -166,7 +167,7 @@ def test_sharded_with_gutter_cache_pool(mocker: MockerFixture) -> None:
     cache_pool.set(key=Key("foo"), value=1, ttl=1000, no_reply=True)
     get_pool.assert_called_once_with(Key("foo"))
     get_gutter_pool.assert_called_once_with(Key("foo"))
-    c.sendall.assert_called_once_with(b"ms foo 1 q T60 F2\r\n1\r\n")
+    c.sendall.assert_called_once_with(b"ms foo 1 q T60 F2\r\n1\r\n" + NOOP)
     c.sendall.reset_mock()
     get_pool.reset_mock()
     get_gutter_pool.reset_mock()
@@ -178,7 +179,7 @@ def test_sharded_with_gutter_cache_pool(mocker: MockerFixture) -> None:
     cache_pool.set(key=Key("foo"), value=1, ttl=1000, no_reply=True)
     get_pool.assert_called_once_with(Key("foo"))
     get_gutter_pool.assert_not_called()
-    c.sendall.assert_called_once_with(b"ms foo 1 q T1000 F2\r\n1\r\n")
+    c.sendall.assert_called_once_with(b"ms foo 1 q T1000 F2\r\n1\r\n" + NOOP)
     c.sendall.reset_mock()
     get_pool.reset_mock()
     get_gutter_pool.reset_mock()

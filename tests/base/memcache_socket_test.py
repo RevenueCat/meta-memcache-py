@@ -100,12 +100,25 @@ def test_get_response_1_6_6(
     ms = MemcacheSocket(fake_socket, version=ServerVersion.AWS_1_6_6)
     result = ms.get_response()
     assert isinstance(result, Success)
-    assert result.int_flags == {IntFlag.CAS_TOKEN: 1}
+    assert result.int_flags == {IntFlag.RETURNED_CAS_TOKEN: 1}
 
     result = ms.get_response()
     assert isinstance(result, Value)
-    assert result.int_flags == {IntFlag.CAS_TOKEN: 1}
+    assert result.int_flags == {IntFlag.RETURNED_CAS_TOKEN: 1}
     assert result.size == 2
+
+
+def test_noreply(
+    fake_socket: socket.socket,
+) -> None:
+    fake_socket.recv_into.side_effect = recv_into_mock(
+        [b"EX\r\n", b"MN", b"\r\nHD", b"\r\n"]
+    )
+    ms = MemcacheSocket(fake_socket)
+    ms.sendall(b"test", with_noop=True)
+    # The first EX should be skipped as it is before the No-op
+    # response, so this should be a success:
+    assert isinstance(ms.get_response(), Success)
 
 
 def test_get_value(
