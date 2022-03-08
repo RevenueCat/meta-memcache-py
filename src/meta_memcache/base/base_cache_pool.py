@@ -47,6 +47,8 @@ class BaseCachePool(ABC):
     def _encode_key(self, key: Key) -> Tuple[bytes, bool]:
         if key.is_unicode or len(key.key) > MAX_KEY_SIZE:
             return base64.b64encode(self._binary_key_encoding_fn(key)), True
+        elif " " in key.key:
+            raise ValueError(f"Invalid key {key}")
         else:
             return key.key.encode("ascii"), False
 
