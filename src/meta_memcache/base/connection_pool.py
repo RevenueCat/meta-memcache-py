@@ -1,14 +1,17 @@
 import itertools
+import logging
 import socket
 import time
+from collections import deque
 from contextlib import contextmanager
-from queue import Empty, Full, Queue
-from typing import Callable, Generator, NamedTuple, Optional
+from typing import Callable, Deque, Generator, NamedTuple, Optional
 
 from meta_memcache.base.memcache_socket import MemcacheSocket
 from meta_memcache.errors import MemcacheServerError
 from meta_memcache.protocol import ServerVersion
 from meta_memcache.settings import DEFAULT_MARK_DOWN_PERIOD_S, DEFAULT_READ_BUFFER_SIZE
+
+_log: logging.Logger = logging.getLogger(__name__)
 
 
 class PoolCounters(NamedTuple):
@@ -49,17 +52,22 @@ class ConnectionPool:
         self._destroyed_counter: itertools.count[int] = itertools.count(start=1)
         self._destroyed = 0
         self._marked_down_until: Optional[float] = None
-        self._pool: Queue[MemcacheSocket] = Queue(self._max_pool_size)
+        # We don't use maxlen because deque will evict the first element when
+        # appending one over maxlen, and we won't be closing the connection
+        # proactively, relying on GC instead. We use a soft max limit, after
+        # all is not that critical to respect the number of connections
+        # exactly.
+        self._pool: Deque[MemcacheSocket] = deque()
         self._read_buffer_size = read_buffer_size
         self._version = version
         for _ in range(self._initial_pool_size):
             try:
-                self._pool.put_nowait(self._create_connection())
+                self._pool.append(self._create_connection())
             except MemcacheServerError:
                 pass
 
     def get_counters(self) -> PoolCounters:
-        available = self._pool.qsize()
+        available = len(self._pool)
         total_created, total_destroyed = self._created, self._destroyed
         stablished = total_created - total_destroyed
         active = available - stablished
@@ -83,6 +91,7 @@ class ConnectionPool:
         try:
             conn = self._socket_factory_fn()
         except Exception as e:
+            _log.exception("Error connecting to memcache")
             self._errors = next(self._errors_counter)
             self._marked_down_until = time.time() + self._mark_down_period_s
             raise MemcacheServerError(
@@ -104,18 +113,22 @@ class ConnectionPool:
     @contextmanager
     def get_connection(self) -> Generator[MemcacheSocket, None, None]:
         try:
-            conn = self._pool.get_nowait()
-        except Empty:
+            conn = self._pool.popleft()
+        except IndexError:
             conn = self._create_connection()
 
         try:
             yield conn
         except Exception:
             # Errors, assume connection is in bad state
+            _log.exception("Error during cache conn context (discarding connection)")
             self._discard_connection(conn, error=True)
             raise
         else:
-            try:
-                self._pool.put_nowait(conn)
-            except Full:
+            if len(self._pool) < self._max_pool_size:
+                # If there is a race, the  deque might end with more than
+                # self._max_pool_size but it is not a big deal, we want this
+                # to be a soft limit.
+                self._pool.append(conn)
+            else:
                 self._discard_connection(conn)

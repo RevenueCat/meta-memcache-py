@@ -178,7 +178,7 @@ class CachePool(BaseCachePool):
             else:
                 # With MISS_LEASE_TTL we should always get a value
                 # because on miss a lease empty value is generated
-                raise MemcacheError("Unexpected response")
+                raise MemcacheError(f"Unexpected response: {result} for key {key}")
 
     # pyre-ignore[3]  Yeah, we return 'Any'
     def get(
@@ -229,7 +229,7 @@ class CachePool(BaseCachePool):
             elif isinstance(result, Miss):
                 results[key] = None
             else:
-                raise MemcacheError("Unexpected response")
+                raise MemcacheError(f"Unexpected response: {result} for key {key}")
         return results
 
     # pyre-ignore[3]  Yeah, we return 'Any'
@@ -267,7 +267,7 @@ class CachePool(BaseCachePool):
         elif isinstance(result, Miss):
             return None, None
         else:
-            raise MemcacheError("Unexpected response")
+            raise MemcacheError(f"Unexpected response: {result} for key {key}")
 
     def get_typed(
         self,
@@ -300,7 +300,7 @@ class CachePool(BaseCachePool):
 
         if not isinstance(value, cls):
             if error_on_type_mismatch:
-                raise ValueError(f"Expecting {cls} got {value}")
+                raise ValueError(f"Expecting {cls} got {value} for {key}")
             else:
                 value = None
         return value, cas_token
