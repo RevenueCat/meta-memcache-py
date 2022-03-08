@@ -1,5 +1,5 @@
 import socket
-from typing import Callable, List
+from typing import Callable, List, Optional
 
 import pytest
 from pytest_mock import MockerFixture
@@ -37,14 +37,22 @@ def recv_into_mock(datas: List[bytes]) -> Callable[[memoryview], int]:
     return recv_into
 
 
-def recvmsg_into_mock(datas: List[bytes]) -> Callable[[List[memoryview], int], int]:
-    def recvmsg_into(buffers: List[memoryview], flags: int) -> int:
+def recvmsg_into_mock(
+    datas: List[bytes], expected_flags: Optional[int] = None
+) -> Callable[[List[memoryview], int], int]:
+    def recvmsg_into(
+        __buffers: List[memoryview], __ancbufsize: int = 0, __flags: int = 0
+    ) -> int:
+        if expected_flags is not None:
+            assert (
+                __flags == expected_flags
+            ), f"Flags expected to be {expected_flags}, was {__flags}"
         data = datas.pop(0)
         data_size = len(data)
-        assert data_size >= sum(len(buffer) for buffer in buffers)
+        assert data_size >= sum(len(buffer) for buffer in __buffers)
         total_read = 0
         start = 0
-        for buffer in buffers:
+        for buffer in __buffers:
             buffer_size = len(buffer)
             end = start + buffer_size
             buffer[:] = data[start:end]
@@ -140,7 +148,7 @@ def test_get_value_large(
         [b"VA 200 c1  Oxxx W Q Qa  \r\n", b"1234567890"]
     )
     fake_socket.recvmsg_into.side_effect = recvmsg_into_mock(
-        [b"1234567890" * 19 + b"\r\n"]
+        [b"1234567890" * 19 + b"\r\n"], expected_flags=socket.MSG_WAITALL
     )
     ms = MemcacheSocket(fake_socket, buffer_size=100)
     result = ms.get_response()
@@ -172,7 +180,7 @@ def test_bad(
         [b"VA 200 c1\r\n", b"1234567890"]
     )
     fake_socket.recvmsg_into.side_effect = recvmsg_into_mock(
-        [b"1234567890" * 19 + b"XX"]
+        [b"1234567890" * 19 + b"XX"], expected_flags=socket.MSG_WAITALL
     )
     ms = MemcacheSocket(fake_socket, buffer_size=100)
     result = ms.get_response()

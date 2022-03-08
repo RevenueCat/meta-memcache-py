@@ -106,7 +106,7 @@ class MemcacheSocket:
         """
         msg_termination_buf = bytearray(ENDL_LEN)
         read: int = self._conn.recvmsg_into(
-            [sized_buf, memoryview(msg_termination_buf)], flags=socket.MSG_WAITALL
+            [sized_buf, memoryview(msg_termination_buf)], 0, socket.MSG_WAITALL
         )
         if read != len(sized_buf) + ENDL_LEN or msg_termination_buf != ENDL:
             raise MemcacheError(
