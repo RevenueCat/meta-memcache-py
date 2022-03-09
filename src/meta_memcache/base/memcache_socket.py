@@ -72,6 +72,9 @@ class MemcacheSocket:
         self._buf_view = memoryview(self._buf)
         self._noop_expected = 0
 
+    def __str__(self) -> str:
+        return f"<MemcacheSocket {self._conn.fileno()}>"
+
     def get_version(self) -> ServerVersion:
         return self._version
 
@@ -191,7 +194,7 @@ class MemcacheSocket:
             chunks.append(header[prev:])
         return chunks
 
-    def _get_header(self) -> List[memoryview]:
+    def _get_single_header(self) -> List[memoryview]:
         endl_pos = self._recv_header()
         header = self._buf_view[self._pos : endl_pos]
         self._pos = endl_pos + ENDL_LEN
@@ -205,19 +208,26 @@ class MemcacheSocket:
 
     def _read_until_noop_header(self) -> None:
         while self._noop_expected > 0:
-            response_code, *_chunks = self._get_header()
+            response_code, *_chunks = self._get_single_header()
             if response_code == b"MN":
                 self._noop_expected -= 1
+
+    def _get_header(self) -> List[memoryview]:
+        try:
+            if self._noop_expected > 0:
+                self._read_until_noop_header()
+
+            return self._get_single_header()
+        except Exception as e:
+            _log.exception(f"Error reading header from socket in {self}")
+            raise MemcacheError(f"Error reading header from socket: {e}") from e
 
     def get_response(
         self,
     ) -> Union[Value, Success, NotStored, Conflict, Miss]:
-        if self._noop_expected > 0:
-            self._read_until_noop_header()
-
         header = self._get_header()
-        response_code, *chunks = header
         try:
+            response_code, *chunks = header
             if response_code == b"VA":
                 # Value response, parse size and flags
                 # pyre-ignore[6]
@@ -243,9 +253,9 @@ class MemcacheSocket:
             else:
                 raise MemcacheError(f"Unknown response: {bytes(response_code)}")
         except Exception as e:
-            raise MemcacheError(
-                f'Error parsing response header {b" ".join(header)}'
-            ) from e
+            response = b" ".join(header).decode()
+            _log.exception(f"Error parsing response header in {self}: {response}")
+            raise MemcacheError(f"Error parsing response header {response}") from e
 
         self._reset_buffer()
         return result

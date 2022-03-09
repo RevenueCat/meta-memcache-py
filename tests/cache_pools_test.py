@@ -119,7 +119,7 @@ def test_sharded_with_gutter_cache_pool(mocker: MockerFixture) -> None:
     connection_pool = cache_pool._get_pool(Key("foo"))
     assert isinstance(connection_pool, ConnectionPool)
     assert connection_pool.server == "ko2:11211"
-    assert connection_pool._pool.qsize() == 0
+    assert len(connection_pool._pool) == 0
     assert connection_pool.get_counters() == PoolCounters(
         available=0,
         active=0,
@@ -131,7 +131,7 @@ def test_sharded_with_gutter_cache_pool(mocker: MockerFixture) -> None:
     connection_pool = cache_pool._get_pool(Key("bar"))
     assert isinstance(connection_pool, ConnectionPool)
     assert connection_pool.server == "ok1:11211"
-    assert connection_pool._pool.qsize() == 2
+    assert len(connection_pool._pool) == 2
     assert connection_pool.get_counters() == PoolCounters(
         available=2,
         active=0,
