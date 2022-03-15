@@ -1,5 +1,5 @@
 import socket
-from typing import Callable, List, Optional
+from typing import Callable, List
 
 import pytest
 from pytest_mock import MockerFixture
@@ -20,10 +20,15 @@ from meta_memcache.protocol import (
 
 
 def recv_into_mock(datas: List[bytes]) -> Callable[[memoryview], int]:
-    def recv_into(buffer: memoryview) -> int:
+    def recv_into(buffer: memoryview, length: int = 0, flags: int = 0) -> int:
+        if not datas:
+            return -1
         data = datas[0]
         data_size = len(data)
-        buffer_size = len(buffer)
+        if length > 0:
+            buffer_size = length
+        else:
+            buffer_size = len(buffer)
         if data_size > buffer_size:
             read = buffer_size
             buffer[:] = data[0:buffer_size]
@@ -35,32 +40,6 @@ def recv_into_mock(datas: List[bytes]) -> Callable[[memoryview], int]:
         return read
 
     return recv_into
-
-
-def recvmsg_into_mock(
-    datas: List[bytes], expected_flags: Optional[int] = None
-) -> Callable[[List[memoryview], int], int]:
-    def recvmsg_into(
-        __buffers: List[memoryview], __ancbufsize: int = 0, __flags: int = 0
-    ) -> int:
-        if expected_flags is not None:
-            assert (
-                __flags == expected_flags
-            ), f"Flags expected to be {expected_flags}, was {__flags}"
-        data = datas.pop(0)
-        data_size = len(data)
-        assert data_size >= sum(len(buffer) for buffer in __buffers)
-        total_read = 0
-        start = 0
-        for buffer in __buffers:
-            buffer_size = len(buffer)
-            end = start + buffer_size
-            buffer[:] = data[start:end]
-            start += buffer_size
-            total_read += buffer_size
-        return total_read
-
-    return recvmsg_into
 
 
 @pytest.fixture
@@ -145,10 +124,7 @@ def test_get_value_large(
     fake_socket: socket.socket,
 ) -> None:
     fake_socket.recv_into.side_effect = recv_into_mock(
-        [b"VA 200 c1  Oxxx W Q Qa  \r\n", b"1234567890"]
-    )
-    fake_socket.recvmsg_into.side_effect = recvmsg_into_mock(
-        [b"1234567890" * 19 + b"\r\n"], expected_flags=socket.MSG_WAITALL
+        [b"VA 200 c1  Oxxx W Q Qa  \r\n", b"1234567890", b"1234567890" * 19 + b"\r\n"],
     )
     ms = MemcacheSocket(fake_socket, buffer_size=100)
     result = ms.get_response()
@@ -177,10 +153,7 @@ def test_bad(
         assert "Error parsing value" in str(e)
 
     fake_socket.recv_into.side_effect = recv_into_mock(
-        [b"VA 200 c1\r\n", b"1234567890"]
-    )
-    fake_socket.recvmsg_into.side_effect = recvmsg_into_mock(
-        [b"1234567890" * 19 + b"XX"], expected_flags=socket.MSG_WAITALL
+        [b"VA 200 c1\r\n", b"1234567890", b"1234567890" * 19 + b"XX"],
     )
     ms = MemcacheSocket(fake_socket, buffer_size=100)
     result = ms.get_response()

@@ -1,4 +1,5 @@
 import base64
+import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from typing import Any, Callable, DefaultDict, Dict, Final, List, Optional, Set, Tuple
@@ -27,6 +28,8 @@ from meta_memcache.protocol import (
     encode_size,
 )
 from meta_memcache.settings import MAX_KEY_SIZE
+
+_log: logging.Logger = logging.getLogger(__name__)
 
 
 class BaseCachePool(ABC):
@@ -205,11 +208,15 @@ class BaseCachePool(ABC):
             return Success(flags=set([Flag.NOREPLY]))
         result = conn.get_response()
         if isinstance(result, Value):
-            # TODO: Confirm this works for empty values!
             data = conn.get_value(result.size)
             if result.size > 0:
                 encoding_id = result.int_flags.get(IntFlag.CLIENT_FLAG, 0)
-                result.value = self._serializer.unserialize(data, encoding_id)
+                try:
+                    result.value = self._serializer.unserialize(data, encoding_id)
+                except Exception:
+                    _log.exception("Error unserializing value")
+                    result = Miss()
+
         return result
 
     def meta_multiget(

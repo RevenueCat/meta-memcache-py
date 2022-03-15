@@ -6,7 +6,6 @@ from meta_memcache.errors import MemcacheError
 from meta_memcache.protocol import (
     ENDL,
     ENDL_LEN,
-    MIN_HEADER_SIZE,
     NOOP,
     SPACE,
     Conflict,
@@ -64,6 +63,9 @@ class MemcacheSocket:
     ) -> None:
         self.set_socket(conn)
         self._buffer_size = buffer_size
+        self._recv_buffer_size = buffer_size
+        self._reset_buffer_size: int = buffer_size * 3 // 4
+        conn.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, self._recv_buffer_size)
         self._version = version
         self._store_success_response_header: bytes = get_store_success_response_header(
             version
@@ -71,6 +73,7 @@ class MemcacheSocket:
         self._buf = bytearray(self._buffer_size)
         self._buf_view = memoryview(self._buf)
         self._noop_expected = 0
+        self._endl_buf = bytearray(ENDL_LEN)
 
     def __str__(self) -> str:
         return f"<MemcacheSocket {self._conn.fileno()}>"
@@ -93,39 +96,24 @@ class MemcacheSocket:
 
     def _recv_info_buffer(self) -> int:
         read = self._conn.recv_into(self._buf_view[self._read :])
-        self._read += read
+        if read > 0:
+            self._read += read
         return read
 
-    def _recv_endl_terminated_data(self, sized_buf: memoryview) -> int:
-        """
-        Received data into the given buffer. The size of the
-        buffer has to be exactly the expected data size.
-
-        The data in the socket has a termination mark (\r\n)
-        that has to be read too. To avoid having to slice
-        the data and cause yet another memory copy, we are
-        using recvmsg and providing a separate, fixed size
-        buffer for the termination mark.
-        """
-        msg_termination_buf = bytearray(ENDL_LEN)
-        read: int = self._conn.recvmsg_into(
-            [sized_buf, memoryview(msg_termination_buf)], 0, socket.MSG_WAITALL
-        )
-        if read != len(sized_buf) + ENDL_LEN or msg_termination_buf != ENDL:
-            raise MemcacheError(
-                f"Error parsing value: Expected {len(sized_buf)+ENDL_LEN} bytes, "
-                f"terminated in \\r\\n, got {read} bytes: "
-                f"{bytes(sized_buf)+bytes(msg_termination_buf)!r}"
-            )
-        return read - ENDL_LEN
+    def _recv_fill_buffer(self, buffer: memoryview) -> int:
+        read = 0
+        size = len(buffer)
+        while read < size:
+            read += self._conn.recv_into(buffer[read:], size - read, socket.MSG_WAITALL)
+        return read
 
     def _reset_buffer(self) -> None:
         """
         Reset buffer moving remaining bytes in it (if any)
         """
         remaining_data = self._read - self._pos
-        if remaining_data:
-            if self._pos <= self._buffer_size // 2:
+        if remaining_data > 0:
+            if self._pos <= self._reset_buffer_size:
                 # Avoid moving memory if buffer still has
                 # spare capacity for new responses. If the
                 # whole buffer us used, we will just reset
@@ -137,24 +125,20 @@ class MemcacheSocket:
         self._pos = 0
         self._read = remaining_data
 
-    def _recv_header(self) -> int:
-        if self._read - self._pos < MIN_HEADER_SIZE:
-            # No response in buffer
-            self._recv_info_buffer()
-
+    def _recv_header(self) -> memoryview:
         endl_pos = self._buf.find(ENDL, self._pos, self._read)
+        while endl_pos < 0 and self._read < self._buffer_size:
+            # Missing data, but still space in buffer, so read more
+            if self._recv_info_buffer() < 0:
+                break
+            endl_pos = self._buf.find(ENDL, self._pos, self._read)
+
         if endl_pos < 0:
-            # No ENDL found in buffer
-            old_read = self._read
-            self._recv_info_buffer()
-            endl_pos = self._buf.find(ENDL, old_read, self._read)
+            raise MemcacheError("Bad response. Socket might have closed unexpectedly")
 
-            if endl_pos < 0:
-                raise MemcacheError(
-                    "Bad response. Socket might have closed unexpectedly"
-                )
-
-        return endl_pos
+        header = self._buf_view[self._pos : endl_pos]
+        self._pos = endl_pos + ENDL_LEN
+        return header
 
     def _add_flags(self, success: Success, chunks: Iterable[memoryview]) -> None:
         """
@@ -195,10 +179,8 @@ class MemcacheSocket:
         return chunks
 
     def _get_single_header(self) -> List[memoryview]:
-        endl_pos = self._recv_header()
-        header = self._buf_view[self._pos : endl_pos]
-        self._pos = endl_pos + ENDL_LEN
-        return self._tokenize_header(header)
+        self._reset_buffer()
+        return self._tokenize_header(self._recv_header())
 
     def sendall(self, data: bytes, with_noop: bool = False) -> None:
         if with_noop:
@@ -257,59 +239,53 @@ class MemcacheSocket:
             _log.exception(f"Error parsing response header in {self}: {response}")
             raise MemcacheError(f"Error parsing response header {response}") from e
 
-        self._reset_buffer()
         return result
 
-    def get_value(self, size: int) -> Union[bytearray, memoryview]:
+    def get_value(self, size: int) -> memoryview:
         """
         Get data value from the buffer and/or socket if hasn't been
         read fully.
         """
+        message_size = size + ENDL_LEN
         data_in_buf = self._read - self._pos
-        missing_data_size = size - data_in_buf
-        if missing_data_size > 0 and self._read < len(self._buf):
+        while data_in_buf < message_size and self._read < self._buffer_size:
             # Missing data, but still space in buffer, so read more
             self._recv_info_buffer()
+            data_in_buf = self._read - self._pos
 
-        data_in_buf = self._read - self._pos
-        missing_data_size = size - data_in_buf
-        if missing_data_size > 0:
-            # Value is greater than buffer:
-            # - generate new bytearray of the total size
-            # - copy data in buffer into new bytearray
-            # - read the remaining data from socket and combine it
-            data = bytearray(size)
-            view = memoryview(data)
-            # pyre-ignore[6]
-            view[:data_in_buf] = self._buf_view[self._pos : self._read]
-            read = self._recv_endl_terminated_data(view[data_in_buf:])
-            if size != data_in_buf + read:
-                raise MemcacheError(
-                    f"Error parsing value. Expected {size} bytes, "
-                    f"got {data_in_buf}+{read}"
-                )
-            # The whole buffer was used
-            self._pos = self._read
-        else:
+        if data_in_buf >= size:
             # Value is within buffer, slice it
             data_end = self._pos + size
             data = self._buf_view[self._pos : data_end]
-            # Advance pos to data end
-            self._pos = data_end
-            # Ensure the data is correctly terminated
-            if self._read < self._pos + ENDL_LEN:
-                # the buffer ended half-way the ENDL termination
-                # message, we need to read more from the wire.
-                self._reset_buffer()
-                self._recv_info_buffer()
-                assert self._read >= self._pos + ENDL_LEN  # noqa: S101
-            if self._buf_view[self._pos : self._pos + ENDL_LEN] != ENDL:
-                raise MemcacheError("Error parsing value. Data doesn't end in \\r\\n")
-            self._pos += ENDL_LEN
+            if data_in_buf >= size + ENDL_LEN:
+                # ENDL is also within buffer, slice it
+                endl = self._buf_view[data_end : data_end + ENDL_LEN]
+            else:
+                # ENDL ended half-way at the end of the buffer.
+                endl = memoryview(self._endl_buf)
+                endl_in_buf = data_in_buf - size
+                # Copy data in the local buffer
+                # pyre-ignore[6]
+                endl[0:endl_in_buf] = self._buf_view[data_end:]
+                # Read the rest
+                self._recv_fill_buffer(endl[endl_in_buf:])
+        else:
+            message = bytearray(size + ENDL_LEN)
+            message_view = memoryview(message)
+            # Copy data in the local buffer to the new allocated buffer
+            # pyre-ignore[6]
+            message_view[:data_in_buf] = self._buf_view[self._pos : self._read]
+            # Read the rest
+            self._recv_fill_buffer(message_view[data_in_buf:])
+            data = message_view[:size]
+            endl = message_view[size:]
 
-        self._reset_buffer()
-        if len(data) != size:
+        self._pos = min(self._pos + message_size, self._read)
+
+        if len(data) != size or endl != ENDL:
             raise MemcacheError(
-                f"Error parsing value. Expected {size} bytes, got {len(data)}"
+                f"Error parsing value: Expected {size} bytes, "
+                f"terminated in \\r\\n, got {len(data)} bytes: "
+                f"{bytes(data)+bytes(endl)!r}",
             )
         return data
