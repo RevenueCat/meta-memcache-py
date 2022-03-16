@@ -6,7 +6,6 @@ ENDL = b"\r\n"
 NOOP: bytes = b"mn" + ENDL
 ENDL_LEN = 2
 SPACE: int = ord(" ")
-MIN_HEADER_SIZE = 4
 
 
 class Key(NamedTuple):
