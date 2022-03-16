@@ -104,7 +104,11 @@ class MemcacheSocket:
         read = 0
         size = len(buffer)
         while read < size:
-            read += self._conn.recv_into(buffer[read:], size - read, socket.MSG_WAITALL)
+            chunk_size = self._conn.recv_into(
+                buffer[read:], size - read, socket.MSG_WAITALL
+            )
+            if chunk_size > 0:
+                read += chunk_size
         return read
 
     def _reset_buffer(self) -> None:
