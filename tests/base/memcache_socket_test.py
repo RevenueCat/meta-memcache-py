@@ -138,6 +138,29 @@ def test_get_value_large(
     assert value == b"1234567890" * 20
 
 
+def test_get_value_with_incomplete_endl(
+    fake_socket: socket.socket,
+) -> None:
+    data = b"VA 10\r\n1234567890\r\n"
+    fake_socket.recv_into.side_effect = recv_into_mock([data])
+    ms = MemcacheSocket(fake_socket, buffer_size=len(data) - 1)
+    result = ms.get_response()
+    assert isinstance(result, Value)
+    assert result.size == 10
+    value = ms.get_value(result.size)
+    assert len(value) == result.size
+    assert value == b"1234567890"
+
+    fake_socket.recv_into.side_effect = recv_into_mock([data])
+    ms = MemcacheSocket(fake_socket, buffer_size=len(data) - 2)
+    result = ms.get_response()
+    assert isinstance(result, Value)
+    assert result.size == 10
+    value = ms.get_value(result.size)
+    assert len(value) == result.size
+    assert value == b"1234567890"
+
+
 def test_bad(
     fake_socket: socket.socket,
 ) -> None:
@@ -182,6 +205,8 @@ def test_reset_buffer(
     value = ms.get_value(result.size)
     assert len(value) == result.size
     assert value == b"1234567890" * 5
+    ms._reset_buffer()
+    assert ms._pos == 0
 
     data = (b"VA 50 \r\n" + (b"1234567890" * 5) + b"\r\n") * 2
     fake_socket.recv_into.side_effect = recv_into_mock([data])
@@ -190,10 +215,14 @@ def test_reset_buffer(
     value = ms.get_value(result.size)
     assert len(value) == result.size
     assert value == b"1234567890" * 5
+    ms._reset_buffer()
+    assert ms._pos == len(data) // 2
     result = ms.get_response()
     value = ms.get_value(result.size)
     assert len(value) == result.size
     assert value == b"1234567890" * 5
+    ms._reset_buffer()
+    assert ms._pos == 0
 
 
 def test_close(
