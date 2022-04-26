@@ -141,6 +141,17 @@ def test_set_cmd(
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
 
+    value = False  # Bools should be stored pickled
+    data = pickle.dumps(value, protocol=0)
+    cache_pool.set(key=Key("foo"), value=value, ttl=300)
+    memcache_socket.sendall.assert_called_once_with(
+        b"ms foo " + str(len(data)).encode() + b" T300 F1\r\n" + data + b"\r\n",
+        with_noop=False,
+    )
+    memcache_socket.get_response.assert_called_once_with()
+    memcache_socket.sendall.reset_mock()
+    memcache_socket.get_response.reset_mock()
+
     cache_pool.set(key=Key("foo"), value=b"123", ttl=300)
     memcache_socket.sendall.assert_called_once_with(
         b"ms foo 3 T300 F16\r\n123\r\n", with_noop=False

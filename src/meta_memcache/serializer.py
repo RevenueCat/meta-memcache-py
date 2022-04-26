@@ -25,7 +25,7 @@ class MixedSerializer(BaseSerializer):
         if isinstance(value, bytes):
             data = value
             encoding_id = self.BINARY
-        elif isinstance(value, int):
+        elif isinstance(value, int) and not isinstance(value, bool):
             data = str(value).encode("ascii")
             encoding_id = self.INT
         elif isinstance(value, str):
