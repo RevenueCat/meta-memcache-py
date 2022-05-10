@@ -91,7 +91,10 @@ class ConnectionPool:
         try:
             conn = self._socket_factory_fn()
         except Exception as e:
-            _log.exception("Error connecting to memcache")
+            _log.warning(
+                "Error connecting to memcache",
+                exc_info=True,
+            )
             self._errors = next(self._errors_counter)
             self._marked_down_until = time.time() + self._mark_down_period_s
             raise MemcacheServerError(
@@ -115,13 +118,19 @@ class ConnectionPool:
         try:
             conn = self._pool.popleft()
         except IndexError:
+            conn = None
+
+        if conn is None:
             conn = self._create_connection()
 
         try:
             yield conn
         except Exception:
             # Errors, assume connection is in bad state
-            _log.exception("Error during cache conn context (discarding connection)")
+            _log.warning(
+                "Error during cache conn context (discarding connection)",
+                exc_info=True,
+            )
             self._discard_connection(conn, error=True)
             raise
         else:
