@@ -125,14 +125,14 @@ class ConnectionPool:
 
         try:
             yield conn
-        except Exception:
+        except Exception as e:
             # Errors, assume connection is in bad state
             _log.warning(
                 "Error during cache conn context (discarding connection)",
                 exc_info=True,
             )
             self._discard_connection(conn, error=True)
-            raise
+            raise MemcacheServerError(self.server, "Memcache error") from e
         else:
             if len(self._pool) < self._max_pool_size:
                 # If there is a race, the  deque might end with more than
