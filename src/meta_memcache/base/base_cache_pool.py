@@ -75,11 +75,11 @@ class BaseCachePool(ABC):
         if flags:
             cmd_flags.extend(flag.value for flag in flags)
         if int_flags:
-            for flag, int_value in int_flags.items():
-                cmd_flags.append(flag.value + str(int_value).encode("ascii"))
+            for int_flag, int_value in int_flags.items():
+                cmd_flags.append(int_flag.value + str(int_value).encode("ascii"))
         if token_flags:
-            for flag, bytes_value in token_flags.items():
-                cmd_flags.append(flag.value + bytes_value)
+            for token_flag, bytes_value in token_flags.items():
+                cmd_flags.append(token_flag.value + bytes_value)
         cmd.extend(cmd_flags)
         return b" ".join(cmd) + ENDL
 
@@ -263,7 +263,7 @@ class BaseCachePool(ABC):
     def meta_set(
         self,
         key: Key,
-        value: Any,  # pyre-ignore[2]
+        value: Any,
         ttl: int,
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,

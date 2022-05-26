@@ -124,7 +124,6 @@ class MemcacheSocket:
                 # the pointers and save a lot of memory
                 # data copies
                 return
-            # pyre-ignore[6]
             self._buf_view[0:remaining_data] = self._buf_view[self._pos : self._read]
         self._pos = 0
         self._read = remaining_data
@@ -159,13 +158,12 @@ class MemcacheSocket:
                     _log.warning(f"Unrecognized flag {bytes(chunk)!r}")
             else:
                 # Value flag
-                if f := int_flags_values.get(flag):
-                    # pyre-ignore[6]
-                    success.int_flags[f] = int(chunk[1:])
-                elif f := token_flags_values.get(flag):
-                    success.token_flags[f] = bytes(chunk[1:])
+                if int_flag := int_flags_values.get(flag):
+                    success.int_flags[int_flag] = int(chunk[1:])
+                elif token_flag := token_flags_values.get(flag):
+                    success.token_flags[token_flag] = bytes(chunk[1:])
                 else:
-                    _log.warning(f"Unrecognized flag {bytes(chunk)}")
+                    _log.warning(f"Unrecognized flag {bytes(chunk)!r}")
 
     def _tokenize_header(self, header: memoryview) -> List[memoryview]:
         """
@@ -212,11 +210,11 @@ class MemcacheSocket:
         self,
     ) -> Union[Value, Success, NotStored, Conflict, Miss]:
         header = self._get_header()
+        result: Union[Value, Success, NotStored, Conflict, Miss]
         try:
             response_code, *chunks = header
             if response_code == b"VA":
                 # Value response, parse size and flags
-                # pyre-ignore[6]
                 value_size = int(chunks.pop(0))
                 result = Value(value_size)
                 self._add_flags(result, chunks)
@@ -237,7 +235,7 @@ class MemcacheSocket:
                 result = Miss()
                 assert len(chunks) == 0  # noqa: S101
             else:
-                raise MemcacheError(f"Unknown response: {bytes(response_code)}")
+                raise MemcacheError(f"Unknown response: {bytes(response_code)!r}")
         except Exception as e:
             response = b" ".join(header).decode()
             _log.exception(f"Error parsing response header in {self}: {response}")
@@ -269,7 +267,6 @@ class MemcacheSocket:
                 endl = memoryview(self._endl_buf)
                 endl_in_buf = data_in_buf - size
                 # Copy data in the local buffer
-                # pyre-ignore[6]
                 endl[0:endl_in_buf] = self._buf_view[data_end:]
                 # Read the rest
                 self._recv_fill_buffer(endl[endl_in_buf:])
@@ -277,7 +274,6 @@ class MemcacheSocket:
             message = bytearray(size + ENDL_LEN)
             message_view = memoryview(message)
             # Copy data in the local buffer to the new allocated buffer
-            # pyre-ignore[6]
             message_view[:data_in_buf] = self._buf_view[self._pos : self._read]
             # Read the rest
             self._recv_fill_buffer(message_view[data_in_buf:])

@@ -1,6 +1,6 @@
 from typing import Callable, Dict, Iterable, List, Optional, Set
 
-from uhashring import HashRing
+from uhashring import HashRing # type: ignore
 
 from meta_memcache.base.base_write_failure_tracker import BaseWriteFailureTracker
 from meta_memcache.base.cache_pool import CachePool

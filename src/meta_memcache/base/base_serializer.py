@@ -13,10 +13,10 @@ class BaseSerializer(ABC):
     @abstractmethod
     def serialize(
         self,
-        value: Any,  # pyre-ignore[2]
+        value: Any,
     ) -> EncodedValue:
         ...
 
     @abstractmethod
-    def unserialize(self, data: Blob, encoding_id: int) -> Any:  # pyre-ignore[3]
+    def unserialize(self, data: Blob, encoding_id: int) -> Any:
         ...

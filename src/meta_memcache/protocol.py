@@ -104,12 +104,12 @@ class Success(MemcacheResponse):
 @dataclass
 class Value(Success):
     size: int
-    value: Optional[Any]  # pyre-ignore[4]
+    value: Optional[Any]
 
     def __init__(
         self,
         size: int,
-        value: Optional[Any] = None,  # pyre-ignore[2]
+        value: Optional[Any] = None,
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,

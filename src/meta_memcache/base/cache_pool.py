@@ -22,7 +22,7 @@ class CachePool(BaseCachePool):
     def set(
         self,
         key: Union[Key, str],
-        value: Any,  # pyre-ignore[2]
+        value: Any,
         ttl: int,
         no_reply: bool = False,
         cas_token: Optional[int] = None,
@@ -97,7 +97,6 @@ class CachePool(BaseCachePool):
 
         return isinstance(result, Success)
 
-    # pyre-ignore[3]  Yeah, we return 'Any'
     def get_or_lease(
         self,
         key: Union[Key, str],
@@ -113,7 +112,6 @@ class CachePool(BaseCachePool):
         )
         return value
 
-    # pyre-ignore[3]  Yeah, we return 'Any'
     def get_or_lease_cas(
         self,
         key: Union[Key, str],
@@ -180,7 +178,6 @@ class CachePool(BaseCachePool):
                 # because on miss a lease empty value is generated
                 raise MemcacheError(f"Unexpected response: {result} for key {key}")
 
-    # pyre-ignore[3]  Yeah, we return 'Any'
     def get(
         self,
         key: Union[Key, str],
@@ -192,7 +189,6 @@ class CachePool(BaseCachePool):
         )
         return value
 
-    # pyre-ignore[3]  Yeah, we return 'Any'
     def multi_get(
         self,
         keys: Iterable[Union[Key, str]],
@@ -212,7 +208,7 @@ class CachePool(BaseCachePool):
         if touch_ttl is not None and touch_ttl >= 0:
             int_flags[IntFlag.CACHE_TTL] = touch_ttl
 
-        results = {}
+        results: Dict[Key, Optional[Any]] = {}
         for key, result in self.meta_multiget(
             keys=[key if isinstance(key, Key) else Key(key) for key in keys],
             flags=flags,
@@ -232,7 +228,6 @@ class CachePool(BaseCachePool):
                 raise MemcacheError(f"Unexpected response: {result} for key {key}")
         return results
 
-    # pyre-ignore[3]  Yeah, we return 'Any'
     def get_cas(
         self,
         key: Union[Key, str],
