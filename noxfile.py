@@ -3,7 +3,7 @@ from nox import session, Session
 
 
 package = "meta_memcache"
-nox.options.sessions = "lint", "pyre", "tests"
+nox.options.sessions = "lint", "types", "tests"
 locations = "src", "tests", "noxfile.py"
 DEFAULT_VERSION = "3.8"
 VERSIONS = ["3.8", "3.10"]
@@ -38,10 +38,10 @@ def lint(session: Session) -> None:
 
 
 @session(python=DEFAULT_VERSION)
-def pyre(session: Session) -> None:
+def types(session: Session) -> None:
     """Type-check using mypy."""
-    session.install("pyre-check", ".")
-    session.run("pyre", "--strict", "check")
+    session.install("mypy", ".")
+    session.run("mypy", "src/")
 
 
 @session(python=VERSIONS)
