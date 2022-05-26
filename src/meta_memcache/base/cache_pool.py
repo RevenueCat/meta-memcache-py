@@ -388,7 +388,7 @@ class CachePool(BaseCachePool):
         result = self.meta_arithmetic(
             key=key, flags=flags, int_flags=int_flags, token_flags=token_flags
         )
-        if isinstance(result, Value):
+        if isinstance(result, Value) and result.value is not None:
             return int(result.value)
         return None
 
@@ -413,6 +413,6 @@ class CachePool(BaseCachePool):
         result = self.meta_arithmetic(
             key=key, flags=flags, int_flags=int_flags, token_flags=token_flags
         )
-        if isinstance(result, Value):
+        if isinstance(result, Value) and result.value is not None:
             return int(result.value)
         return None
