@@ -101,7 +101,7 @@ def test_sharded_with_gutter_cache_pool(mocker: MockerFixture) -> None:
     socket = mocker.patch("meta_memcache.configuration.socket", autospec=True)
     c = socket.socket()
     c.connect.side_effect = connect
-    cache_pool = ShardedWithGutterCachePool.from_server_addresses(
+    cache_pool = ShardedWithGutterCachePool.from_server_with_gutter_server_addresses(
         servers=[
             ServerAddress(host="ok1", port=11211),
             ServerAddress(host="ko2", port=11211),

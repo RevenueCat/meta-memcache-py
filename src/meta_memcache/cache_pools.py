@@ -105,7 +105,7 @@ class ShardedWithGutterCachePool(ShardedCachePool):
         self._gutter_ring: HashRing = HashRing(self._gutter_servers)
 
     @classmethod
-    def from_server_addresses(
+    def from_server_with_gutter_server_addresses(
         cls,
         servers: Iterable[ServerAddress],
         gutter_servers: Iterable[ServerAddress],
