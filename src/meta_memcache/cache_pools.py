@@ -2,7 +2,6 @@ from typing import Callable, Dict, Iterable, List, Optional, Set
 
 from uhashring import HashRing  # type: ignore
 
-from meta_memcache.base.base_write_failure_tracker import BaseWriteFailureTracker
 from meta_memcache.base.cache_pool import CachePool
 from meta_memcache.base.connection_pool import ConnectionPool, PoolCounters
 from meta_memcache.configuration import ServerAddress, default_binary_key_encoding
@@ -24,12 +23,10 @@ class MultiServerCachePool(CachePool):
         server_pool: Dict[ServerAddress, ConnectionPool],
         serializer: Optional[BaseSerializer] = None,
         binary_key_encoding_fn: Callable[[Key], bytes] = default_binary_key_encoding,
-        write_failure_tracker: Optional[BaseWriteFailureTracker] = None,
     ) -> None:
         super().__init__(
             serializer=serializer or MixedSerializer(),
             binary_key_encoding_fn=binary_key_encoding_fn,
-            write_failure_tracker=write_failure_tracker,
         )
         self._server_pool = server_pool
 
@@ -45,13 +42,11 @@ class ShardedCachePool(MultiServerCachePool):
         server_pool: Dict[ServerAddress, ConnectionPool],
         serializer: Optional[BaseSerializer] = None,
         binary_key_encoding_fn: Callable[[Key], bytes] = default_binary_key_encoding,
-        write_failure_tracker: Optional[BaseWriteFailureTracker] = None,
     ) -> None:
         super().__init__(
             server_pool=server_pool,
             serializer=serializer,
             binary_key_encoding_fn=binary_key_encoding_fn,
-            write_failure_tracker=write_failure_tracker,
         )
         self._servers: List[ServerAddress] = list(sorted(server_pool.keys()))
         self._ring: HashRing = HashRing(self._servers)
@@ -68,7 +63,6 @@ class ShardedCachePool(MultiServerCachePool):
         connection_pool_factory_fn: Callable[[ServerAddress], ConnectionPool],
         serializer: Optional[BaseSerializer] = None,
         binary_key_encoding_fn: Callable[[Key], bytes] = default_binary_key_encoding,
-        write_failure_tracker: Optional[BaseWriteFailureTracker] = None,
     ) -> "ShardedCachePool":
         server_pool: Dict[ServerAddress, ConnectionPool] = {
             server: connection_pool_factory_fn(server) for server in servers
@@ -77,7 +71,6 @@ class ShardedCachePool(MultiServerCachePool):
             server_pool=server_pool,
             serializer=serializer,
             binary_key_encoding_fn=binary_key_encoding_fn,
-            write_failure_tracker=write_failure_tracker,
         )
 
 
@@ -89,13 +82,11 @@ class ShardedWithGutterCachePool(ShardedCachePool):
         gutter_ttl: int,
         serializer: Optional[BaseSerializer] = None,
         binary_key_encoding_fn: Callable[[Key], bytes] = default_binary_key_encoding,
-        write_failure_tracker: Optional[BaseWriteFailureTracker] = None,
     ) -> None:
         super().__init__(
             server_pool=server_pool,
             serializer=serializer,
             binary_key_encoding_fn=binary_key_encoding_fn,
-            write_failure_tracker=write_failure_tracker,
         )
         self._gutter_server_pool = gutter_server_pool
         self._gutter_servers: List[ServerAddress] = list(
@@ -113,7 +104,6 @@ class ShardedWithGutterCachePool(ShardedCachePool):
         connection_pool_factory_fn: Callable[[ServerAddress], ConnectionPool],
         serializer: Optional[BaseSerializer] = None,
         binary_key_encoding_fn: Callable[[Key], bytes] = default_binary_key_encoding,
-        write_failure_tracker: Optional[BaseWriteFailureTracker] = None,
     ) -> "ShardedWithGutterCachePool":
         server_pool: Dict[ServerAddress, ConnectionPool] = {
             server: connection_pool_factory_fn(server) for server in servers
@@ -128,7 +118,6 @@ class ShardedWithGutterCachePool(ShardedCachePool):
             gutter_ttl=gutter_ttl,
             serializer=serializer,
             binary_key_encoding_fn=binary_key_encoding_fn,
-            write_failure_tracker=write_failure_tracker,
         )
 
     def _get_gutter_pool(self, key: Key) -> ConnectionPool:

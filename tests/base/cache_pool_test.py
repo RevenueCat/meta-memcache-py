@@ -1,4 +1,5 @@
 import pickle
+from typing import Callable
 import zlib
 from dataclasses import dataclass
 from unittest.mock import MagicMock, call
@@ -7,7 +8,6 @@ import pytest
 from pytest_mock import MockerFixture
 
 from meta_memcache import CachePool, Key, MemcacheError, SetMode
-from meta_memcache.base.base_write_failure_tracker import BaseWriteFailureTracker
 from meta_memcache.base.connection_pool import ConnectionPool
 from meta_memcache.base.memcache_socket import MemcacheSocket
 from meta_memcache.configuration import (
@@ -50,11 +50,6 @@ class Bar:
 
 
 @pytest.fixture
-def write_failure_tracker(mocker: MockerFixture) -> BaseWriteFailureTracker:
-    return mocker.MagicMock(spec=BaseWriteFailureTracker)
-
-
-@pytest.fixture
 def memcache_socket(mocker: MockerFixture) -> MemcacheSocket:
     memcache_socket = mocker.MagicMock(spec=MemcacheSocket)
     memcache_socket.get_version.return_value = ServerVersion.STABLE
@@ -72,7 +67,6 @@ def memcache_socket_1_6_6(mocker: MockerFixture) -> MemcacheSocket:
 def cache_pool(
     mocker: MockerFixture,
     memcache_socket: MemcacheSocket,
-    write_failure_tracker: BaseWriteFailureTracker,
 ) -> FakeCachePool:
     connection_pool = mocker.MagicMock(spec=ConnectionPool)
     connection_pool.get_connection().__enter__.return_value = memcache_socket
@@ -80,7 +74,6 @@ def cache_pool(
         connection_pool=connection_pool,
         serializer=MixedSerializer(),
         binary_key_encoding_fn=default_binary_key_encoding,
-        write_failure_tracker=write_failure_tracker,
     )
 
 
@@ -88,7 +81,6 @@ def cache_pool(
 def cache_pool_1_6_6(
     mocker: MockerFixture,
     memcache_socket_1_6_6: MemcacheSocket,
-    write_failure_tracker: BaseWriteFailureTracker,
 ) -> FakeCachePool:
     connection_pool = mocker.MagicMock(spec=ConnectionPool)
     connection_pool.get_connection().__enter__.return_value = memcache_socket_1_6_6
@@ -96,7 +88,6 @@ def cache_pool_1_6_6(
         connection_pool=connection_pool,
         serializer=MixedSerializer(),
         binary_key_encoding_fn=default_binary_key_encoding,
-        write_failure_tracker=write_failure_tracker,
     )
 
 
@@ -809,11 +800,14 @@ def test_get_or_lease_errors(
         assert "Wrong lease_policy: miss_retries needs to be greater than 0" in str(e)
 
 
-def test_write_failure_tracker(
+def test_on_write_failure(
     # memcache_socket: MemcacheSocket,
     cache_pool: FakeCachePool,
-    write_failure_tracker: BaseWriteFailureTracker,
 ) -> None:
+    failures_tracked: list[Key] = []
+    on_failure: Callable[[Key], None] = lambda key: failures_tracked.append(key)
+    cache_pool.OnWriteFailure += on_failure
+
     cache_pool.connection_pool.get_connection.side_effect = MemcacheServerError(
         server="broken:11211", message="uh-oh"
     )
@@ -822,23 +816,26 @@ def test_write_failure_tracker(
         raise AssertionError("Should not be reached")
     except MemcacheServerError as e:
         assert "uh-oh" in str(e)
-    write_failure_tracker.add_key.assert_not_called()
+    assert len(failures_tracked) == 0
+    failures_tracked.clear()
 
     try:
         cache_pool.delete(key=Key("foo"))
         raise AssertionError("Should not be reached")
     except MemcacheServerError as e:
         assert "uh-oh" in str(e)
-    write_failure_tracker.add_key.assert_called_once_with(Key("foo"))
-    write_failure_tracker.add_key.reset_mock()
+    assert len(failures_tracked) == 1
+    assert failures_tracked[0] == Key("foo")
+    failures_tracked.clear()
 
     try:
         cache_pool.set(key=Key("foo"), value=1, ttl=10)
         raise AssertionError("Should not be reached")
     except MemcacheServerError as e:
         assert "uh-oh" in str(e)
-    write_failure_tracker.add_key.assert_called_once_with(Key("foo"))
-    write_failure_tracker.add_key.reset_mock()
+    assert len(failures_tracked) == 1
+    assert failures_tracked[0] == Key("foo")
+    failures_tracked.clear()
 
 
 def test_delta_cmd(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> None:
