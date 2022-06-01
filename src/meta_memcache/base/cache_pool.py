@@ -388,8 +388,12 @@ class CachePool(BaseCachePool):
         result = self.meta_arithmetic(
             key=key, flags=flags, int_flags=int_flags, token_flags=token_flags
         )
-        if isinstance(result, Value) and result.value is not None:
-            return int(result.value)
+        if isinstance(result, Value):
+            if isinstance(result.value, str) and result.value.isnumeric():
+                return int(result.value)
+            else:
+                raise MemcacheError(
+                    f"Unexpected value from meta arithmetic command: {result.value}")
         return None
 
     def delta_initialize_and_get(
