@@ -806,7 +806,7 @@ def test_on_write_failure(
 ) -> None:
     failures_tracked: list[Key] = []
     on_failure: Callable[[Key], None] = lambda key: failures_tracked.append(key)
-    cache_pool.OnWriteFailure += on_failure
+    cache_pool.on_write_failure += on_failure
 
     cache_pool.connection_pool.get_connection.side_effect = MemcacheServerError(
         server="broken:11211", message="uh-oh"

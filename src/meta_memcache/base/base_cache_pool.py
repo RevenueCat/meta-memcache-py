@@ -40,7 +40,7 @@ class BaseCachePool(ABC):
     ) -> None:
         self._serializer = serializer
         self._binary_key_encoding_fn = binary_key_encoding_fn
-        self.OnWriteFailure: Final = WriteFailureEvent()
+        self.on_write_failure: Final = WriteFailureEvent()
 
     @abstractmethod
     def _get_pool(self, key: Key) -> ConnectionPool:
@@ -111,7 +111,7 @@ class BaseCachePool(ABC):
                 return self._conn_recv_response(conn, flags=flags)
         except MemcacheServerError:
             if command in (MetaCommand.META_DELETE, MetaCommand.META_SET):
-                self.OnWriteFailure(key)
+                self.on_write_failure(key)
             raise
 
     def _exec_multi(
@@ -155,7 +155,7 @@ class BaseCachePool(ABC):
                 MetaCommand.META_SET,
             ):
                 for key in keys:
-                    self.OnWriteFailure(key)
+                    self.on_write_failure(key)
             raise
         return results
 
