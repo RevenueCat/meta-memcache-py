@@ -380,12 +380,11 @@ a few classes implement the pool-level semantics:
   'gutter' pool, with TTLs overriden and lowered on the fly, so they provide
   some level of caching instead of hitting the backend for each request.
 
-These pools also provide a write failure tracker event, useful if you are
-serious about cache consistency. If you have transient network issues, some
-writes might fail, and if the server comes back without being restarted or the
-cache flushed, the data will be stale. This allows for failed writes to be
-collected and logged. Affected keys can then be invalidated later and eventual
-cache consistency guaranteed.
+These pools also provide an option to register a callback for write failure events. This might be useful
+if you are serious about cache consistency. If you have transient network issues, some writes might fail,
+and if the server comes back without being restarted or the cache flushed, the data will be stale. The
+events allows for failed writes to be collected and logged. Affected keys can then be invalidated later
+and eventual cache consistency guaranteed.
 
 It should be trivial to implement your own cache pool if you need custom
 sharding, shadowing, pools that support live migrations, etc. Feel free to
