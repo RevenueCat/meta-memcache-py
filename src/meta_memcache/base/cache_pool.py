@@ -393,7 +393,8 @@ class CachePool(BaseCachePool):
                 return int(result.value)
             else:
                 raise MemcacheError(
-                    f"Unexpected value from meta arithmetic command: {result.value}")
+                    f"Unexpected value from meta arithmetic command: {result.value}"
+                )
         return None
 
     def delta_initialize_and_get(
@@ -421,5 +422,7 @@ class CachePool(BaseCachePool):
             if isinstance(result.value, str) and result.value.isnumeric():
                 return int(result.value)
             else:
-                raise MemcacheError(f"Unexpected value from meta arithmetic command: {result.value}")
+                raise MemcacheError(
+                    f"Unexpected value from meta arithmetic command: {result.value}"
+                )
         return None
