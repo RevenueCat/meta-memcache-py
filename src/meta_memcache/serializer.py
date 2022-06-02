@@ -20,7 +20,7 @@ class MixedSerializer(BaseSerializer):
 
     def serialize(
         self,
-        value: Any,  # pyre-ignore[2]
+        value: Any,
     ) -> EncodedValue:
         if isinstance(value, bytes):
             data = value
@@ -40,20 +40,16 @@ class MixedSerializer(BaseSerializer):
             data = zlib.compress(data)
         return EncodedValue(data=data, encoding_id=encoding_id)
 
-    # pyre-ignore[3]
     def unserialize(self, data: Blob, encoding_id: int) -> Any:
         if encoding_id & self.ZLIB_COMPRESSED:
-            # pyre-ignore[6]
             data = zlib.decompress(data)
             encoding_id ^= self.ZLIB_COMPRESSED
 
         if encoding_id == self.STR:
             return bytes(data).decode()
         elif encoding_id in (self.INT, self.LONG):
-            # pyre-ignore[6]
             return int(data)
         elif encoding_id == self.BINARY:
             return bytes(data)
         else:
-            # pyre-ignore[6]
             return pickle.loads(data)  # noqa: S301
