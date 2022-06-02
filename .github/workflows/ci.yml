@@ -70,9 +70,7 @@ jobs:
       - name: Deploy to pypi
         env:
           POETRY_PYPI_TOKEN_PYPI : ${{ secrets.PYPI_PASSWORD }}
-        run: |
-          poetry config http-basic.pypi "__token__" "${POETRY_PYPI_TOKEN_PYPI}"	
-          poetry publish
+        run: poetry publish -u "__token__" -p "${POETRY_PYPI_TOKEN_PYPI}"
 
   deploy-latest:
     runs-on: ubuntu-latest
@@ -113,6 +111,4 @@ jobs:
       - name: Deploy to pypi
         env:
           POETRY_PYPI_TOKEN_PYPI : ${{ secrets.PYPI_PASSWORD }}
-        run: |
-          poetry config http-basic.pypi "__token__" "${POETRY_PYPI_TOKEN_PYPI}"	
-          poetry publish
+        run: poetry publish -u "__token__" -p "${POETRY_PYPI_TOKEN_PYPI}"
