@@ -5,10 +5,10 @@ from collections import defaultdict
 from typing import Any, Callable, DefaultDict, Dict, Final, List, Optional, Set, Tuple
 
 from meta_memcache.base.base_serializer import BaseSerializer
-from meta_memcache.base.base_write_failure_tracker import BaseWriteFailureTracker
 from meta_memcache.base.connection_pool import ConnectionPool
 from meta_memcache.base.memcache_socket import MemcacheSocket
 from meta_memcache.errors import MemcacheError, MemcacheServerError
+from meta_memcache.events.write_failure_event import WriteFailureEvent
 from meta_memcache.protocol import (
     ENDL,
     Conflict,
@@ -37,11 +37,10 @@ class BaseCachePool(ABC):
         self,
         serializer: BaseSerializer,
         binary_key_encoding_fn: Callable[[Key], bytes],
-        write_failure_tracker: Optional[BaseWriteFailureTracker] = None,
     ) -> None:
         self._serializer = serializer
         self._binary_key_encoding_fn = binary_key_encoding_fn
-        self._write_failure_tracker: Final = write_failure_tracker
+        self.on_write_failure: Final = WriteFailureEvent()
 
     @abstractmethod
     def _get_pool(self, key: Key) -> ConnectionPool:
@@ -111,9 +110,8 @@ class BaseCachePool(ABC):
                 )
                 return self._conn_recv_response(conn, flags=flags)
         except MemcacheServerError:
-            if self._write_failure_tracker:
-                if command in (MetaCommand.META_DELETE, MetaCommand.META_SET):
-                    self._write_failure_tracker.add_key(key)
+            if command in (MetaCommand.META_DELETE, MetaCommand.META_SET):
+                self.on_write_failure(key)
             raise
 
     def _exec_multi(
@@ -152,12 +150,12 @@ class BaseCachePool(ABC):
                     for key in pool_keys:
                         results[key] = self._conn_recv_response(conn, flags=flags)
         except MemcacheServerError:
-            if self._write_failure_tracker and command in (
+            if command in (
                 MetaCommand.META_DELETE,
                 MetaCommand.META_SET,
             ):
-                for k in keys:
-                    self._write_failure_tracker.add_key(k)
+                for key in keys:
+                    self.on_write_failure(key)
             raise
         return results
 

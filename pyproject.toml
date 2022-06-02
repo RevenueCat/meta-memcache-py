@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "meta-memcache"
-version = "0.8.2"
+version = "0.9.0"
 description = "Modern, pure python, memcache client with support for new meta commands."
 license = "MIT"
 readme = "README.md"
