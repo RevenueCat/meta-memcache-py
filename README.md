@@ -316,7 +316,7 @@ Invalidation...
 Some commands receive `RecachePolicy`, `StalePolicy` and `LeasePolicy` for the
 advanced anti-dogpiling control needed in high-qps environments:
 
-```
+```python:
 class RecachePolicy(NamedTuple):
     """
     This controls the recache herd control behavior
@@ -380,7 +380,7 @@ a few classes implement the pool-level semantics:
   'gutter' pool, with TTLs overriden and lowered on the fly, so they provide
   some level of caching instead of hitting the backend for each request.
 
-These pools also provide a write failure tracker feature, useful if you are
+These pools also provide a write failure tracker event, useful if you are
 serious about cache consistency. If you have transient network issues, some
 writes might fail, and if the server comes back without being restarted or the
 cache flushed, the data will be stale. This allows for failed writes to be
@@ -391,16 +391,37 @@ It should be trivial to implement your own cache pool if you need custom
 sharding, shadowing, pools that support live migrations, etc. Feel free to
 contribute!
 
+## Write failure tracking
+When a write failure occures with a `SET` or `DELETE` opperation occures then the `pool.on_write_failure` event
+handler will be triggered. Consumers subscribing to this handler will receive the key that failed. The
+following is an example on how to subscribe to these events:
+```python:
+from meta_memcache import CachePool, Key
+
+class SomeConsumer(object):
+    def __init__(self, pool: CachePool):
+        self.pool = pool
+        self.pool.on_write_failures += self.on_write_failure_handler
+
+    def call_before_dereferencing(self):
+        self.pool.on_write_failures -= self.on_write_failure_handler
+
+    def on_write_failure_handler(self, key: Key) -> None:
+        # Handle the failures here
+        pass
+        
+```
+
 ## Stats:
 The cache pools offer a `get_counters()` that return information about the state
 of the servers and their connection pools:
 
-```
+```python:
     def get_counters(self) -> Dict[ServerAddress, PoolCounters]:
 ```
 
 The counters are:
-```
+```python:
 class PoolCounters(NamedTuple):
     # Available connections in the pool, ready to use
     available: int
