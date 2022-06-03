@@ -68,11 +68,10 @@ jobs:
         run: poetry build
 
       - name: Deploy to pypi
-        env:
-          POETRY_PYPI_TOKEN_PYPI : ${{ secrets.PYPI_PASSWORD }}
-        run: |
-          poetry config pypi-token.pypi ${{ secrets.PYPI_PASSWORD }}	
-          poetry publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          user: __token__
+          password: ${{ secrets.PYPI_PASSWORD }}
 
   deploy-latest:
     runs-on: ubuntu-latest
@@ -111,8 +110,7 @@ jobs:
         run: poetry build
 
       - name: Deploy to pypi
-        env:
-          POETRY_PYPI_TOKEN_PYPI : ${{ secrets.PYPI_PASSWORD }}
-        run: |
-          poetry config pypi-token.pypi ${{ secrets.PYPI_PASSWORD }}	
-          poetry publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          user: __token__
+          password: ${{ secrets.PYPI_PASSWORD }}
