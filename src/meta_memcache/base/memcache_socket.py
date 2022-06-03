@@ -203,7 +203,7 @@ class MemcacheSocket:
 
             return self._get_single_header()
         except Exception as e:
-            _log.exception(f"Error reading header from socket in {self}")
+            _log.warning(f"Error reading header from socket in {self}")
             raise MemcacheError(f"Error reading header from socket: {e}") from e
 
     def get_response(
@@ -238,7 +238,7 @@ class MemcacheSocket:
                 raise MemcacheError(f"Unknown response: {bytes(response_code)!r}")
         except Exception as e:
             response = b" ".join(header).decode()
-            _log.exception(f"Error parsing response header in {self}: {response}")
+            _log.warning(f"Error parsing response header in {self}: {response}")
             raise MemcacheError(f"Error parsing response header {response}") from e
 
         return result

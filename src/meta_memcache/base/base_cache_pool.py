@@ -212,7 +212,10 @@ class BaseCachePool(ABC):
                 try:
                     result.value = self._serializer.unserialize(data, encoding_id)
                 except Exception:
-                    _log.exception("Error unserializing value")
+                    _log.exception(
+                        f"Error unserializing value {data} "
+                        f"with encoding id: {encoding_id}"
+                    )
                     result = Miss()
 
         return result
