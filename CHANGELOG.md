@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.9.2
+### Fixed
+* `on_write_failure` event handler now can be subscribed/unsubscribed to.
+
 ## v0.9.1
 * Error logging fixes
 

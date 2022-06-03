@@ -2,7 +2,7 @@ import base64
 import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from typing import Any, Callable, DefaultDict, Dict, Final, List, Optional, Set, Tuple
+from typing import Any, Callable, DefaultDict, Dict, List, Optional, Set, Tuple
 
 from meta_memcache.base.base_serializer import BaseSerializer
 from meta_memcache.base.connection_pool import ConnectionPool
@@ -40,7 +40,7 @@ class BaseCachePool(ABC):
     ) -> None:
         self._serializer = serializer
         self._binary_key_encoding_fn = binary_key_encoding_fn
-        self.on_write_failure: Final = WriteFailureEvent()
+        self.on_write_failure = WriteFailureEvent()
 
     @abstractmethod
     def _get_pool(self, key: Key) -> ConnectionPool:
