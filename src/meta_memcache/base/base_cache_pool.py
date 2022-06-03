@@ -40,7 +40,7 @@ class BaseCachePool(ABC):
     ) -> None:
         self._serializer = serializer
         self._binary_key_encoding_fn = binary_key_encoding_fn
-        self.on_write_failure: Final = WriteFailureEvent()
+        self.on_write_failure = WriteFailureEvent()
 
     @abstractmethod
     def _get_pool(self, key: Key) -> ConnectionPool:
