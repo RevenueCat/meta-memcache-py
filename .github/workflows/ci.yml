@@ -69,9 +69,10 @@ jobs:
 
       - name: Deploy to pypi
         env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
-        run: python -m twine upload dist/*
+          POETRY_PYPI_TOKEN_PYPI : ${{ secrets.PYPI_PASSWORD }}
+        run: |
+          poetry config http-basic.pypi "__token__" "${POETRY_PYPI_TOKEN_PYPI}"	
+          poetry publish
 
   deploy-latest:
     runs-on: ubuntu-latest
@@ -111,6 +112,7 @@ jobs:
 
       - name: Deploy to pypi
         env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
-        run: python -m twine upload dist/*
+          POETRY_PYPI_TOKEN_PYPI : ${{ secrets.PYPI_PASSWORD }}
+        run: |
+          poetry config http-basic.pypi "__token__" "${POETRY_PYPI_TOKEN_PYPI}"	
+          poetry publish
