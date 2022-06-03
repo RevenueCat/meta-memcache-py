@@ -71,7 +71,7 @@ jobs:
         env:
           POETRY_PYPI_TOKEN_PYPI : ${{ secrets.PYPI_PASSWORD }}
         run: |
-          poetry config http-basic.pypi "__token__" "${POETRY_PYPI_TOKEN_PYPI}"	
+          poetry config pypi-token.pypi ${{ secrets.PYPI_PASSWORD }}	
           poetry publish
 
   deploy-latest:
@@ -114,5 +114,5 @@ jobs:
         env:
           POETRY_PYPI_TOKEN_PYPI : ${{ secrets.PYPI_PASSWORD }}
         run: |
-          poetry config http-basic.pypi "__token__" "${POETRY_PYPI_TOKEN_PYPI}"	
+          poetry config pypi-token.pypi ${{ secrets.PYPI_PASSWORD }}	
           poetry publish
