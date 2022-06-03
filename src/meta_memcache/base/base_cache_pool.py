@@ -2,7 +2,7 @@ import base64
 import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from typing import Any, Callable, DefaultDict, Dict, Final, List, Optional, Set, Tuple
+from typing import Any, Callable, DefaultDict, Dict, List, Optional, Set, Tuple
 
 from meta_memcache.base.base_serializer import BaseSerializer
 from meta_memcache.base.connection_pool import ConnectionPool
