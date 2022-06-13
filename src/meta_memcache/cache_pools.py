@@ -174,4 +174,4 @@ class ShardedWithGutterCachePool(ShardedCachePool):
                     int_flags=int_flags,
                     token_flags=token_flags,
                 )
-                return self._conn_recv_response(c, flags=flags)
+                return self._conn_recv_response(c, key=key, flags=flags)

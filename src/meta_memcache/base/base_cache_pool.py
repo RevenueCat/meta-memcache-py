@@ -108,7 +108,7 @@ class BaseCachePool(ABC):
                     int_flags=int_flags,
                     token_flags=token_flags,
                 )
-                return self._conn_recv_response(conn, flags=flags)
+                return self._conn_recv_response(conn, key=key, flags=flags)
         except MemcacheServerError:
             if command in (MetaCommand.META_DELETE, MetaCommand.META_SET):
                 self.on_write_failure(key)
@@ -148,7 +148,9 @@ class BaseCachePool(ABC):
                             token_flags=token_flags,
                         )
                     for key in pool_keys:
-                        results[key] = self._conn_recv_response(conn, flags=flags)
+                        results[key] = self._conn_recv_response(
+                            conn, key=key, flags=flags
+                        )
         except MemcacheServerError:
             if command in (
                 MetaCommand.META_DELETE,
@@ -197,6 +199,7 @@ class BaseCachePool(ABC):
     def _conn_recv_response(
         self,
         conn: MemcacheSocket,
+        key: Key,
         flags: Optional[Set[Flag]] = None,
     ) -> MemcacheResponse:
         """
@@ -206,6 +209,12 @@ class BaseCachePool(ABC):
             return Success(flags=set([Flag.NOREPLY]))
         result = conn.get_response()
         if isinstance(result, Value):
+            if flags and Flag.RETURN_KEY in flags:
+                if result.token_flags.get(TokenFlag.KEY) != key.key.encode():
+                    _log.error(
+                        f"Expecting value for key {key}, got {result} on conn {conn}"
+                    )
+                    raise MemcacheError(f"Expecting value for key {key}, got {result}")
             data = conn.get_value(result.size)
             if result.size > 0:
                 encoding_id = result.int_flags.get(IntFlag.CLIENT_FLAG, 0)

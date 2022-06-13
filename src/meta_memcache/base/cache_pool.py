@@ -131,6 +131,7 @@ class CachePool(BaseCachePool):
             Flag.RETURN_CAS_TOKEN,
             Flag.RETURN_LAST_ACCESS,
             Flag.RETURN_FETCHED,
+            Flag.RETURN_KEY,
         }
         int_flags = {
             IntFlag.MISS_LEASE_TTL: lease_policy.ttl,
@@ -201,6 +202,7 @@ class CachePool(BaseCachePool):
             Flag.RETURN_CLIENT_FLAG,
             Flag.RETURN_LAST_ACCESS,
             Flag.RETURN_FETCHED,
+            Flag.RETURN_KEY,
         }
         int_flags = {}
         if recache_policy:
@@ -242,6 +244,7 @@ class CachePool(BaseCachePool):
             Flag.RETURN_CAS_TOKEN,
             Flag.RETURN_LAST_ACCESS,
             Flag.RETURN_FETCHED,
+            Flag.RETURN_KEY,
         }
         int_flags = {}
         if recache_policy:
