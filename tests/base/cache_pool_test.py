@@ -24,6 +24,7 @@ from meta_memcache.protocol import (
     NotStored,
     ServerVersion,
     Success,
+    TokenFlag,
     Value,
 )
 from meta_memcache.serializer import MixedSerializer
@@ -354,31 +355,31 @@ def test_get_cmd(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> 
 
     cache_pool.get(key="foo")
     memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f\r\n", with_noop=False
+        b"mg foo k t l v c h f\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
     cache_pool.get(key=Key("foo"))
     memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f\r\n", with_noop=False
+        b"mg foo k t l v c h f\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
     cache_pool.get(key=Key("foo"), touch_ttl=300)
     memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f T300\r\n", with_noop=False
+        b"mg foo k t l v c h f T300\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
     cache_pool.get(key=Key("foo"), recache_policy=RecachePolicy())
     memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f R30\r\n", with_noop=False
+        b"mg foo k t l v c h f R30\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
     cache_pool.get(key=Key("foo"), touch_ttl=300, recache_policy=RecachePolicy())
     memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f R30 T300\r\n", with_noop=False
+        b"mg foo k t l v c h f R30 T300\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
@@ -386,7 +387,7 @@ def test_get_cmd(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> 
         key=Key("large_key" * 50), touch_ttl=300, recache_policy=RecachePolicy()
     )
     memcache_socket.sendall.assert_called_once_with(
-        b"mg 4gCNJuSyOJPGW8kRddioRlPx b t l v c h f R30 T300\r\n", with_noop=False
+        b"mg 4gCNJuSyOJPGW8kRddioRlPx b k t l v c h f R30 T300\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
@@ -396,11 +397,13 @@ def test_get_cmd(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> 
         recache_policy=RecachePolicy(),
     )
     memcache_socket.sendall.assert_called_once_with(
-        b"mg lCV3WxKxtWrdY4s1+R710+9J b t l v c h f R30 T300\r\n", with_noop=False
+        b"mg lCV3WxKxtWrdY4s1+R710+9J b k t l v c h f R30 T300\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
-    memcache_socket.get_response.return_value = Value(size=0)
+    memcache_socket.get_response.return_value = Value(
+        size=0, token_flags={TokenFlag.KEY: b"foo"}
+    )
     cache_pool.get_or_lease(
         key=Key("foo"),
         lease_policy=LeasePolicy(),
@@ -408,7 +411,7 @@ def test_get_cmd(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> 
         recache_policy=RecachePolicy(ttl=60),
     )
     memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f N30 R60 T300\r\n", with_noop=False
+        b"mg foo k t l v c h f N30 R60 T300\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
@@ -420,14 +423,14 @@ def test_get_miss(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) ->
     assert result is None
     assert cas_token is None
     memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f\r\n", with_noop=False
+        b"mg foo k t l v c h f\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
     result = cache_pool.get_typed(key=Key("foo"), cls=Foo)
     assert result is None
     memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f\r\n", with_noop=False
+        b"mg foo k t l v c h f\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
@@ -435,14 +438,14 @@ def test_get_miss(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) ->
     assert result is None
     assert cas_token is None
     memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f\r\n", with_noop=False
+        b"mg foo k t l v c h f\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
     result = cache_pool.get(key=Key("foo"))
     assert result is None
     memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f\r\n", with_noop=False
+        b"mg foo k t l v c h f\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
@@ -457,6 +460,7 @@ def test_get_value(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -
             IntFlag.CLIENT_FLAG: encoded_value.encoding_id,
             IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
         },
+        token_flags={TokenFlag.KEY: b"foo"},
     )
     memcache_socket.get_value.return_value = encoded_value.data
 
@@ -501,6 +505,7 @@ def test_value_wrong_type(
             IntFlag.CLIENT_FLAG: encoded_value.encoding_id,
             IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
         },
+        token_flags={TokenFlag.KEY: b"foo"},
     )
     memcache_socket.get_value.return_value = encoded_value.data
 
@@ -525,6 +530,23 @@ def test_value_wrong_type(
         assert "Expecting <class 'tests.base.cache_pool_test.Bar'> got Foo" in str(e)
 
 
+def test_value_wrong_key_result(
+    memcache_socket: MemcacheSocket, cache_pool: FakeCachePool
+) -> None:
+    memcache_socket.get_response.return_value = Value(
+        size=3,
+        int_flags={
+            IntFlag.CLIENT_FLAG: 0,
+        },
+        token_flags={TokenFlag.KEY: b"NOT_FOO"},
+    )
+    try:
+        cache_pool.get(key=Key("foo"))
+        raise AssertionError("Should not be reached")
+    except MemcacheError as e:
+        assert "Expecting value for key" in str(e)
+
+
 @pytest.fixture
 def time(mocker: MockerFixture) -> MagicMock:
     return mocker.patch("meta_memcache.base.cache_pool.time", autospec=True)
@@ -543,6 +565,7 @@ def test_recache_win_returns_miss(
             IntFlag.CLIENT_FLAG: encoded_value.encoding_id,
             IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
         },
+        token_flags={TokenFlag.KEY: b"foo"},
     )
     memcache_socket.get_value.return_value = encoded_value.data
 
@@ -564,6 +587,7 @@ def test_recache_lost_returns_stale_value(
             IntFlag.CLIENT_FLAG: encoded_value.encoding_id,
             IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
         },
+        token_flags={TokenFlag.KEY: b"foo"},
     )
     memcache_socket.get_value.return_value = encoded_value.data
 
@@ -584,6 +608,7 @@ def test_get_or_lease_hit(
             IntFlag.CLIENT_FLAG: encoded_value.encoding_id,
             IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
         },
+        token_flags={TokenFlag.KEY: b"foo"},
     )
     memcache_socket.get_value.return_value = encoded_value.data
 
@@ -593,7 +618,7 @@ def test_get_or_lease_hit(
     assert result == expected_value
     assert cas_token == expected_cas_token
     memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f N30\r\n", with_noop=False
+        b"mg foo k t l v c h f N30\r\n", with_noop=False
     )
     memcache_socket.get_value.assert_called_once_with(len(encoded_value.data))
     time.sleep.assert_not_called()
@@ -609,6 +634,7 @@ def test_get_or_lease_miss_win(
         int_flags={
             IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
         },
+        token_flags={TokenFlag.KEY: b"foo"},
     )
     memcache_socket.get_value.return_value = b""
 
@@ -618,7 +644,7 @@ def test_get_or_lease_miss_win(
     assert result is None
     assert cas_token == expected_cas_token
     memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f N30\r\n", with_noop=False
+        b"mg foo k t l v c h f N30\r\n", with_noop=False
     )
     memcache_socket.get_value.assert_called_once_with(0)
     time.sleep.assert_not_called()
@@ -637,6 +663,7 @@ def test_get_or_lease_miss_lost_then_data(
             int_flags={
                 IntFlag.RETURNED_CAS_TOKEN: expected_cas_token - 1,
             },
+            token_flags={TokenFlag.KEY: b"foo"},
         ),
         Value(
             size=0,
@@ -644,6 +671,7 @@ def test_get_or_lease_miss_lost_then_data(
             int_flags={
                 IntFlag.RETURNED_CAS_TOKEN: expected_cas_token - 1,
             },
+            token_flags={TokenFlag.KEY: b"foo"},
         ),
         Value(
             size=len(encoded_value.data),
@@ -651,6 +679,7 @@ def test_get_or_lease_miss_lost_then_data(
                 IntFlag.CLIENT_FLAG: encoded_value.encoding_id,
                 IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
             },
+            token_flags={TokenFlag.KEY: b"foo"},
         ),
     ]
     memcache_socket.get_value.side_effect = [b"", b"", encoded_value.data]
@@ -662,9 +691,9 @@ def test_get_or_lease_miss_lost_then_data(
     assert cas_token == expected_cas_token
     memcache_socket.sendall.assert_has_calls(
         [
-            call(b"mg foo t l v c h f N30\r\n", with_noop=False),
-            call(b"mg foo t l v c h f N30\r\n", with_noop=False),
-            call(b"mg foo t l v c h f N30\r\n", with_noop=False),
+            call(b"mg foo k t l v c h f N30\r\n", with_noop=False),
+            call(b"mg foo k t l v c h f N30\r\n", with_noop=False),
+            call(b"mg foo k t l v c h f N30\r\n", with_noop=False),
         ]
     )
     memcache_socket.get_value.assert_has_calls(
@@ -688,6 +717,7 @@ def test_get_or_lease_miss_lost_then_win(
             int_flags={
                 IntFlag.RETURNED_CAS_TOKEN: expected_cas_token - 1,
             },
+            token_flags={TokenFlag.KEY: b"foo"},
         ),
         Value(
             size=0,
@@ -695,6 +725,7 @@ def test_get_or_lease_miss_lost_then_win(
             int_flags={
                 IntFlag.RETURNED_CAS_TOKEN: expected_cas_token - 1,
             },
+            token_flags={TokenFlag.KEY: b"foo"},
         ),
         Value(
             size=0,
@@ -702,6 +733,7 @@ def test_get_or_lease_miss_lost_then_win(
             int_flags={
                 IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
             },
+            token_flags={TokenFlag.KEY: b"foo"},
         ),
     ]
     memcache_socket.get_value.side_effect = [b"", b"", b""]
@@ -713,9 +745,9 @@ def test_get_or_lease_miss_lost_then_win(
     assert cas_token == expected_cas_token
     memcache_socket.sendall.assert_has_calls(
         [
-            call(b"mg foo t l v c h f N30\r\n", with_noop=False),
-            call(b"mg foo t l v c h f N30\r\n", with_noop=False),
-            call(b"mg foo t l v c h f N30\r\n", with_noop=False),
+            call(b"mg foo k t l v c h f N30\r\n", with_noop=False),
+            call(b"mg foo k t l v c h f N30\r\n", with_noop=False),
+            call(b"mg foo k t l v c h f N30\r\n", with_noop=False),
         ]
     )
     memcache_socket.get_value.assert_has_calls(
@@ -738,6 +770,7 @@ def test_get_or_lease_miss_runs_out_of_retries(
         int_flags={
             IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
         },
+        token_flags={TokenFlag.KEY: b"foo"},
     )
     memcache_socket.get_value.return_value = b""
 
@@ -751,10 +784,10 @@ def test_get_or_lease_miss_runs_out_of_retries(
     assert cas_token == expected_cas_token
     memcache_socket.sendall.assert_has_calls(
         [
-            call(b"mg foo t l v c h f N30\r\n", with_noop=False),
-            call(b"mg foo t l v c h f N30\r\n", with_noop=False),
-            call(b"mg foo t l v c h f N30\r\n", with_noop=False),
-            call(b"mg foo t l v c h f N30\r\n", with_noop=False),
+            call(b"mg foo k t l v c h f N30\r\n", with_noop=False),
+            call(b"mg foo k t l v c h f N30\r\n", with_noop=False),
+            call(b"mg foo k t l v c h f N30\r\n", with_noop=False),
+            call(b"mg foo k t l v c h f N30\r\n", with_noop=False),
         ]
     )
     memcache_socket.get_value.assert_has_calls(
@@ -784,7 +817,7 @@ def test_get_or_lease_errors(
     except MemcacheError:
         pass
     memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f N30 R60 T300\r\n", with_noop=False
+        b"mg foo k t l v c h f N30 R60 T300\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
@@ -920,8 +953,16 @@ def test_delta_cmd(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -
 def test_multi_get(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> None:
     memcache_socket.get_response.side_effect = [
         Miss(),
-        Value(size=2, int_flags={IntFlag.CLIENT_FLAG: MixedSerializer.BINARY}),
-        Value(size=2, flags=set([Flag.WIN])),
+        Value(
+            size=2,
+            int_flags={IntFlag.CLIENT_FLAG: MixedSerializer.BINARY},
+            token_flags={TokenFlag.KEY: b"found"},
+        ),
+        Value(
+            size=2,
+            flags=set([Flag.WIN]),
+            token_flags={TokenFlag.KEY: b"lease"},
+        ),
     ]
     memcache_socket.get_value.return_value = b"OK"
 
@@ -933,9 +974,9 @@ def test_multi_get(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -
         ]
     )
     assert memcache_socket.sendall.mock_calls == [
-        call(b"mg miss t l v h f\r\n", with_noop=False),
-        call(b"mg found t l v h f\r\n", with_noop=False),
-        call(b"mg lease t l v h f\r\n", with_noop=False),
+        call(b"mg miss k t l v h f\r\n", with_noop=False),
+        call(b"mg found k t l v h f\r\n", with_noop=False),
+        call(b"mg lease k t l v h f\r\n", with_noop=False),
     ]
     assert memcache_socket.get_response.call_count == 3
     assert memcache_socket.get_value.mock_calls == [
