@@ -488,7 +488,7 @@ def test_get_other(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -
         cache_pool.get(
             key=Key("foo"),
         )
-        raise AssertionError("Should not be reached")
+        pytest.fail("Should not be reached")
     except MemcacheError as e:
         assert "Unexpected response" in str(e)
 
@@ -516,7 +516,7 @@ def test_value_wrong_type(
 
     try:
         cache_pool.get_cas_typed(key=Key("foo"), cls=Bar, error_on_type_mismatch=True)
-        raise AssertionError("Should not be reached")
+        pytest.fail("Should not be reached")
     except ValueError as e:
         assert "Expecting <class 'tests.base.cache_pool_test.Bar'> got Foo" in str(e)
 
@@ -525,7 +525,7 @@ def test_value_wrong_type(
 
     try:
         cache_pool.get_typed(key=Key("foo"), cls=Bar, error_on_type_mismatch=True)
-        raise AssertionError("Should not be reached")
+        pytest.fail("Should not be reached")
     except ValueError as e:
         assert "Expecting <class 'tests.base.cache_pool_test.Bar'> got Foo" in str(e)
 
@@ -542,7 +542,7 @@ def test_value_wrong_key_result(
     )
     try:
         cache_pool.get(key=Key("foo"))
-        raise AssertionError("Should not be reached")
+        pytest.fail("Should not be reached")
     except MemcacheError as e:
         assert "Expecting value for key" in str(e)
 
@@ -813,7 +813,7 @@ def test_get_or_lease_errors(
             touch_ttl=300,
             recache_policy=RecachePolicy(ttl=60),
         )
-        raise AssertionError("Should not be reached")
+        pytest.fail("Should not be reached")
     except MemcacheError:
         pass
     memcache_socket.sendall.assert_called_once_with(
@@ -828,7 +828,7 @@ def test_get_or_lease_errors(
             touch_ttl=300,
             recache_policy=RecachePolicy(ttl=60),
         )
-        raise AssertionError("Should not be reached")
+        pytest.fail("Should not be reached")
     except ValueError as e:
         assert "Wrong lease_policy: miss_retries needs to be greater than 0" in str(e)
 
@@ -846,7 +846,7 @@ def test_on_write_failure(
     )
     try:
         cache_pool.get(key=Key("foo"))
-        raise AssertionError("Should not be reached")
+        pytest.fail("Should not be reached")
     except MemcacheServerError as e:
         assert "uh-oh" in str(e)
     assert len(failures_tracked) == 0
@@ -854,7 +854,7 @@ def test_on_write_failure(
 
     try:
         cache_pool.delete(key=Key("foo"))
-        raise AssertionError("Should not be reached")
+        pytest.fail("Should not be reached")
     except MemcacheServerError as e:
         assert "uh-oh" in str(e)
     assert len(failures_tracked) == 1
@@ -863,7 +863,7 @@ def test_on_write_failure(
 
     try:
         cache_pool.set(key=Key("foo"), value=1, ttl=10)
-        raise AssertionError("Should not be reached")
+        pytest.fail("Should not be reached")
     except MemcacheServerError as e:
         assert "uh-oh" in str(e)
     assert len(failures_tracked) == 1
