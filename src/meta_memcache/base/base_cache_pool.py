@@ -37,9 +37,11 @@ class BaseCachePool(ABC):
         self,
         serializer: BaseSerializer,
         binary_key_encoding_fn: Callable[[Key], bytes],
+        raise_on_server_error: bool = True,
     ) -> None:
         self._serializer = serializer
         self._binary_key_encoding_fn = binary_key_encoding_fn
+        self._raise_on_server_error = raise_on_server_error
         self.on_write_failure = WriteFailureEvent()
 
     @abstractmethod
@@ -97,8 +99,32 @@ class BaseCachePool(ABC):
         You can override to implement retries, having
         a fallback pool, etc.
         """
+        return self._exec_on_pool(
+            pool=self._get_pool(key),
+            command=command,
+            key=key,
+            value=value,
+            flags=flags,
+            int_flags=int_flags,
+            token_flags=token_flags,
+            track_write_failures=True,
+            raise_on_server_error=self._raise_on_server_error,
+        )
+
+    def _exec_on_pool(
+        self,
+        pool: ConnectionPool,
+        command: MetaCommand,
+        key: Key,
+        value: Optional[bytes],
+        flags: Optional[Set[Flag]],
+        int_flags: Optional[Dict[IntFlag, int]],
+        token_flags: Optional[Dict[TokenFlag, bytes]],
+        track_write_failures: bool,
+        raise_on_server_error: bool,
+    ) -> MemcacheResponse:
         try:
-            with self._get_pool(key).get_connection() as conn:
+            with pool.get_connection() as conn:
                 self._conn_send_cmd(
                     conn,
                     command=command,
@@ -110,9 +136,17 @@ class BaseCachePool(ABC):
                 )
                 return self._conn_recv_response(conn, flags=flags)
         except MemcacheServerError:
-            if command in (MetaCommand.META_DELETE, MetaCommand.META_SET):
+            if track_write_failures and command in (
+                MetaCommand.META_DELETE,
+                MetaCommand.META_SET,
+            ):
                 self.on_write_failure(key)
-            raise
+            if raise_on_server_error:
+                raise
+            if command == MetaCommand.META_GET:
+                return Miss()
+            else:
+                return NotStored()
 
     def _exec_multi(
         self,
@@ -126,37 +160,79 @@ class BaseCachePool(ABC):
         """
         Groups keys by destination, gets a connection and executes the commands
         """
-        if values and len(values) != len(keys):
-            raise ValueError("Values needs to match the number of keys")
-        key_value_map = {k: v for k, v in zip(keys, values or [])}
-        pool_key_map: DefaultDict[ConnectionPool, List[Key]] = defaultdict(list)
-        for key in keys:
-            pool_key_map[self._get_pool(key)].append(key)
+        results: Dict[Key, MemcacheResponse] = {}
+        for pool, key_values in self._exec_multi_prepare_pool_map(
+            self._get_pool, keys, values
+        ).items():
+            results.update(
+                self._exec_multi_on_pool(
+                    pool=pool,
+                    command=command,
+                    key_values=key_values,
+                    flags=flags,
+                    int_flags=int_flags,
+                    token_flags=token_flags,
+                    track_write_failures=True,
+                    raise_on_server_error=self._raise_on_server_error,
+                )
+            )
+        return results
 
+    def _exec_multi_prepare_pool_map(
+        self,
+        pool_getter: Callable[[Key], ConnectionPool],
+        keys: List[Key],
+        values: Optional[List[bytes]] = None,
+    ) -> Dict[ConnectionPool, List[Tuple[Key, Optional[bytes]]]]:
+        if values is not None and len(values) != len(keys):
+            raise ValueError("Values, if provided, needs to match the number of keys")
+        pool_map: DefaultDict[
+            ConnectionPool, List[Tuple[Key, Optional[bytes]]]
+        ] = defaultdict(list)
+        for i, key in enumerate(keys):
+            pool_map[pool_getter(key)].append((key, values[i] if values else None))
+        return pool_map
+
+    def _exec_multi_on_pool(
+        self,
+        pool: ConnectionPool,
+        command: MetaCommand,
+        key_values: List[Tuple[Key, Optional[bytes]]],
+        flags: Optional[Set[Flag]],
+        int_flags: Optional[Dict[IntFlag, int]],
+        token_flags: Optional[Dict[TokenFlag, bytes]],
+        track_write_failures: bool,
+        raise_on_server_error: bool,
+    ) -> Dict[Key, MemcacheResponse]:
         results: Dict[Key, MemcacheResponse] = {}
         try:
-            for pool, pool_keys in pool_key_map.items():
-                with pool.get_connection() as conn:
-                    for key in pool_keys:
-                        self._conn_send_cmd(
-                            conn,
-                            command=command,
-                            key=key,
-                            value=key_value_map.get(key),
-                            flags=flags,
-                            int_flags=int_flags,
-                            token_flags=token_flags,
-                        )
-                    for key in pool_keys:
-                        results[key] = self._conn_recv_response(conn, flags=flags)
+            with pool.get_connection() as conn:
+                for key, value in key_values:
+                    self._conn_send_cmd(
+                        conn,
+                        command=command,
+                        key=key,
+                        value=value,
+                        flags=flags,
+                        int_flags=int_flags,
+                        token_flags=token_flags,
+                    )
+                for key, _ in key_values:
+                    results[key] = self._conn_recv_response(conn, flags=flags)
         except MemcacheServerError:
-            if command in (
+            if track_write_failures and command in (
                 MetaCommand.META_DELETE,
                 MetaCommand.META_SET,
             ):
-                for key in keys:
+                for key, _ in key_values:
                     self.on_write_failure(key)
-            raise
+            if raise_on_server_error:
+                raise
+            failure_result = Miss() if command == MetaCommand.META_GET else NotStored()
+            for key, _ in key_values:
+                if key not in results:
+                    results[key] = failure_result
+
         return results
 
     def _conn_send_cmd(
