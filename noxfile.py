@@ -29,9 +29,7 @@ def lint(session: Session) -> None:
         "flake8-black",
         "flake8-bugbear",
         "flake8-docstrings",
-        # TODO: Remove. See https://github.com/tylerwince/flake8-bandit/issues/21
-        "bandit<=1.7.2",
-        # "darglint",
+        "bandit",
         ".",
     )
     session.run("flake8", *args)

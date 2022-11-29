@@ -78,6 +78,21 @@ def cache_pool(
 
 
 @pytest.fixture
+def cache_pool_not_raise_on_server_error(
+    mocker: MockerFixture,
+    memcache_socket: MemcacheSocket,
+) -> FakeCachePool:
+    connection_pool = mocker.MagicMock(spec=ConnectionPool)
+    connection_pool.get_connection().__enter__.return_value = memcache_socket
+    return FakeCachePool(
+        connection_pool=connection_pool,
+        serializer=MixedSerializer(),
+        binary_key_encoding_fn=default_binary_key_encoding,
+        raise_on_server_error=False,
+    )
+
+
+@pytest.fixture
 def cache_pool_1_6_6(
     mocker: MockerFixture,
     memcache_socket_1_6_6: MemcacheSocket,
@@ -801,7 +816,6 @@ def test_get_or_lease_errors(
 
 
 def test_on_write_failure(
-    # memcache_socket: MemcacheSocket,
     cache_pool: FakeCachePool,
 ) -> None:
     failures_tracked: list[Key] = []
@@ -833,6 +847,35 @@ def test_on_write_failure(
         raise AssertionError("Should not be reached")
     except MemcacheServerError as e:
         assert "uh-oh" in str(e)
+    assert len(failures_tracked) == 1
+    assert failures_tracked[0] == Key("foo")
+    failures_tracked.clear()
+
+
+def test_write_failure_not_raise_on_server_error(
+    cache_pool_not_raise_on_server_error: FakeCachePool,
+) -> None:
+    cache_pool = cache_pool_not_raise_on_server_error
+    failures_tracked: list[Key] = []
+    on_failure: Callable[[Key], None] = lambda key: failures_tracked.append(key)
+    cache_pool.on_write_failure += on_failure
+
+    cache_pool.connection_pool.get_connection.side_effect = MemcacheServerError(
+        server="broken:11211", message="uh-oh"
+    )
+    result = cache_pool.get(key=Key("foo"))
+    assert result is None
+    assert len(failures_tracked) == 0
+    failures_tracked.clear()
+
+    result = cache_pool.delete(key=Key("foo"))
+    assert result is False
+    assert len(failures_tracked) == 1
+    assert failures_tracked[0] == Key("foo")
+    failures_tracked.clear()
+
+    result = cache_pool.set(key=Key("foo"), value=1, ttl=10)
+    assert result is False
     assert len(failures_tracked) == 1
     assert failures_tracked[0] == Key("foo")
     failures_tracked.clear()
