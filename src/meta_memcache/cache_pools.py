@@ -182,7 +182,7 @@ class ShardedWithGutterCachePool(ShardedCachePool):
                 raise_on_server_error=True,
             )
         except MemcacheServerError:
-            # Override TTLs > than gutter TTLa
+            # Override TTLs > than gutter TTL
             int_flags = self._adjust_int_flags_for_gutter(int_flags)
             return self._exec_on_pool(
                 pool=self._get_gutter_pool(key),
@@ -237,7 +237,7 @@ class ShardedWithGutterCachePool(ShardedCachePool):
                     if gutter_values is not None and value is not None:
                         gutter_values.append(value)
         if gutter_keys:
-            # Override TTLs > than gutter TTLa
+            # Override TTLs > than gutter TTL
             int_flags = self._adjust_int_flags_for_gutter(int_flags)
             for pool, key_values in self._exec_multi_prepare_pool_map(
                 self._get_gutter_pool, keys, gutter_values
