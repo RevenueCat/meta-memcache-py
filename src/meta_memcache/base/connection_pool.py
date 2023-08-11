@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from typing import Callable, Deque, Generator, NamedTuple, Optional
 
 from meta_memcache.base.memcache_socket import MemcacheSocket
-from meta_memcache.errors import MemcacheServerError
+from meta_memcache.errors import MemcacheServerError, ServerMarkedDownError
 from meta_memcache.protocol import ServerVersion
 from meta_memcache.settings import DEFAULT_MARK_DOWN_PERIOD_S, DEFAULT_READ_BUFFER_SIZE
 
@@ -83,7 +83,7 @@ class ConnectionPool:
     def _create_connection(self) -> MemcacheSocket:
         if marked_down_until := self._marked_down_until:
             if time.time() < marked_down_until:
-                raise MemcacheServerError(
+                raise ServerMarkedDownError(
                     self.server, f"Server marked down: {self.server}"
                 )
             self._marked_down_until = None
@@ -97,7 +97,7 @@ class ConnectionPool:
             )
             self._errors = next(self._errors_counter)
             self._marked_down_until = time.time() + self._mark_down_period_s
-            raise MemcacheServerError(
+            raise ServerMarkedDownError(
                 self.server, f"Server marked down: {self.server}"
             ) from e
 
