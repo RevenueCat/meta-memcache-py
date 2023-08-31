@@ -28,6 +28,9 @@ class PoolCounters(NamedTuple):
     # Total # of connection or socket errors
     total_errors: int
 
+class ConnectionHolder(NamedTuple):
+    connection: MemcacheSocket
+    connection_error_count: int
 
 class ConnectionPool:
     def __init__(
@@ -37,14 +40,20 @@ class ConnectionPool:
         initial_pool_size: int,
         max_pool_size: int,
         mark_down_period_s: float = DEFAULT_MARK_DOWN_PERIOD_S,
+        mark_down_period_errors_required_to_trigger: int = 1,
+        errors_required_to_discard_connection: int = 1,
         read_buffer_size: int = DEFAULT_READ_BUFFER_SIZE,
         version: ServerVersion = ServerVersion.STABLE,
+        new_connection_spacing_s: Optional[float] = 0,
     ) -> None:
         self.server = server
         self._socket_factory_fn = socket_factory_fn
         self._initial_pool_size: int = min(initial_pool_size, max_pool_size)
         self._max_pool_size = max_pool_size
         self._mark_down_period_s = mark_down_period_s
+        self._mark_down_period_errors_required_to_trigger = mark_down_period_errors_required_to_trigger
+        self._last_error_count_when_marked_down = 0
+        self._errors_required_to_discard_connection = errors_required_to_discard_connection
         self._created_counter: itertools.count[int] = itertools.count(start=1)
         self._created = 0
         self._errors_counter: itertools.count[int] = itertools.count(start=1)
@@ -57,9 +66,10 @@ class ConnectionPool:
         # proactively, relying on GC instead. We use a soft max limit, after
         # all is not that critical to respect the number of connections
         # exactly.
-        self._pool: Deque[MemcacheSocket] = deque()
+        self._pool: Deque[ConnectionHolder] = deque()
         self._read_buffer_size = read_buffer_size
         self._version = version
+        self._new_connection_spacing_s = new_connection_spacing_s
         for _ in range(self._initial_pool_size):
             try:
                 self._pool.append(self._create_connection())
@@ -80,7 +90,7 @@ class ConnectionPool:
             total_errors=self._errors,
         )
 
-    def _create_connection(self) -> MemcacheSocket:
+    def _create_connection(self) -> ConnectionHolder:
         if marked_down_until := self._marked_down_until:
             if time.time() < marked_down_until:
                 raise ServerMarkedDownError(
@@ -96,17 +106,21 @@ class ConnectionPool:
                 exc_info=True,
             )
             self._errors = next(self._errors_counter)
-            self._marked_down_until = time.time() + self._mark_down_period_s
-            raise ServerMarkedDownError(
-                self.server, f"Server marked down: {self.server}"
-            ) from e
+
+            if self._errors >= self._last_error_count_when_marked_down + self._mark_down_period_errors_required_to_trigger:
+                self._marked_down_until = time.time() + self._mark_down_period_s
+                raise ServerMarkedDownError(
+                    self.server, f"Server marked down: {self.server}"
+                ) from e
+            else:
+                raise e
 
         self._created = next(self._created_counter)
-        return MemcacheSocket(conn, self._read_buffer_size, version=self._version)
+        return ConnectionHolder(connection=MemcacheSocket(conn, self._read_buffer_size, version=self._version), connection_error_count=0)
 
-    def _discard_connection(self, conn: MemcacheSocket, error: bool = False) -> None:
+    def _discard_connection(self, conn_holder: ConnectionHolder, error: bool = False) -> None:
         try:
-            conn.close()
+            conn_holder.connection.close()
         except Exception:  # noqa: S110
             pass
         if error:
@@ -116,28 +130,37 @@ class ConnectionPool:
     @contextmanager
     def get_connection(self) -> Generator[MemcacheSocket, None, None]:
         try:
-            conn = self._pool.popleft()
+            conn_holder = self._pool.popleft()
         except IndexError:
-            conn = None
+            conn_holder = None
 
-        if conn is None:
-            conn = self._create_connection()
+        if conn_holder is None:
+            time.sleep(self._new_connection_spacing_s)            
+            conn_holder = self._create_connection()
 
+        should_discard_from_error = False
         try:
-            yield conn
+            yield conn_holder.connection
         except Exception as e:
-            # Errors, assume connection is in bad state
-            _log.warning(
-                "Error during cache conn context (discarding connection)",
-                exc_info=True,
-            )
-            self._discard_connection(conn, error=True)
+            conn_holder.connection_error_count += 1
+
+            should_discard_from_error = conn_holder.connection_error_count >= self._errors_required_to_discard_connection
+
+            if should_discard_from_error:
+                # Errors, assume connection is in bad state
+                _log.warning(
+                    "Error during cache conn context (discarding connection)",
+                    exc_info=True,
+                )
+                self._discard_connection(conn_holder, error=True)
+
             raise MemcacheServerError(self.server, "Memcache error") from e
-        else:
+        
+        if not should_discard_from_error:
             if len(self._pool) < self._max_pool_size:
                 # If there is a race, the  deque might end with more than
                 # self._max_pool_size but it is not a big deal, we want this
                 # to be a soft limit.
-                self._pool.append(conn)
+                self._pool.append(conn_holder)
             else:
-                self._discard_connection(conn)
+                self._discard_connection(conn_holder)
