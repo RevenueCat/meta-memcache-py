@@ -1,4 +1,4 @@
-from typing import Callable, Dict, Iterable, List, Optional, Set
+from typing import Callable, Dict, Iterable, List, Optional, Set, Type, TypeVar
 
 from uhashring import HashRing  # type: ignore
 
@@ -38,6 +38,9 @@ class MultiServerCachePool(CachePool):
         }
 
 
+ShardedCachePoolT = TypeVar("ShardedCachePoolT", bound="ShardedCachePool")
+
+
 class ShardedCachePool(MultiServerCachePool):
     def __init__(
         self,
@@ -62,13 +65,13 @@ class ShardedCachePool(MultiServerCachePool):
 
     @classmethod
     def from_server_addresses(
-        cls,
+        cls: Type[ShardedCachePoolT],
         servers: Iterable[ServerAddress],
         connection_pool_factory_fn: Callable[[ServerAddress], ConnectionPool],
         serializer: Optional[BaseSerializer] = None,
         binary_key_encoding_fn: Callable[[Key], bytes] = default_binary_key_encoding,
         raise_on_server_error: bool = True,
-    ) -> "ShardedCachePool":
+    ) -> ShardedCachePoolT:
         server_pool: Dict[ServerAddress, ConnectionPool] = {
             server: connection_pool_factory_fn(server) for server in servers
         }
@@ -78,6 +81,11 @@ class ShardedCachePool(MultiServerCachePool):
             binary_key_encoding_fn=binary_key_encoding_fn,
             raise_on_server_error=raise_on_server_error,
         )
+
+
+ShardedWithGutterCachePoolT = TypeVar(
+    "ShardedWithGutterCachePoolT", bound="ShardedWithGutterCachePool"
+)
 
 
 class ShardedWithGutterCachePool(ShardedCachePool):
@@ -105,7 +113,7 @@ class ShardedWithGutterCachePool(ShardedCachePool):
 
     @classmethod
     def from_server_with_gutter_server_addresses(
-        cls,
+        cls: Type[ShardedWithGutterCachePoolT],
         servers: Iterable[ServerAddress],
         gutter_servers: Iterable[ServerAddress],
         gutter_ttl: int,
@@ -113,7 +121,7 @@ class ShardedWithGutterCachePool(ShardedCachePool):
         serializer: Optional[BaseSerializer] = None,
         binary_key_encoding_fn: Callable[[Key], bytes] = default_binary_key_encoding,
         raise_on_server_error: bool = True,
-    ) -> "ShardedWithGutterCachePool":
+    ) -> ShardedWithGutterCachePoolT:
         server_pool: Dict[ServerAddress, ConnectionPool] = {
             server: connection_pool_factory_fn(server) for server in servers
         }

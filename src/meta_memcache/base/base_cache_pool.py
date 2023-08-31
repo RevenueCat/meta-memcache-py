@@ -303,7 +303,6 @@ class BaseCachePool(ABC):
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
     ) -> Dict[Key, ReadResponse]:
-
         results: Dict[Key, ReadResponse] = {}
         for key, result in self._exec_multi(
             command=MetaCommand.META_GET,
