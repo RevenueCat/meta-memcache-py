@@ -369,31 +369,31 @@ def test_get_cmd(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> 
 
     cache_pool.get(key="foo")
     memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f\r\n", with_noop=False
+        b"mg foo t l v h f\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
     cache_pool.get(key=Key("foo"))
     memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f\r\n", with_noop=False
+        b"mg foo t l v h f\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
     cache_pool.get(key=Key("foo"), touch_ttl=300)
     memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f T300\r\n", with_noop=False
+        b"mg foo t l v h f T300\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
     cache_pool.get(key=Key("foo"), recache_policy=RecachePolicy())
     memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f R30\r\n", with_noop=False
+        b"mg foo t l v h f R30\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
     cache_pool.get(key=Key("foo"), touch_ttl=300, recache_policy=RecachePolicy())
     memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f R30 T300\r\n", with_noop=False
+        b"mg foo t l v h f R30 T300\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
@@ -401,7 +401,7 @@ def test_get_cmd(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> 
         key=Key("large_key" * 50), touch_ttl=300, recache_policy=RecachePolicy()
     )
     memcache_socket.sendall.assert_called_once_with(
-        b"mg 4gCNJuSyOJPGW8kRddioRlPx b t l v c h f R30 T300\r\n", with_noop=False
+        b"mg 4gCNJuSyOJPGW8kRddioRlPx b t l v h f R30 T300\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
@@ -411,7 +411,7 @@ def test_get_cmd(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> 
         recache_policy=RecachePolicy(),
     )
     memcache_socket.sendall.assert_called_once_with(
-        b"mg lCV3WxKxtWrdY4s1+R710+9J b t l v c h f R30 T300\r\n", with_noop=False
+        b"mg lCV3WxKxtWrdY4s1+R710+9J b t l v h f R30 T300\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
@@ -442,7 +442,7 @@ def test_get_miss(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) ->
     result = cache_pool.get_typed(key=Key("foo"), cls=Foo)
     assert result is None
     memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f\r\n", with_noop=False
+        b"mg foo t l v h f\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
@@ -457,7 +457,7 @@ def test_get_miss(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) ->
     result = cache_pool.get(key=Key("foo"))
     assert result is None
     memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f\r\n", with_noop=False
+        b"mg foo t l v h f\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
