@@ -1,6 +1,6 @@
 __version__ = "0.1.0"
 
-from meta_memcache.base.cache_pool import CachePool, SetMode
+from meta_memcache.base.cache_pool import CachePool
 from meta_memcache.cache_pools import ShardedCachePool, ShardedWithGutterCachePool
 from meta_memcache.configuration import (
     LeasePolicy,
@@ -20,6 +20,7 @@ from meta_memcache.protocol import (
     Miss,
     NotStored,
     ServerVersion,
+    SetMode,
     Success,
     TokenFlag,
     Value,
