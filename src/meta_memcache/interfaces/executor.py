@@ -1,5 +1,4 @@
-from typing import Any, Dict, List, Optional, Protocol, Set, Tuple
-from meta_memcache.base.base_serializer import EncodedValue
+from typing import Dict, List, Optional, Protocol, Set, Tuple
 from meta_memcache.connection.pool import ConnectionPool
 from meta_memcache.events.write_failure_event import WriteFailureEvent
 
@@ -7,6 +6,7 @@ from meta_memcache.protocol import (
     Flag,
     IntFlag,
     Key,
+    MaybeValue,
     MemcacheResponse,
     MetaCommand,
     TokenFlag,
@@ -14,18 +14,12 @@ from meta_memcache.protocol import (
 
 
 class Executor(Protocol):
-    def encode_value(self, value: Any) -> EncodedValue:
-        """
-        Encode a value using the executor's serializer
-        """
-        ...  # pragma: no cover
-
     def exec_on_pool(
         self,
         pool: ConnectionPool,
         command: MetaCommand,
         key: Key,
-        value: Optional[bytes],
+        value: MaybeValue,
         flags: Optional[Set[Flag]],
         int_flags: Optional[Dict[IntFlag, int]],
         token_flags: Optional[Dict[TokenFlag, bytes]],
@@ -43,7 +37,7 @@ class Executor(Protocol):
         self,
         pool: ConnectionPool,
         command: MetaCommand,
-        key_values: List[Tuple[Key, Optional[bytes]]],
+        key_values: List[Tuple[Key, MaybeValue]],
         flags: Optional[Set[Flag]],
         int_flags: Optional[Dict[IntFlag, int]],
         token_flags: Optional[Dict[TokenFlag, bytes]],

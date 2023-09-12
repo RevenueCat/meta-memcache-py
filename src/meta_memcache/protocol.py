@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum, IntEnum
-from typing import Any, Dict, NamedTuple, Optional, Set, Union
+from typing import Any, Dict, List, NamedTuple, Optional, Set, Union
 
 ENDL = b"\r\n"
 NOOP: bytes = b"mn" + ENDL
@@ -125,6 +125,14 @@ class Value(Success):
         super().__init__(flags, int_flags, token_flags)
         self.size = size
         self.value = value
+
+
+class ValueContainer(NamedTuple):
+    value: Any
+
+
+MaybeValue = Optional[ValueContainer]
+MaybeValues = Optional[List[ValueContainer]]
 
 
 @dataclass
