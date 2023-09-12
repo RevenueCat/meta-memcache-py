@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import socket
+from enum import IntEnum
 from typing import Callable, Dict, Iterable, NamedTuple, Optional, Tuple
 
 from meta_memcache.connection.pool import ConnectionPool
@@ -167,3 +168,33 @@ def default_key_encoder(key: Key) -> Tuple[bytes, bool]:
         raise ValueError(f"Invalid key {key}")
     else:
         return key.key.encode("ascii"), False
+
+
+class MigrationMode(IntEnum):
+    """
+    Describes how to migrate data from one cache to another.
+    """
+
+    # Only use the origin cache pool. The destination
+    # cache pool will not get changes, should be empty.
+    ONLY_ORIGIN = 1
+
+    # Use the origin cache pool, but replicate writes
+    # to the destination cache pool
+    POPULATE_WRITES = 2
+
+    # Use the origin cache pool, but replicate writes
+    # and 1% of reads to the destination cache pool
+    POPULATE_WRITES_AND_READS_1PCT = 3
+
+    # Use the origin cache pool, but replicate writes
+    # and 1% of reads to the destination cache pool
+    POPULATE_WRITES_AND_READS_10PCT = 4
+
+    # Use the destination cache pool, but update the
+    # origin cache pool with writes
+    USE_DESTINATION_UPDATE_ORIGIN = 5
+
+    # Only use the destination cache pool, the origin
+    # cache pool will become stale
+    ONLY_DESTINATION = 6
