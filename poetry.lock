@@ -175,6 +175,20 @@ python-versions = ">=3.7"
 gitdb = ">=4.0.1,<5"
 
 [[package]]
+name = "marisa-trie"
+version = "1.0.0"
+description = "Static memory-efficient and fast Trie-like structures for Python."
+category = "main"
+optional = false
+python-versions = ">=3.7"
+
+[package.dependencies]
+setuptools = "*"
+
+[package.extras]
+test = ["hypothesis", "pytest", "readme-renderer"]
+
+[[package]]
 name = "mccabe"
 version = "0.7.0"
 description = "McCabe checker, plugin for flake8"
@@ -276,6 +290,19 @@ optional = false
 python-versions = ">=3.6"
 
 [[package]]
+name = "setuptools"
+version = "68.2.2"
+description = "Easily download, build, install, upgrade, and uninstall Python packages"
+category = "main"
+optional = false
+python-versions = ">=3.8"
+
+[package.extras]
+docs = ["furo", "jaraco.packaging (>=9.3)", "jaraco.tidelift (>=1.4)", "pygments-github-lexers (==0.0.5)", "rst.linker (>=1.9)", "sphinx (>=3.5)", "sphinx-favicon", "sphinx-hoverxref (<2)", "sphinx-inline-tabs", "sphinx-lint", "sphinx-notfound-page (>=1,<2)", "sphinx-reredirects", "sphinxcontrib-towncrier"]
+testing = ["build[virtualenv]", "filelock (>=3.4.0)", "flake8-2020", "ini2toml[lite] (>=0.9)", "jaraco.develop (>=7.21)", "jaraco.envs (>=2.2)", "jaraco.path (>=3.2.0)", "pip (>=19.1)", "pytest (>=6)", "pytest-black (>=0.3.7)", "pytest-checkdocs (>=2.4)", "pytest-cov", "pytest-enabler (>=2.2)", "pytest-mypy (>=0.9.1)", "pytest-perf", "pytest-ruff", "pytest-timeout", "pytest-xdist", "tomli-w (>=1.0.0)", "virtualenv (>=13.0.0)", "wheel"]
+testing-integration = ["build[virtualenv] (>=1.0.3)", "filelock (>=3.4.0)", "jaraco.envs (>=2.2)", "jaraco.path (>=3.2.0)", "packaging (>=23.1)", "pytest", "pytest-enabler", "pytest-xdist", "tomli", "virtualenv (>=13.0.0)", "wheel"]
+
+[[package]]
 name = "smmap"
 version = "5.0.0"
 description = "A pure Python implementation of a sliding window memory map manager"
@@ -329,7 +356,7 @@ python-versions = ">=3.7"
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.8"
-content-hash = "7c9c63c1ff34b7b6e259cd692d1c01334f157e1477117ecd6847e785fa8ceb01"
+content-hash = "1e1f63d1d3e45fe8988f7f0d87812a3caa113e83a0cef9f061bcfdb2e8e99e38"
 
 [metadata.files]
 attrs = [
@@ -402,6 +429,68 @@ gitdb = [
 gitpython = [
     {file = "GitPython-3.1.29-py3-none-any.whl", hash = "sha256:41eea0deec2deea139b459ac03656f0dd28fc4a3387240ec1d3c259a2c47850f"},
     {file = "GitPython-3.1.29.tar.gz", hash = "sha256:cc36bfc4a3f913e66805a28e84703e419d9c264c1077e537b54f0e1af85dbefd"},
+]
+marisa-trie = [
+    {file = "marisa-trie-1.0.0.tar.gz", hash = "sha256:d8a68301f023a724eb379aaa1b10f88a9e1a458cc8a41b527c62507859b4a4d2"},
+    {file = "marisa_trie-1.0.0-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:ac817d167f84bdc4de2a737fb5ffb635ba1a3fdf3dbbcc06541b2cb420416e79"},
+    {file = "marisa_trie-1.0.0-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:6bc75721f4fb8c1d1d0812d2ed17e57ff77e7192c792114af941c12dab1a4346"},
+    {file = "marisa_trie-1.0.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:210cfa143a5f5dc5038a4255adc891eec4d55aa7eff409b70434b796b5de0f1f"},
+    {file = "marisa_trie-1.0.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:9794b840d4a211b78816ffb7839ac205e22d895f368b8d14fdf00e4a9615e6a5"},
+    {file = "marisa_trie-1.0.0-cp310-cp310-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:b29aecbffc474bb0353d9c73608bcb9fb36b1a44d9bf707e973c1ce8e63bda7b"},
+    {file = "marisa_trie-1.0.0-cp310-cp310-musllinux_1_1_i686.whl", hash = "sha256:6ea5e2436978c586f3a74b171eef088167291cddf71dbf4681418f61267d2254"},
+    {file = "marisa_trie-1.0.0-cp310-cp310-musllinux_1_1_x86_64.whl", hash = "sha256:a1a9d78d9f3010fcb8c1a8c40565bb5115cd55766d501bb85828ce6d56e32314"},
+    {file = "marisa_trie-1.0.0-cp310-cp310-win32.whl", hash = "sha256:bd1fa1b82272114b0f81595921f37ada7f29227f2ce23ef228a1af4ae0dbfe0e"},
+    {file = "marisa_trie-1.0.0-cp310-cp310-win_amd64.whl", hash = "sha256:f43f73814678304a9384ada1ba15ef5f46e557f566a0209cc3d4bb0eda4792ad"},
+    {file = "marisa_trie-1.0.0-cp311-cp311-macosx_10_9_universal2.whl", hash = "sha256:0654229e476ac07719f9e427fafb902473eb5ca4284690cd2960872285945ee8"},
+    {file = "marisa_trie-1.0.0-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:a6c6800674003f60975cb578b1240dce91c8e276a1bdec9c0e280b9ef296fb54"},
+    {file = "marisa_trie-1.0.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:6fdd5e619fa44dba41276220186772c926860dfa9b791d8d8f29b3ce6c65a23a"},
+    {file = "marisa_trie-1.0.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:f53c54d7deeff79b65b3310ff763aa95e61cb6c5fe4bf63bc0ebe6e98be91fa4"},
+    {file = "marisa_trie-1.0.0-cp311-cp311-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:e9addb7095f7ba8076febb2928ed4be5a247ee31064da770ae97c3a772b9216d"},
+    {file = "marisa_trie-1.0.0-cp311-cp311-musllinux_1_1_i686.whl", hash = "sha256:eef6c2e2daacca171296c24f8972af2bbbfd529de678fd4c4c7e2b216f799e84"},
+    {file = "marisa_trie-1.0.0-cp311-cp311-musllinux_1_1_x86_64.whl", hash = "sha256:97187816838f5cdd5aeb7d1b170a8fd6688596e5ce53186696de18bb5abd8369"},
+    {file = "marisa_trie-1.0.0-cp311-cp311-win32.whl", hash = "sha256:9297a6b1fff4761d493041a172c45e86ab409f1d0fb88d6a427e4d3f8d5e810f"},
+    {file = "marisa_trie-1.0.0-cp311-cp311-win_amd64.whl", hash = "sha256:8ce63d85d7a6821fee54bccf5c4d54f53b1d7ab48189db0779514f659f629cf9"},
+    {file = "marisa_trie-1.0.0-cp37-cp37m-macosx_10_9_x86_64.whl", hash = "sha256:ee16569ee02f27c43eb7280a8e4277add33e2bc9ff4ea9e5584cd0b487c5769b"},
+    {file = "marisa_trie-1.0.0-cp37-cp37m-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:ba8790022a91a4eca0cbe06669ab51f4275a5943a506e3a8b7b462d3f3cad85f"},
+    {file = "marisa_trie-1.0.0-cp37-cp37m-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:86eb98a38db8795928d6235e4e84285a64f8b85efa80836c4b29f66b5a114ba1"},
+    {file = "marisa_trie-1.0.0-cp37-cp37m-musllinux_1_1_i686.whl", hash = "sha256:61370c3a5e93e05eb501c80c24346909eb4dd3595d733b4fd3847ec05204c22d"},
+    {file = "marisa_trie-1.0.0-cp37-cp37m-musllinux_1_1_x86_64.whl", hash = "sha256:f93fdff76037a5b730830b78b1df6f20a4cafb24ba520a412a10b608b28a8477"},
+    {file = "marisa_trie-1.0.0-cp37-cp37m-win32.whl", hash = "sha256:49f804013d2696feae1bb42a9f974dace2406bbce9624cddf82f5a08b91ea59f"},
+    {file = "marisa_trie-1.0.0-cp37-cp37m-win_amd64.whl", hash = "sha256:9c46ed9d939e6c6234bda52ff13427967d5f9dbb73696175b0fb5c42b1200069"},
+    {file = "marisa_trie-1.0.0-cp38-cp38-macosx_10_9_universal2.whl", hash = "sha256:69621f0c317157e360ad465313de6d04fbc47b936a3d77284d2b7aa5fc8c05d4"},
+    {file = "marisa_trie-1.0.0-cp38-cp38-macosx_10_9_x86_64.whl", hash = "sha256:d01e2482246c9563c22cf9883fed4f618f806e35e6aad3564060bfbdfae3e075"},
+    {file = "marisa_trie-1.0.0-cp38-cp38-macosx_11_0_arm64.whl", hash = "sha256:834c24627984eaddd145c559e905aabc78f12f3445ddaac8d013a928de57c321"},
+    {file = "marisa_trie-1.0.0-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:b0e868f19b2ccfc6b656aa86bb934ad68783aa717c37e5f88e60e240a2e829fb"},
+    {file = "marisa_trie-1.0.0-cp38-cp38-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:ddcbfbb09d067a2764534f6f7997d65ae681bf556304cc96f437f096810888f2"},
+    {file = "marisa_trie-1.0.0-cp38-cp38-musllinux_1_1_i686.whl", hash = "sha256:52ea8c5d05b638c9543520c77a03604907ef5e21214fe92ac4e22416b324bc6e"},
+    {file = "marisa_trie-1.0.0-cp38-cp38-musllinux_1_1_x86_64.whl", hash = "sha256:22a15b799e1266e923bbce6acd1501ddcfecf1fabd70c5ee224a895ecc0e0daa"},
+    {file = "marisa_trie-1.0.0-cp38-cp38-win32.whl", hash = "sha256:ee0bbc6b58ad7a4ac14e47fd0de0ee77029d48fc97f19e896906fc136457a6be"},
+    {file = "marisa_trie-1.0.0-cp38-cp38-win_amd64.whl", hash = "sha256:b4c7a39d0cc80fb5f93cc5290e32478ae7c16c5bbbc383a0b7ab14dad3cde53e"},
+    {file = "marisa_trie-1.0.0-cp39-cp39-macosx_10_9_universal2.whl", hash = "sha256:d6839f9e09a9b0bb8683c94da1a0eda4b3951b397235be540aaeb54dc3b737ca"},
+    {file = "marisa_trie-1.0.0-cp39-cp39-macosx_10_9_x86_64.whl", hash = "sha256:5b0e3bd20586d10a9f62914b4b0a0c1bbe526b396b5f456aa68afffe0d10073d"},
+    {file = "marisa_trie-1.0.0-cp39-cp39-macosx_11_0_arm64.whl", hash = "sha256:d3d6257fed955c40f49b1edb6a2e168aa01e6b4bbcdadedecfeb862b93c721e2"},
+    {file = "marisa_trie-1.0.0-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:467054b237a8faef7b7b2143649a2a3603abc7bb88d6132844b9a2bb055cb638"},
+    {file = "marisa_trie-1.0.0-cp39-cp39-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:801454d0a5533be485b285408e2838717527b02558116704725da33ebcd578c2"},
+    {file = "marisa_trie-1.0.0-cp39-cp39-musllinux_1_1_i686.whl", hash = "sha256:fd84fa78deaa7a121aef7eeacc54b4880946dd7935bdf8b453310ad870e5d7cc"},
+    {file = "marisa_trie-1.0.0-cp39-cp39-musllinux_1_1_x86_64.whl", hash = "sha256:16145c8dbcb9b2e9407170406ce096917ad3de4dcec7e70451c03f67e0cb4e46"},
+    {file = "marisa_trie-1.0.0-cp39-cp39-win32.whl", hash = "sha256:bd5a880f19d24143f0ef244432b8bc8aee71217ba70731821779796786c34d86"},
+    {file = "marisa_trie-1.0.0-cp39-cp39-win_amd64.whl", hash = "sha256:47b795fa2e434aa061ad95c0ac97d68d4f3593a0f253e29dcebdd7ff09681278"},
+    {file = "marisa_trie-1.0.0-pp310-pypy310_pp73-macosx_10_9_x86_64.whl", hash = "sha256:2028a77a21d56440175405fc8cf872e10f2af2ac928aa09f5958b0d036194c32"},
+    {file = "marisa_trie-1.0.0-pp310-pypy310_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:705614e13ca9b6b5751fd9baed7ae33517a0874e691e51492cdf85db056281d2"},
+    {file = "marisa_trie-1.0.0-pp310-pypy310_pp73-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:6d8d292a45b4e8db985b395f6972a6177dee2fe399a739e02f99301f59908ef0"},
+    {file = "marisa_trie-1.0.0-pp310-pypy310_pp73-win_amd64.whl", hash = "sha256:8a3b2de663aa0fa0251d0db8f336d8f5f4b8837c5ca34590cd662df13bef81a2"},
+    {file = "marisa_trie-1.0.0-pp37-pypy37_pp73-macosx_10_9_x86_64.whl", hash = "sha256:63241a0714c8eaf93d35799a183f70d34b55a2d547086f9572a1f1fc62343b61"},
+    {file = "marisa_trie-1.0.0-pp37-pypy37_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:00d743b069789c397c3fc677069146093b9df06e467a85ee9d5384cfce11823f"},
+    {file = "marisa_trie-1.0.0-pp37-pypy37_pp73-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:b8a18ac806d147583d2f1c030abe0d69a9e3efa899f0d5e1af01807ba8649696"},
+    {file = "marisa_trie-1.0.0-pp37-pypy37_pp73-win_amd64.whl", hash = "sha256:f534687cdfc570db8805f7a092033077d93bce54bf3cc46e7e098e9b15875749"},
+    {file = "marisa_trie-1.0.0-pp38-pypy38_pp73-macosx_10_9_x86_64.whl", hash = "sha256:9baf968893dc7c724c7e2d1958549c9c09774c1511bee13977edb8d5c2e668dc"},
+    {file = "marisa_trie-1.0.0-pp38-pypy38_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d81c905267dc1bc983e9c4b0e847f960560d9257b9c40724e90814655c734670"},
+    {file = "marisa_trie-1.0.0-pp38-pypy38_pp73-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:b08caa6ce91b50130f857658f5370ed16b9d6fc44ccedf74d4a5efbea9ccf3eb"},
+    {file = "marisa_trie-1.0.0-pp38-pypy38_pp73-win_amd64.whl", hash = "sha256:88533e799ab8a257896635b917850ebeef82b3d5b54c27736dccb2ce0f5d24e0"},
+    {file = "marisa_trie-1.0.0-pp39-pypy39_pp73-macosx_10_9_x86_64.whl", hash = "sha256:9e270208050788a3c92de28a691a25719c933fd086fa8d39cb0410d70fadfb54"},
+    {file = "marisa_trie-1.0.0-pp39-pypy39_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:3bbb601ba1fee5ff1019c71149e1bc98fb9d5cfadf1790b934da24c49147e205"},
+    {file = "marisa_trie-1.0.0-pp39-pypy39_pp73-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:34ec0f3bb54479a49dd60bb712fee851e7c135504d84efcf030815a07a9a96f5"},
+    {file = "marisa_trie-1.0.0-pp39-pypy39_pp73-win_amd64.whl", hash = "sha256:eba700d6f24906dff4e593be1af93ebf38c841b0755ee701c816674f133dee29"},
 ]
 mccabe = [
     {file = "mccabe-0.7.0-py2.py3-none-any.whl", hash = "sha256:6c2d30ab6be0e4a46919781807b4f0d834ebdd6c6e3dca0bda5a15f863427b6e"},
@@ -508,6 +597,10 @@ pyyaml = [
     {file = "PyYAML-6.0-cp39-cp39-win32.whl", hash = "sha256:b5b9eccad747aabaaffbc6064800670f0c297e52c12754eb1d976c57e4f74dcb"},
     {file = "PyYAML-6.0-cp39-cp39-win_amd64.whl", hash = "sha256:b3d267842bf12586ba6c734f89d1f5b871df0273157918b0ccefa29deb05c21c"},
     {file = "PyYAML-6.0.tar.gz", hash = "sha256:68fb519c14306fec9720a2a5b45bc9f0c8d1b9c72adf45c37baedfcd949c35a2"},
+]
+setuptools = [
+    {file = "setuptools-68.2.2-py3-none-any.whl", hash = "sha256:b454a35605876da60632df1a60f736524eb73cc47bbc9f3f1ef1b644de74fd2a"},
+    {file = "setuptools-68.2.2.tar.gz", hash = "sha256:4ac1475276d2f1c48684874089fefcd83bd7162ddaafb81fac866ba0db282a87"},
 ]
 smmap = [
     {file = "smmap-5.0.0-py3-none-any.whl", hash = "sha256:2aba19d6a040e78d8b09de5c57e96207b09ed71d8e55ce0959eeee6c8e190d94"},
