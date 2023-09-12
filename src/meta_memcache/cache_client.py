@@ -12,6 +12,7 @@ from meta_memcache.connection.pool import ConnectionPool
 from meta_memcache.connection.providers import HashRingConnectionPoolProvider
 from meta_memcache.executors.default import DefaultExecutor
 from meta_memcache.routers.default import DefaultRouter
+from meta_memcache.routers.ephemeral import EphemeralRouter
 from meta_memcache.routers.gutter import GutterRouter
 from meta_memcache.interfaces.cache_api import CacheApi
 from meta_memcache.protocol import Key
@@ -65,6 +66,29 @@ class CacheClient(HighLevelCommandsMixin, MetaCommandsMixin, BaseCacheClient):
                 )
             ),
             gutter_ttl=gutter_ttl,
+            executor=executor,
+        )
+        return CacheClient(router=router)
+
+    @staticmethod
+    def ephemeral_cache_client_from_servers(
+        servers: Iterable[ServerAddress],
+        max_ttl: int,
+        connection_pool_factory_fn: Callable[[ServerAddress], ConnectionPool],
+        serializer: Optional[BaseSerializer] = None,
+        key_encoder_fn: Callable[[Key], Tuple[bytes, bool]] = default_key_encoder,
+        raise_on_server_error: bool = True,
+    ) -> CacheApi:
+        executor = DefaultExecutor(
+            serializer=serializer or MixedSerializer(),
+            key_encoder_fn=key_encoder_fn,
+            raise_on_server_error=raise_on_server_error,
+        )
+        router = EphemeralRouter(
+            max_ttl=max_ttl,
+            pool_provider=HashRingConnectionPoolProvider(
+                server_pool=build_server_pool(servers, connection_pool_factory_fn)
+            ),
             executor=executor,
         )
         return CacheClient(router=router)
