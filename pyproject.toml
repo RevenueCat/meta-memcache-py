@@ -11,6 +11,7 @@ authors = ["Guillermo Perez <bisho@revenuecat.com>"]
 [tool.poetry.dependencies]
 python = "^3.8"
 uhashring = "^2.1"
+marisa-trie = "^1.0.0"
 
 [tool.poetry.dev-dependencies]
 flake8 = "^5"
@@ -29,7 +30,7 @@ testpaths = [
 
 [tool.isort]
 profile = "black"
-known_third_party = ["uhashring", "pytest", "pytest_mock"]
+known_third_party = ["uhashring", "pytest", "pytest_mock", "marisa-trie"]
 
 [tool.coverage.paths]
 source = ["src", "*/site-packages"]
