@@ -1,21 +1,25 @@
 import pickle
-from typing import Callable
 import zlib
 from dataclasses import dataclass
+from typing import Callable
 from unittest.mock import MagicMock, call
+from meta_memcache.connection.providers import HostConnectionPoolProvider
+from meta_memcache.executors.default import DefaultExecutor
+from meta_memcache.routers.default import DefaultRouter
 
 import pytest
 from pytest_mock import MockerFixture
 
 from meta_memcache import CachePool, Key, MemcacheError, SetMode
-from meta_memcache.base.connection_pool import ConnectionPool
-from meta_memcache.base.memcache_socket import MemcacheSocket
 from meta_memcache.configuration import (
     LeasePolicy,
     RecachePolicy,
+    ServerAddress,
     StalePolicy,
-    default_binary_key_encoding,
+    default_key_encoder,
 )
+from meta_memcache.connection.memcache_socket import MemcacheSocket
+from meta_memcache.connection.pool import ConnectionPool
 from meta_memcache.errors import MemcacheServerError
 from meta_memcache.protocol import (
     Flag,
@@ -27,16 +31,6 @@ from meta_memcache.protocol import (
     Value,
 )
 from meta_memcache.serializer import MixedSerializer
-
-
-class FakeCachePool(CachePool):
-    def __init__(self, connection_pool: ConnectionPool, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-
-        self.connection_pool = connection_pool
-
-    def _get_pool(self, key: Key) -> ConnectionPool:
-        return self.connection_pool
 
 
 @dataclass
@@ -64,51 +58,61 @@ def memcache_socket_1_6_6(mocker: MockerFixture) -> MemcacheSocket:
 
 
 @pytest.fixture
-def cache_pool(
-    mocker: MockerFixture,
-    memcache_socket: MemcacheSocket,
-) -> FakeCachePool:
+def connection_pool(
+    mocker: MockerFixture, memcache_socket: MemcacheSocket
+) -> ConnectionPool:
     connection_pool = mocker.MagicMock(spec=ConnectionPool)
     connection_pool.get_connection().__enter__.return_value = memcache_socket
-    return FakeCachePool(
-        connection_pool=connection_pool,
-        serializer=MixedSerializer(),
-        binary_key_encoding_fn=default_binary_key_encoding,
-    )
+    return connection_pool
 
 
 @pytest.fixture
-def cache_pool_not_raise_on_server_error(
-    mocker: MockerFixture,
-    memcache_socket: MemcacheSocket,
-) -> FakeCachePool:
-    connection_pool = mocker.MagicMock(spec=ConnectionPool)
-    connection_pool.get_connection().__enter__.return_value = memcache_socket
-    return FakeCachePool(
-        connection_pool=connection_pool,
-        serializer=MixedSerializer(),
-        binary_key_encoding_fn=default_binary_key_encoding,
-        raise_on_server_error=False,
-    )
-
-
-@pytest.fixture
-def cache_pool_1_6_6(
-    mocker: MockerFixture,
-    memcache_socket_1_6_6: MemcacheSocket,
-) -> FakeCachePool:
+def connection_pool_1_6_6(
+    mocker: MockerFixture, memcache_socket_1_6_6: MemcacheSocket
+) -> ConnectionPool:
     connection_pool = mocker.MagicMock(spec=ConnectionPool)
     connection_pool.get_connection().__enter__.return_value = memcache_socket_1_6_6
-    return FakeCachePool(
+    return connection_pool
+
+
+def get_test_cache_pool(
+    connection_pool: ConnectionPool,
+    raise_on_server_error: bool = True,
+) -> CachePool:
+    pool_provider = HostConnectionPoolProvider(
+        server_address=ServerAddress("test", 11211),
         connection_pool=connection_pool,
-        serializer=MixedSerializer(),
-        binary_key_encoding_fn=default_binary_key_encoding,
     )
+    executor = DefaultExecutor(
+        serializer=MixedSerializer(),
+        key_encoder_fn=default_key_encoder,
+        raise_on_server_error=raise_on_server_error,
+    )
+    router = DefaultRouter(
+        pool_provider=pool_provider,
+        executor=executor,
+    )
+    return CachePool(router=router)
+
+
+@pytest.fixture
+def cache_pool(connection_pool: ConnectionPool) -> CachePool:
+    return get_test_cache_pool(connection_pool)
+
+
+@pytest.fixture
+def cache_pool_not_raise_on_server_error(connection_pool: ConnectionPool) -> CachePool:
+    return get_test_cache_pool(connection_pool, raise_on_server_error=False)
+
+
+@pytest.fixture
+def cache_pool_1_6_6(connection_pool_1_6_6: ConnectionPool) -> CachePool:
+    return get_test_cache_pool(connection_pool_1_6_6)
 
 
 def test_set_cmd(
     memcache_socket: MemcacheSocket,
-    cache_pool: FakeCachePool,
+    cache_pool: CachePool,
 ) -> None:
     memcache_socket.get_response.return_value = Success()
 
@@ -252,7 +256,7 @@ def test_set_cmd(
 
 def test_set_cmd_1_6_6(
     memcache_socket_1_6_6: MemcacheSocket,
-    cache_pool_1_6_6: FakeCachePool,
+    cache_pool_1_6_6: CachePool,
 ) -> None:
     memcache_socket_1_6_6.get_response.return_value = Success()
 
@@ -265,7 +269,7 @@ def test_set_cmd_1_6_6(
 
 def test_set_success_fail(
     memcache_socket: MemcacheSocket,
-    cache_pool: FakeCachePool,
+    cache_pool: CachePool,
 ) -> None:
     memcache_socket.get_response.return_value = Success()
     result = cache_pool.set(key=Key("foo"), value="bar", ttl=300)
@@ -278,7 +282,7 @@ def test_set_success_fail(
 
 def test_delete_cmd(
     memcache_socket: MemcacheSocket,
-    cache_pool: FakeCachePool,
+    cache_pool: CachePool,
 ) -> None:
     memcache_socket.get_response.return_value = Success()
 
@@ -326,7 +330,7 @@ def test_delete_cmd(
 
 def test_delete_success_fail(
     memcache_socket: MemcacheSocket,
-    cache_pool: FakeCachePool,
+    cache_pool: CachePool,
 ) -> None:
     memcache_socket.get_response.return_value = Success()
     result = cache_pool.delete(key=Key("foo"))
@@ -339,7 +343,7 @@ def test_delete_success_fail(
 
 def test_touch_cmd(
     memcache_socket: MemcacheSocket,
-    cache_pool: FakeCachePool,
+    cache_pool: CachePool,
 ) -> None:
     memcache_socket.get_response.return_value = Success()
 
@@ -364,7 +368,7 @@ def test_touch_cmd(
     memcache_socket.get_response.reset_mock()
 
 
-def test_get_cmd(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> None:
+def test_get_cmd(memcache_socket: MemcacheSocket, cache_pool: CachePool) -> None:
     memcache_socket.get_response.return_value = Miss()
 
     cache_pool.get(key="foo")
@@ -428,7 +432,7 @@ def test_get_cmd(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> 
     memcache_socket.sendall.reset_mock()
 
 
-def test_get_miss(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> None:
+def test_get_miss(memcache_socket: MemcacheSocket, cache_pool: CachePool) -> None:
     memcache_socket.get_response.return_value = Miss()
 
     result, cas_token = cache_pool.get_cas_typed(key=Key("foo"), cls=Foo)
@@ -462,7 +466,7 @@ def test_get_miss(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) ->
     memcache_socket.sendall.reset_mock()
 
 
-def test_get_value(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> None:
+def test_get_value(memcache_socket: MemcacheSocket, cache_pool: CachePool) -> None:
     expected_cas_token = 123
     expected_value = Foo("hello world")
     encoded_value = MixedSerializer().serialize(expected_value)
@@ -493,7 +497,7 @@ def test_get_value(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -
     assert result == expected_value
 
 
-def test_get_other(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> None:
+def test_get_other(memcache_socket: MemcacheSocket, cache_pool: CachePool) -> None:
     memcache_socket.get_response.return_value = Success()
     try:
         cache_pool.get(
@@ -505,7 +509,7 @@ def test_get_other(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -
 
 
 def test_value_wrong_type(
-    memcache_socket: MemcacheSocket, cache_pool: FakeCachePool
+    memcache_socket: MemcacheSocket, cache_pool: CachePool
 ) -> None:
     expected_cas_token = 123
     expected_value = Foo("hello world")
@@ -542,11 +546,13 @@ def test_value_wrong_type(
 
 @pytest.fixture
 def time(mocker: MockerFixture) -> MagicMock:
-    return mocker.patch("meta_memcache.base.cache_pool.time", autospec=True)
+    return mocker.patch(
+        "meta_memcache.commands.high_level_commands.time", autospec=True
+    )
 
 
 def test_recache_win_returns_miss(
-    memcache_socket: MemcacheSocket, cache_pool: FakeCachePool, time: MagicMock
+    memcache_socket: MemcacheSocket, cache_pool: CachePool, time: MagicMock
 ) -> None:
     expected_cas_token = 123
     expected_value = Foo("hello world")
@@ -567,7 +573,7 @@ def test_recache_win_returns_miss(
 
 
 def test_recache_lost_returns_stale_value(
-    memcache_socket: MemcacheSocket, cache_pool: FakeCachePool, time: MagicMock
+    memcache_socket: MemcacheSocket, cache_pool: CachePool, time: MagicMock
 ) -> None:
     expected_cas_token = 123
     expected_value = Foo("hello world")
@@ -588,7 +594,7 @@ def test_recache_lost_returns_stale_value(
 
 
 def test_get_or_lease_hit(
-    memcache_socket: MemcacheSocket, cache_pool: FakeCachePool, time: MagicMock
+    memcache_socket: MemcacheSocket, cache_pool: CachePool, time: MagicMock
 ) -> None:
     expected_cas_token = 123
     expected_value = Foo("hello world")
@@ -615,7 +621,7 @@ def test_get_or_lease_hit(
 
 
 def test_get_or_lease_miss_win(
-    memcache_socket: MemcacheSocket, cache_pool: FakeCachePool, time: MagicMock
+    memcache_socket: MemcacheSocket, cache_pool: CachePool, time: MagicMock
 ) -> None:
     expected_cas_token = 123
     memcache_socket.get_response.return_value = Value(
@@ -640,7 +646,7 @@ def test_get_or_lease_miss_win(
 
 
 def test_get_or_lease_miss_lost_then_data(
-    memcache_socket: MemcacheSocket, cache_pool: FakeCachePool, time: MagicMock
+    memcache_socket: MemcacheSocket, cache_pool: CachePool, time: MagicMock
 ) -> None:
     expected_cas_token = 123
     expected_value = Foo("hello world")
@@ -693,7 +699,7 @@ def test_get_or_lease_miss_lost_then_data(
 
 
 def test_get_or_lease_miss_lost_then_win(
-    memcache_socket: MemcacheSocket, cache_pool: FakeCachePool, time: MagicMock
+    memcache_socket: MemcacheSocket, cache_pool: CachePool, time: MagicMock
 ) -> None:
     expected_cas_token = 123
     memcache_socket.get_response.side_effect = [
@@ -744,7 +750,7 @@ def test_get_or_lease_miss_lost_then_win(
 
 
 def test_get_or_lease_miss_runs_out_of_retries(
-    memcache_socket: MemcacheSocket, cache_pool: FakeCachePool, time: MagicMock
+    memcache_socket: MemcacheSocket, cache_pool: CachePool, time: MagicMock
 ) -> None:
     expected_cas_token = 123
     memcache_socket.get_response.return_value = Value(
@@ -784,7 +790,7 @@ def test_get_or_lease_miss_runs_out_of_retries(
 
 
 def test_get_or_lease_errors(
-    memcache_socket: MemcacheSocket, cache_pool: FakeCachePool
+    memcache_socket: MemcacheSocket, cache_pool: CachePool
 ) -> None:
     # We should never get a miss
     memcache_socket.get_response.return_value = Miss()
@@ -816,13 +822,14 @@ def test_get_or_lease_errors(
 
 
 def test_on_write_failure(
-    cache_pool: FakeCachePool,
+    cache_pool: CachePool,
+    connection_pool: ConnectionPool,
 ) -> None:
     failures_tracked: list[Key] = []
     on_failure: Callable[[Key], None] = lambda key: failures_tracked.append(key)
     cache_pool.on_write_failure += on_failure
 
-    cache_pool.connection_pool.get_connection.side_effect = MemcacheServerError(
+    connection_pool.get_connection.side_effect = MemcacheServerError(
         server="broken:11211", message="uh-oh"
     )
     try:
@@ -851,16 +858,25 @@ def test_on_write_failure(
     assert failures_tracked[0] == Key("foo")
     failures_tracked.clear()
 
+    try:
+        cache_pool.multi_get(keys=[Key("foo"), Key("bar")])
+        raise AssertionError("Should not be reached")
+    except MemcacheServerError as e:
+        assert "uh-oh" in str(e)
+    assert len(failures_tracked) == 0
+    failures_tracked.clear()
+
 
 def test_write_failure_not_raise_on_server_error(
-    cache_pool_not_raise_on_server_error: FakeCachePool,
+    cache_pool_not_raise_on_server_error: CachePool,
+    connection_pool: ConnectionPool,
 ) -> None:
     cache_pool = cache_pool_not_raise_on_server_error
     failures_tracked: list[Key] = []
     on_failure: Callable[[Key], None] = lambda key: failures_tracked.append(key)
     cache_pool.on_write_failure += on_failure
 
-    cache_pool.connection_pool.get_connection.side_effect = MemcacheServerError(
+    connection_pool.get_connection.side_effect = MemcacheServerError(
         server="broken:11211", message="uh-oh"
     )
     result = cache_pool.get(key=Key("foo"))
@@ -880,8 +896,13 @@ def test_write_failure_not_raise_on_server_error(
     assert failures_tracked[0] == Key("foo")
     failures_tracked.clear()
 
+    result = cache_pool.multi_get(keys=[Key("foo"), Key("bar")])
+    assert result == {Key("foo"): None, Key("bar"): None}
+    assert len(failures_tracked) == 0
+    failures_tracked.clear()
 
-def test_delta_cmd(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> None:
+
+def test_delta_cmd(memcache_socket: MemcacheSocket, cache_pool: CachePool) -> None:
     memcache_socket.get_response.return_value = Miss()
 
     cache_pool.delta(key="foo", delta=1, no_reply=True)
@@ -941,6 +962,8 @@ def test_delta_cmd(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
 
+    # memcache_socket.get_response.return_value = Value(size=2, b"10")
+
     memcache_socket.get_response.return_value = Success()
 
     result = cache_pool.delta(key=Key("foo"), delta=1)
@@ -959,8 +982,18 @@ def test_delta_cmd(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -
     memcache_socket.get_response.reset_mock()
     memcache_socket.get_value.reset_mock()
 
+    result = cache_pool.delta_initialize_and_get(
+        key=Key("foo"), delta=1, initial_value=0, initial_ttl=60
+    )
+    assert result == 10
+    memcache_socket.sendall.assert_called_once_with(
+        b"ma foo v D1 J0 N60\r\n", with_noop=False
+    )
+    memcache_socket.sendall.reset_mock()
+    memcache_socket.get_response.reset_mock()
 
-def test_multi_get(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> None:
+
+def test_multi_get(memcache_socket: MemcacheSocket, cache_pool: CachePool) -> None:
     memcache_socket.get_response.side_effect = [
         Miss(),
         Value(size=2, int_flags={IntFlag.CLIENT_FLAG: MixedSerializer.BINARY}),

@@ -1,16 +1,28 @@
 import time
-from typing import Any, Dict, Iterable, Optional, Set, Tuple, Type, TypeVar, Union
+from typing import (
+    Any,
+    Dict,
+    Iterable,
+    Optional,
+    Protocol,
+    Set,
+    Tuple,
+    Type,
+    TypeVar,
+    Union,
+)
 
-from meta_memcache.base.base_cache_pool import BaseCachePool
 from meta_memcache.configuration import LeasePolicy, RecachePolicy, StalePolicy
 from meta_memcache.errors import MemcacheError
+from meta_memcache.interfaces.high_level_commands import HighLevelCommandsProtocol
+from meta_memcache.interfaces.meta_commands import MetaCommandsProtocol
 from meta_memcache.protocol import (
     Flag,
     IntFlag,
     Key,
     Miss,
-    SetMode,
     ReadResponse,
+    SetMode,
     Success,
     TokenFlag,
     Value,
@@ -19,9 +31,47 @@ from meta_memcache.protocol import (
 T = TypeVar("T")
 
 
-class CachePool(BaseCachePool):
-    def set(
+class HighLevelCommandMixinWithMetaCommands(
+    HighLevelCommandsProtocol, MetaCommandsProtocol, Protocol
+):
+    def _get(
         self,
+        key: Union[Key, str],
+        touch_ttl: Optional[int] = None,
+        lease_policy: Optional[LeasePolicy] = None,
+        recache_policy: Optional[RecachePolicy] = None,
+        return_cas_token: bool = False,
+    ) -> Optional[Value]:
+        ...  # pragma: no cover
+
+    def _process_get_result(
+        self, key: Union[Key, str], result: ReadResponse
+    ) -> Optional[Value]:
+        ...  # pragma: no cover
+
+    def _get_typed_value(
+        self,
+        key: Union[Key, str],
+        value: Any,
+        cls: Type[T],
+        error_on_type_mismatch: bool = False,
+    ) -> Optional[T]:
+        ...  # pragma: no cover
+
+    def _get_delta_flags(
+        self,
+        delta: int,
+        refresh_ttl: Optional[int] = None,
+        no_reply: bool = False,
+        cas_token: Optional[int] = None,
+        return_value: bool = False,
+    ) -> Tuple[Set[Flag], Dict[IntFlag, int], Dict[TokenFlag, bytes]]:
+        ...  # pragma: no cover
+
+
+class HighLevelCommandsMixin:
+    def set(
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         value: Any,
         ttl: int,
@@ -58,7 +108,7 @@ class CachePool(BaseCachePool):
         return isinstance(result, Success)
 
     def delete(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         cas_token: Optional[int] = None,
         no_reply: bool = False,
@@ -84,7 +134,7 @@ class CachePool(BaseCachePool):
         return isinstance(result, Success)
 
     def touch(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         ttl: int,
         no_reply: bool = False,
@@ -99,7 +149,7 @@ class CachePool(BaseCachePool):
         return isinstance(result, Success)
 
     def get_or_lease(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         lease_policy: LeasePolicy,
         touch_ttl: Optional[int] = None,
@@ -114,7 +164,7 @@ class CachePool(BaseCachePool):
         return value
 
     def get_or_lease_cas(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         lease_policy: LeasePolicy,
         touch_ttl: Optional[int] = None,
@@ -170,7 +220,7 @@ class CachePool(BaseCachePool):
                 raise MemcacheError(f"Unexpected response: {result} for key {key}")
 
     def get(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
@@ -184,7 +234,7 @@ class CachePool(BaseCachePool):
         return result.value if result is not None else None
 
     def multi_get(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         keys: Iterable[Union[Key, str]],
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
@@ -197,7 +247,7 @@ class CachePool(BaseCachePool):
         return {k: v.value if v is not None else None for k, v in results.items()}
 
     def _multi_get(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         keys: Iterable[Union[Key, str]],
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
@@ -226,7 +276,7 @@ class CachePool(BaseCachePool):
         return {k: self._process_get_result(k, v) for k, v in results.items()}
 
     def get_cas(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
@@ -244,7 +294,7 @@ class CachePool(BaseCachePool):
             return result.value, cas_token
 
     def _get(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         touch_ttl: Optional[int] = None,
         lease_policy: Optional[LeasePolicy] = None,
@@ -273,7 +323,9 @@ class CachePool(BaseCachePool):
         return self._process_get_result(key, result)
 
     def _process_get_result(
-        self, key: Union[Key, str], result: ReadResponse
+        self: HighLevelCommandMixinWithMetaCommands,
+        key: Union[Key, str],
+        result: ReadResponse,
     ) -> Optional[Value]:
         if isinstance(result, Value):
             # It is a hit
@@ -289,7 +341,7 @@ class CachePool(BaseCachePool):
             raise MemcacheError(f"Unexpected response: {result} for key {key}")
 
     def get_typed(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         cls: Type[T],
         touch_ttl: Optional[int] = None,
@@ -304,7 +356,7 @@ class CachePool(BaseCachePool):
         return self._get_typed_value(key, value, cls, error_on_type_mismatch)
 
     def get_cas_typed(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         cls: Type[T],
         touch_ttl: Optional[int] = None,
@@ -317,7 +369,7 @@ class CachePool(BaseCachePool):
         return self._get_typed_value(key, value, cls, error_on_type_mismatch), cas_token
 
     def _get_typed_value(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         value: Any,
         cls: Type[T],
@@ -332,7 +384,7 @@ class CachePool(BaseCachePool):
         return result
 
     def _get_delta_flags(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         delta: int,
         refresh_ttl: Optional[int] = None,
         no_reply: bool = False,
@@ -359,7 +411,7 @@ class CachePool(BaseCachePool):
         return flags, int_flags, token_flags
 
     def delta(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         delta: int,
         refresh_ttl: Optional[int] = None,
@@ -379,7 +431,7 @@ class CachePool(BaseCachePool):
         return isinstance(result, Success)
 
     def delta_initialize(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         delta: int,
         initial_value: int,
@@ -403,7 +455,7 @@ class CachePool(BaseCachePool):
         return isinstance(result, Success)
 
     def delta_and_get(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         delta: int,
         refresh_ttl: Optional[int] = None,
@@ -429,7 +481,7 @@ class CachePool(BaseCachePool):
         return None
 
     def delta_initialize_and_get(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         delta: int,
         initial_value: int,

@@ -12,11 +12,11 @@ pip install meta-memcache
 from meta_memcache import (
     Key,
     ServerAddress,
-    ShardedCachePool,
+    CachePool,
     connection_pool_factory_builder,
 )
 
-pool = ShardedCachePool.from_server_addresses(
+pool = CachePool.cache_pool_from_servers(
     servers=[
         ServerAddress(host="1.1.1.1", port=11211),
         ServerAddress(host="2.2.2.2", port=11211),
@@ -29,9 +29,9 @@ pool = ShardedCachePool.from_server_addresses(
 The design is very pluggable. Rather than supporting a lot of features, it
 relies on dependency injection to configure behavior.
 
-The `CachePool`s expects a `connection_pool_factory_fn` callback to build the
-internal connection pool. And the connection pool receives a function to create
-a new memcache connection.
+The `CachePool.cache_pool_from_servers`s expects a `connection_pool_factory_fn`
+callback to build the internal connection pool. And the connection pool receives
+a function to create a new memcache connection.
 
 While this is very flexible, it can be complex to initialize, so there is a
 default builder provided to tune the most frequent things:
@@ -370,11 +370,12 @@ class StalePolicy(NamedTuple):
 
 ## Pool level features:
 Finally in
-[`cache_pools.py`](https://github.com/RevenueCat/meta-memcache-py/blob/main/src/meta_memcache/cache_pools.py)
-a few classes implement the pool-level semantics:
-* `ShardedCachePool`: implements a consistent hashing cache pool using uhashring's `HashRing`.
-* `ShardedWithGutterCachePool`: implements a sharded cache pool like above, but
-  with a 'gutter pool' (See
+[`cache_pool.py`](https://github.com/RevenueCat/meta-memcache-py/blob/main/src/meta_memcache/cache_pool.py)
+helps building different `CachePool`s with different characteristics:
+* `cache_pool_from_servers`: Implements the default, shardedconsistent hashing
+  cache pool using uhashring's `HashRing`.
+* `cache_pool_with_gutter_from_servers`: implements a sharded cache pool like
+  above, but with a 'gutter pool' (See
   [Scaling Memcache at Facebook](http://www.cs.utah.edu/~stutsman/cs6963/public/papers/memcached.pdf)),
   so when a server of the primary pool is down, requests are sent to the
   'gutter' pool, with TTLs overriden and lowered on the fly, so they provide

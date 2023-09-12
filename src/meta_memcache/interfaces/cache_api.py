@@ -1,24 +1,18 @@
-from typing import Dict
+from typing import Dict, Protocol
 from meta_memcache.configuration import ServerAddress
 from meta_memcache.connection.pool import PoolCounters
 from meta_memcache.events.write_failure_event import WriteFailureEvent
-from meta_memcache.interfaces.router import Router
+from meta_memcache.interfaces.commands import CommandsProtocol
 
 
-class BaseCachePool:
-    def __init__(
-        self,
-        router: Router,
-    ):
-        self.router = router
-
+class CacheApiProtocol(CommandsProtocol, Protocol):
     @property
     def on_write_failure(self) -> WriteFailureEvent:
-        return self.router.executor.on_write_failure
+        ...  # pragma: no cover
 
     @on_write_failure.setter
     def on_write_failure(self, value: WriteFailureEvent) -> None:
-        self.router.executor.on_write_failure = value
+        ...  # pragma: no cover
 
     def get_counters(self) -> Dict[ServerAddress, PoolCounters]:
-        return self.router.get_counters()
+        ...  # pragma: no cover

@@ -19,7 +19,7 @@ class MetaCommandsProtocol(Protocol):
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
     ) -> Dict[Key, ReadResponse]:
-        ...
+        ...  # pragma: no cover
 
     def meta_get(
         self,
@@ -28,7 +28,7 @@ class MetaCommandsProtocol(Protocol):
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
     ) -> ReadResponse:
-        ...
+        ...  # pragma: no cover
 
     def meta_set(
         self,
@@ -39,7 +39,7 @@ class MetaCommandsProtocol(Protocol):
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
     ) -> WriteResponse:
-        ...
+        ...  # pragma: no cover
 
     def meta_delete(
         self,
@@ -48,7 +48,7 @@ class MetaCommandsProtocol(Protocol):
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
     ) -> WriteResponse:
-        ...
+        ...  # pragma: no cover
 
     def meta_arithmetic(
         self,
@@ -57,4 +57,4 @@ class MetaCommandsProtocol(Protocol):
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
     ) -> WriteResponse:
-        ...
+        ...  # pragma: no cover
