@@ -7,6 +7,8 @@ from meta_memcache.protocol import (
     Flag,
     IntFlag,
     Key,
+    MaybeValue,
+    MaybeValues,
     MemcacheResponse,
     MetaCommand,
     TokenFlag,
@@ -34,7 +36,7 @@ class GutterRouter(DefaultRouter):
         self,
         command: MetaCommand,
         key: Key,
-        value: Optional[bytes] = None,
+        value: MaybeValue = None,
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
@@ -80,7 +82,7 @@ class GutterRouter(DefaultRouter):
         self,
         command: MetaCommand,
         keys: List[Key],
-        values: Optional[List[bytes]] = None,
+        values: MaybeValues = None,
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
@@ -90,7 +92,7 @@ class GutterRouter(DefaultRouter):
         """
         results: Dict[Key, MemcacheResponse] = {}
         gutter_keys: List[Key] = []
-        gutter_values: Optional[List[bytes]] = [] if values is not None else None
+        gutter_values: MaybeValues = [] if values is not None else None
         for pool, key_values in self._exec_multi_prepare_pool_map(
             self.pool_provider.get_pool, keys, values
         ).items():

@@ -1,7 +1,7 @@
 import logging
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
-from meta_memcache.base.base_serializer import BaseSerializer, EncodedValue
+from meta_memcache.base.base_serializer import BaseSerializer
 from meta_memcache.configuration import default_key_encoder
 from meta_memcache.connection.memcache_socket import MemcacheSocket
 from meta_memcache.connection.pool import ConnectionPool
@@ -12,6 +12,7 @@ from meta_memcache.protocol import (
     Flag,
     IntFlag,
     Key,
+    MaybeValue,
     MemcacheResponse,
     MetaCommand,
     Miss,
@@ -20,6 +21,7 @@ from meta_memcache.protocol import (
     Success,
     TokenFlag,
     Value,
+    ValueContainer,
     encode_size,
 )
 
@@ -66,18 +68,22 @@ class DefaultExecutor:
         cmd.extend(cmd_flags)
         return b" ".join(cmd) + ENDL
 
-    def encode_value(self, value: Any) -> EncodedValue:
-        """
-        Encode a value using the executor's serializer
-        """
-        return self._serializer.serialize(value)
+    def _prepare_serialized_value_and_int_flags(
+        self,
+        value: ValueContainer,
+        int_flags: Optional[Dict[IntFlag, int]],
+    ) -> Tuple[Optional[bytes], Optional[Dict[IntFlag, int]]]:
+        encoded_value = self._serializer.serialize(value.value)
+        int_flags = int_flags if int_flags is not None else {}
+        int_flags[IntFlag.SET_CLIENT_FLAG] = encoded_value.encoding_id
+        return encoded_value.data, int_flags
 
     def exec_on_pool(
         self,
         pool: ConnectionPool,
         command: MetaCommand,
         key: Key,
-        value: Optional[bytes],
+        value: MaybeValue,
         flags: Optional[Set[Flag]],
         int_flags: Optional[Dict[IntFlag, int]],
         token_flags: Optional[Dict[TokenFlag, bytes]],
@@ -89,13 +95,18 @@ class DefaultExecutor:
             if raise_on_server_error is not None
             else self._raise_on_server_error
         )
+        cmd_value, int_flags = (
+            (None, int_flags)
+            if value is None
+            else self._prepare_serialized_value_and_int_flags(value, int_flags)
+        )
         try:
             with pool.get_connection() as conn:
                 self._conn_send_cmd(
                     conn,
                     command=command,
                     key=key,
-                    value=value,
+                    value=cmd_value,
                     flags=flags,
                     int_flags=int_flags,
                     token_flags=token_flags,
@@ -118,7 +129,7 @@ class DefaultExecutor:
         self,
         pool: ConnectionPool,
         command: MetaCommand,
-        key_values: List[Tuple[Key, Optional[bytes]]],
+        key_values: List[Tuple[Key, MaybeValue]],
         flags: Optional[Set[Flag]],
         int_flags: Optional[Dict[IntFlag, int]],
         token_flags: Optional[Dict[TokenFlag, bytes]],
@@ -134,11 +145,19 @@ class DefaultExecutor:
         try:
             with pool.get_connection() as conn:
                 for key, value in key_values:
+                    cmd_value, int_flags = (
+                        (None, int_flags)
+                        if value is None
+                        else self._prepare_serialized_value_and_int_flags(
+                            value, int_flags
+                        )
+                    )
+
                     self._conn_send_cmd(
                         conn,
                         command=command,
                         key=key,
-                        value=value,
+                        value=cmd_value,
                         flags=flags,
                         int_flags=int_flags,
                         token_flags=token_flags,

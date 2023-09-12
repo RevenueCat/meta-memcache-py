@@ -9,6 +9,8 @@ from meta_memcache.protocol import (
     Flag,
     IntFlag,
     Key,
+    MaybeValue,
+    MaybeValues,
     MemcacheResponse,
     MetaCommand,
     TokenFlag,
@@ -28,7 +30,7 @@ class DefaultRouter:
         self,
         command: MetaCommand,
         key: Key,
-        value: Optional[bytes] = None,
+        value: MaybeValue = None,
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
@@ -54,7 +56,7 @@ class DefaultRouter:
         self,
         command: MetaCommand,
         keys: List[Key],
-        values: Optional[List[bytes]] = None,
+        values: MaybeValues = None,
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
@@ -83,12 +85,12 @@ class DefaultRouter:
         self,
         pool_getter: Callable[[Key], ConnectionPool],
         keys: List[Key],
-        values: Optional[List[bytes]] = None,
-    ) -> Dict[ConnectionPool, List[Tuple[Key, Optional[bytes]]]]:
+        values: MaybeValues = None,
+    ) -> Dict[ConnectionPool, List[Tuple[Key, MaybeValue]]]:
         if values is not None and len(values) != len(keys):
             raise ValueError("Values, if provided, needs to match the number of keys")
         pool_map: DefaultDict[
-            ConnectionPool, List[Tuple[Key, Optional[bytes]]]
+            ConnectionPool, List[Tuple[Key, MaybeValue]]
         ] = defaultdict(list)
         for i, key in enumerate(keys):
             pool_map[pool_getter(key)].append((key, values[i] if values else None))

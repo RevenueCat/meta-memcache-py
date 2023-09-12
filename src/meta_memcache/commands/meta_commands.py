@@ -14,6 +14,7 @@ from meta_memcache.protocol import (
     Success,
     TokenFlag,
     Value,
+    ValueContainer,
     WriteResponse,
 )
 
@@ -68,15 +69,10 @@ class MetaCommandsMixin:
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
     ) -> WriteResponse:
-        encoded_value = self.router.executor.encode_value(value)
-        if int_flags is None:
-            int_flags = {}
-        int_flags[IntFlag.SET_CLIENT_FLAG] = encoded_value.encoding_id
-
         result = self.router.exec(
             command=MetaCommand.META_SET,
             key=key,
-            value=encoded_value.data,
+            value=ValueContainer(value),
             flags=flags,
             int_flags=int_flags,
             token_flags=token_flags,
