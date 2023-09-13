@@ -21,6 +21,14 @@ class MetaCommand(Enum):
     META_ARITHMETIC = b"ma"  # Meta Arithmetic
 
 
+class SetMode(Enum):
+    SET = b"S"  # Default
+    ADD = b"E"  # Add if item does NOT EXIST, else LRU bump and return NS
+    APPEND = b"A"  # If item exists, append the new value to its data.
+    PREPEND = b"P"  # If item exists, prepend the new value to its data.
+    REPLACE = b"R"  # Set only if item already exists.
+
+
 class Flag(Enum):
     BINARY = b"b"
     NOREPLY = b"q"

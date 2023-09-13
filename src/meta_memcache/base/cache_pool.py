@@ -1,21 +1,21 @@
 import time
-from enum import Enum
 from typing import Any, Dict, Iterable, Optional, Set, Tuple, Type, TypeVar, Union
 
 from meta_memcache.base.base_cache_pool import BaseCachePool
 from meta_memcache.configuration import LeasePolicy, RecachePolicy, StalePolicy
 from meta_memcache.errors import MemcacheError
-from meta_memcache.protocol import Flag, IntFlag, Key, Miss, Success, TokenFlag, Value
+from meta_memcache.protocol import (
+    Flag,
+    IntFlag,
+    Key,
+    Miss,
+    SetMode,
+    Success,
+    TokenFlag,
+    Value,
+)
 
 T = TypeVar("T")
-
-
-class SetMode(Enum):
-    SET = b"S"  # Default
-    ADD = b"E"  # LRU bump and return NS if item exists. Else add.
-    APPEND = b"A"  # If item exists, append the new value to its data.
-    PREPEND = b"P"  # If item exists, prepend the new value to its data.
-    REPLACE = b"R"  # Set only if item already exists.
 
 
 class CachePool(BaseCachePool):
