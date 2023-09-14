@@ -5,7 +5,7 @@ from meta_memcache.events.write_failure_event import WriteFailureEvent
 from meta_memcache.interfaces.commands import CommandsProtocol
 
 
-class CacheApiProtocol(CommandsProtocol, Protocol):
+class CacheApi(CommandsProtocol, Protocol):
     @property
     def on_write_failure(self) -> WriteFailureEvent:
         ...  # pragma: no cover

@@ -1,6 +1,6 @@
 __version__ = "0.1.0"
 
-from meta_memcache.cache_pool import CachePool
+from meta_memcache.cache_client import CacheClient
 from meta_memcache.configuration import (
     LeasePolicy,
     RecachePolicy,

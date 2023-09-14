@@ -5,7 +5,7 @@ from meta_memcache.events.write_failure_event import WriteFailureEvent
 from meta_memcache.interfaces.router import Router
 
 
-class BaseCachePool:
+class BaseCacheClient:
     def __init__(
         self,
         router: Router,

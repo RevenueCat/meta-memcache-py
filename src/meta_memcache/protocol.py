@@ -69,7 +69,7 @@ class TokenFlag(Enum):
     # * Meta Arithmetic:
     #  - I or +: increment
     #  - D or -: decrement
-    # * Meta Set: See SetMode Enum in base/cache_pool.py
+    # * Meta Set: See SetMode Enum above
     #  - E: "add" command. LRU bump and return NS if item exists. Else add.
     #  - A: "append" command. If item exists, append the new value to its data.
     #  - P: "prepend" command. If item exists, prepend the new value to its data.
