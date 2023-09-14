@@ -6,7 +6,7 @@ from collections import deque
 from contextlib import contextmanager
 from typing import Callable, Deque, Generator, NamedTuple, Optional
 
-from meta_memcache.base.memcache_socket import MemcacheSocket
+from meta_memcache.connection.memcache_socket import MemcacheSocket
 from meta_memcache.errors import MemcacheServerError, ServerMarkedDownError
 from meta_memcache.protocol import ServerVersion
 from meta_memcache.settings import DEFAULT_MARK_DOWN_PERIOD_S, DEFAULT_READ_BUFFER_SIZE

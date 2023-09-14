@@ -1,21 +1,25 @@
 import pickle
-from typing import Callable
 import zlib
 from dataclasses import dataclass
+from typing import Callable
 from unittest.mock import MagicMock, call
+from meta_memcache.connection.providers import HostConnectionPoolProvider
+from meta_memcache.executors.default import DefaultExecutor
+from meta_memcache.routers.default import DefaultRouter
 
 import pytest
 from pytest_mock import MockerFixture
 
-from meta_memcache import CachePool, Key, MemcacheError, SetMode
-from meta_memcache.base.connection_pool import ConnectionPool
-from meta_memcache.base.memcache_socket import MemcacheSocket
+from meta_memcache import CacheClient, Key, MemcacheError, SetMode
 from meta_memcache.configuration import (
     LeasePolicy,
     RecachePolicy,
+    ServerAddress,
     StalePolicy,
-    default_binary_key_encoding,
+    default_key_encoder,
 )
+from meta_memcache.connection.memcache_socket import MemcacheSocket
+from meta_memcache.connection.pool import ConnectionPool
 from meta_memcache.errors import MemcacheServerError
 from meta_memcache.protocol import (
     Flag,
@@ -27,16 +31,6 @@ from meta_memcache.protocol import (
     Value,
 )
 from meta_memcache.serializer import MixedSerializer
-
-
-class FakeCachePool(CachePool):
-    def __init__(self, connection_pool: ConnectionPool, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-
-        self.connection_pool = connection_pool
-
-    def _get_pool(self, key: Key) -> ConnectionPool:
-        return self.connection_pool
 
 
 @dataclass
@@ -64,55 +58,67 @@ def memcache_socket_1_6_6(mocker: MockerFixture) -> MemcacheSocket:
 
 
 @pytest.fixture
-def cache_pool(
-    mocker: MockerFixture,
-    memcache_socket: MemcacheSocket,
-) -> FakeCachePool:
+def connection_pool(
+    mocker: MockerFixture, memcache_socket: MemcacheSocket
+) -> ConnectionPool:
     connection_pool = mocker.MagicMock(spec=ConnectionPool)
     connection_pool.get_connection().__enter__.return_value = memcache_socket
-    return FakeCachePool(
-        connection_pool=connection_pool,
-        serializer=MixedSerializer(),
-        binary_key_encoding_fn=default_binary_key_encoding,
-    )
+    return connection_pool
 
 
 @pytest.fixture
-def cache_pool_not_raise_on_server_error(
-    mocker: MockerFixture,
-    memcache_socket: MemcacheSocket,
-) -> FakeCachePool:
-    connection_pool = mocker.MagicMock(spec=ConnectionPool)
-    connection_pool.get_connection().__enter__.return_value = memcache_socket
-    return FakeCachePool(
-        connection_pool=connection_pool,
-        serializer=MixedSerializer(),
-        binary_key_encoding_fn=default_binary_key_encoding,
-        raise_on_server_error=False,
-    )
-
-
-@pytest.fixture
-def cache_pool_1_6_6(
-    mocker: MockerFixture,
-    memcache_socket_1_6_6: MemcacheSocket,
-) -> FakeCachePool:
+def connection_pool_1_6_6(
+    mocker: MockerFixture, memcache_socket_1_6_6: MemcacheSocket
+) -> ConnectionPool:
     connection_pool = mocker.MagicMock(spec=ConnectionPool)
     connection_pool.get_connection().__enter__.return_value = memcache_socket_1_6_6
-    return FakeCachePool(
+    return connection_pool
+
+
+def get_test_cache_client(
+    connection_pool: ConnectionPool,
+    raise_on_server_error: bool = True,
+) -> CacheClient:
+    pool_provider = HostConnectionPoolProvider(
+        server_address=ServerAddress("test", 11211),
         connection_pool=connection_pool,
-        serializer=MixedSerializer(),
-        binary_key_encoding_fn=default_binary_key_encoding,
     )
+    executor = DefaultExecutor(
+        serializer=MixedSerializer(),
+        key_encoder_fn=default_key_encoder,
+        raise_on_server_error=raise_on_server_error,
+    )
+    router = DefaultRouter(
+        pool_provider=pool_provider,
+        executor=executor,
+    )
+    return CacheClient(router=router)
+
+
+@pytest.fixture
+def cache_client(connection_pool: ConnectionPool) -> CacheClient:
+    return get_test_cache_client(connection_pool)
+
+
+@pytest.fixture
+def cache_client_not_raise_on_server_error(
+    connection_pool: ConnectionPool,
+) -> CacheClient:
+    return get_test_cache_client(connection_pool, raise_on_server_error=False)
+
+
+@pytest.fixture
+def cache_client_1_6_6(connection_pool_1_6_6: ConnectionPool) -> CacheClient:
+    return get_test_cache_client(connection_pool_1_6_6)
 
 
 def test_set_cmd(
     memcache_socket: MemcacheSocket,
-    cache_pool: FakeCachePool,
+    cache_client: CacheClient,
 ) -> None:
     memcache_socket.get_response.return_value = Success()
 
-    cache_pool.set(key="foo", value="bar", ttl=300)
+    cache_client.set(key="foo", value="bar", ttl=300)
     memcache_socket.sendall.assert_called_once_with(
         b"ms foo 3 T300 F0\r\nbar\r\n", with_noop=False
     )
@@ -120,7 +126,7 @@ def test_set_cmd(
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
 
-    cache_pool.set(key=Key("foo"), value="bar", ttl=300)
+    cache_client.set(key=Key("foo"), value="bar", ttl=300)
     memcache_socket.sendall.assert_called_once_with(
         b"ms foo 3 T300 F0\r\nbar\r\n", with_noop=False
     )
@@ -128,7 +134,7 @@ def test_set_cmd(
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
 
-    cache_pool.set(key=Key("foo"), value=123, ttl=300)
+    cache_client.set(key=Key("foo"), value=123, ttl=300)
     memcache_socket.sendall.assert_called_once_with(
         b"ms foo 3 T300 F2\r\n123\r\n", with_noop=False
     )
@@ -138,7 +144,7 @@ def test_set_cmd(
 
     value = [1, 2, 3]
     data = pickle.dumps(value, protocol=0)
-    cache_pool.set(key=Key("foo"), value=value, ttl=300)
+    cache_client.set(key=Key("foo"), value=value, ttl=300)
     memcache_socket.sendall.assert_called_once_with(
         b"ms foo " + str(len(data)).encode() + b" T300 F1\r\n" + data + b"\r\n",
         with_noop=False,
@@ -149,7 +155,7 @@ def test_set_cmd(
 
     value = False  # Bools should be stored pickled
     data = pickle.dumps(value, protocol=0)
-    cache_pool.set(key=Key("foo"), value=value, ttl=300)
+    cache_client.set(key=Key("foo"), value=value, ttl=300)
     memcache_socket.sendall.assert_called_once_with(
         b"ms foo " + str(len(data)).encode() + b" T300 F1\r\n" + data + b"\r\n",
         with_noop=False,
@@ -158,7 +164,7 @@ def test_set_cmd(
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
 
-    cache_pool.set(key=Key("foo"), value=b"123", ttl=300)
+    cache_client.set(key=Key("foo"), value=b"123", ttl=300)
     memcache_socket.sendall.assert_called_once_with(
         b"ms foo 3 T300 F16\r\n123\r\n", with_noop=False
     )
@@ -168,7 +174,7 @@ def test_set_cmd(
 
     value = b"123" * 100
     data = zlib.compress(value)
-    cache_pool.set(key=Key("foo"), value=value, ttl=300)
+    cache_client.set(key=Key("foo"), value=value, ttl=300)
     memcache_socket.sendall.assert_called_once_with(
         b"ms foo " + str(len(data)).encode() + b" T300 F24\r\n" + data + b"\r\n",
         with_noop=False,
@@ -177,7 +183,7 @@ def test_set_cmd(
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
 
-    cache_pool.set(key=Key("foo"), value=123, ttl=300, set_mode=SetMode.ADD)
+    cache_client.set(key=Key("foo"), value=123, ttl=300, set_mode=SetMode.ADD)
     memcache_socket.sendall.assert_called_once_with(
         b"ms foo 3 T300 F2 ME\r\n123\r\n", with_noop=False
     )
@@ -185,7 +191,7 @@ def test_set_cmd(
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
 
-    cache_pool.set(key=Key("foo"), value=123, ttl=300, set_mode=SetMode.APPEND)
+    cache_client.set(key=Key("foo"), value=123, ttl=300, set_mode=SetMode.APPEND)
     memcache_socket.sendall.assert_called_once_with(
         b"ms foo 3 T300 F2 MA\r\n123\r\n", with_noop=False
     )
@@ -193,7 +199,7 @@ def test_set_cmd(
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
 
-    cache_pool.set(key=Key("foo"), value=123, ttl=300, set_mode=SetMode.PREPEND)
+    cache_client.set(key=Key("foo"), value=123, ttl=300, set_mode=SetMode.PREPEND)
     memcache_socket.sendall.assert_called_once_with(
         b"ms foo 3 T300 F2 MP\r\n123\r\n", with_noop=False
     )
@@ -201,7 +207,7 @@ def test_set_cmd(
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
 
-    cache_pool.set(key=Key("foo"), value=123, ttl=300, set_mode=SetMode.REPLACE)
+    cache_client.set(key=Key("foo"), value=123, ttl=300, set_mode=SetMode.REPLACE)
     memcache_socket.sendall.assert_called_once_with(
         b"ms foo 3 T300 F2 MR\r\n123\r\n", with_noop=False
     )
@@ -209,7 +215,7 @@ def test_set_cmd(
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
 
-    cache_pool.set(key=Key("foo"), value=b"123", ttl=300, no_reply=True)
+    cache_client.set(key=Key("foo"), value=b"123", ttl=300, no_reply=True)
     memcache_socket.sendall.assert_called_once_with(
         b"ms foo 3 q T300 F16\r\n123\r\n", with_noop=True
     )
@@ -217,7 +223,7 @@ def test_set_cmd(
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
 
-    cache_pool.set(key=Key("foo"), value=b"123", ttl=300, cas_token=666)
+    cache_client.set(key=Key("foo"), value=b"123", ttl=300, cas_token=666)
     memcache_socket.sendall.assert_called_once_with(
         b"ms foo 3 T300 C666 F16\r\n123\r\n", with_noop=False
     )
@@ -225,7 +231,7 @@ def test_set_cmd(
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
 
-    cache_pool.set(
+    cache_client.set(
         key=Key("foo"), value=b"123", ttl=300, cas_token=666, stale_policy=StalePolicy()
     )
     memcache_socket.sendall.assert_called_once_with(
@@ -235,7 +241,7 @@ def test_set_cmd(
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
 
-    cache_pool.set(
+    cache_client.set(
         key=Key("foo"),
         value=b"123",
         ttl=300,
@@ -252,11 +258,11 @@ def test_set_cmd(
 
 def test_set_cmd_1_6_6(
     memcache_socket_1_6_6: MemcacheSocket,
-    cache_pool_1_6_6: FakeCachePool,
+    cache_client_1_6_6: CacheClient,
 ) -> None:
     memcache_socket_1_6_6.get_response.return_value = Success()
 
-    cache_pool_1_6_6.set(key="foo", value="bar", ttl=300)
+    cache_client_1_6_6.set(key="foo", value="bar", ttl=300)
     memcache_socket_1_6_6.sendall.assert_called_once_with(
         b"ms foo S3 T300 F0\r\nbar\r\n", with_noop=False
     )
@@ -265,54 +271,54 @@ def test_set_cmd_1_6_6(
 
 def test_set_success_fail(
     memcache_socket: MemcacheSocket,
-    cache_pool: FakeCachePool,
+    cache_client: CacheClient,
 ) -> None:
     memcache_socket.get_response.return_value = Success()
-    result = cache_pool.set(key=Key("foo"), value="bar", ttl=300)
+    result = cache_client.set(key=Key("foo"), value="bar", ttl=300)
     assert result is True
 
     memcache_socket.get_response.return_value = NotStored()
-    result = cache_pool.set(key=Key("foo"), value="bar", ttl=300)
+    result = cache_client.set(key=Key("foo"), value="bar", ttl=300)
     assert result is False
 
 
 def test_delete_cmd(
     memcache_socket: MemcacheSocket,
-    cache_pool: FakeCachePool,
+    cache_client: CacheClient,
 ) -> None:
     memcache_socket.get_response.return_value = Success()
 
-    cache_pool.delete(key="foo")
+    cache_client.delete(key="foo")
     memcache_socket.sendall.assert_called_once_with(b"md foo\r\n", with_noop=False)
     memcache_socket.get_response.assert_called_once_with()
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
 
-    cache_pool.delete(key=Key("foo"))
+    cache_client.delete(key=Key("foo"))
     memcache_socket.sendall.assert_called_once_with(b"md foo\r\n", with_noop=False)
     memcache_socket.get_response.assert_called_once_with()
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
 
-    cache_pool.delete(key=Key("foo"), cas_token=666)
+    cache_client.delete(key=Key("foo"), cas_token=666)
     memcache_socket.sendall.assert_called_once_with(b"md foo C666\r\n", with_noop=False)
     memcache_socket.get_response.assert_called_once_with()
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
 
-    cache_pool.delete(key=Key("foo"), no_reply=True)
+    cache_client.delete(key=Key("foo"), no_reply=True)
     memcache_socket.sendall.assert_called_once_with(b"md foo q\r\n", with_noop=True)
     memcache_socket.get_response.assert_not_called()
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
 
-    cache_pool.delete(key=Key("foo"), stale_policy=StalePolicy())
+    cache_client.delete(key=Key("foo"), stale_policy=StalePolicy())
     memcache_socket.sendall.assert_called_once_with(b"md foo\r\n", with_noop=False)
     memcache_socket.get_response.assert_called_once_with()
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
 
-    cache_pool.delete(
+    cache_client.delete(
         key=Key("foo"),
         stale_policy=StalePolicy(mark_stale_on_deletion_ttl=30),
     )
@@ -326,36 +332,36 @@ def test_delete_cmd(
 
 def test_delete_success_fail(
     memcache_socket: MemcacheSocket,
-    cache_pool: FakeCachePool,
+    cache_client: CacheClient,
 ) -> None:
     memcache_socket.get_response.return_value = Success()
-    result = cache_pool.delete(key=Key("foo"))
+    result = cache_client.delete(key=Key("foo"))
     assert result is True
 
     memcache_socket.get_response.return_value = NotStored()
-    result = cache_pool.delete(key=Key("foo"))
+    result = cache_client.delete(key=Key("foo"))
     assert result is False
 
 
 def test_touch_cmd(
     memcache_socket: MemcacheSocket,
-    cache_pool: FakeCachePool,
+    cache_client: CacheClient,
 ) -> None:
     memcache_socket.get_response.return_value = Success()
 
-    cache_pool.touch(key="foo", ttl=60)
+    cache_client.touch(key="foo", ttl=60)
     memcache_socket.sendall.assert_called_once_with(b"mg foo T60\r\n", with_noop=False)
     memcache_socket.get_response.assert_called_once_with()
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
 
-    cache_pool.touch(key=Key("foo"), ttl=60)
+    cache_client.touch(key=Key("foo"), ttl=60)
     memcache_socket.sendall.assert_called_once_with(b"mg foo T60\r\n", with_noop=False)
     memcache_socket.get_response.assert_called_once_with()
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
 
-    cache_pool.touch(key=Key("foo"), ttl=60, no_reply=True)
+    cache_client.touch(key=Key("foo"), ttl=60, no_reply=True)
     memcache_socket.sendall.assert_called_once_with(
         b"mg foo q T60\r\n", with_noop=False
     )
@@ -364,59 +370,59 @@ def test_touch_cmd(
     memcache_socket.get_response.reset_mock()
 
 
-def test_get_cmd(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> None:
+def test_get_cmd(memcache_socket: MemcacheSocket, cache_client: CacheClient) -> None:
     memcache_socket.get_response.return_value = Miss()
 
-    cache_pool.get(key="foo")
+    cache_client.get(key="foo")
     memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f\r\n", with_noop=False
+        b"mg foo t l v h f\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
-    cache_pool.get(key=Key("foo"))
+    cache_client.get(key=Key("foo"))
     memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f\r\n", with_noop=False
+        b"mg foo t l v h f\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
-    cache_pool.get(key=Key("foo"), touch_ttl=300)
+    cache_client.get(key=Key("foo"), touch_ttl=300)
     memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f T300\r\n", with_noop=False
+        b"mg foo t l v h f T300\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
-    cache_pool.get(key=Key("foo"), recache_policy=RecachePolicy())
+    cache_client.get(key=Key("foo"), recache_policy=RecachePolicy())
     memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f R30\r\n", with_noop=False
+        b"mg foo t l v h f R30\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
-    cache_pool.get(key=Key("foo"), touch_ttl=300, recache_policy=RecachePolicy())
+    cache_client.get(key=Key("foo"), touch_ttl=300, recache_policy=RecachePolicy())
     memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f R30 T300\r\n", with_noop=False
+        b"mg foo t l v h f R30 T300\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
-    cache_pool.get(
+    cache_client.get(
         key=Key("large_key" * 50), touch_ttl=300, recache_policy=RecachePolicy()
     )
     memcache_socket.sendall.assert_called_once_with(
-        b"mg 4gCNJuSyOJPGW8kRddioRlPx b t l v c h f R30 T300\r\n", with_noop=False
+        b"mg 4gCNJuSyOJPGW8kRddioRlPx b t l v h f R30 T300\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
-    cache_pool.get(
+    cache_client.get(
         key=Key("úníçod⍷", is_unicode=True),
         touch_ttl=300,
         recache_policy=RecachePolicy(),
     )
     memcache_socket.sendall.assert_called_once_with(
-        b"mg lCV3WxKxtWrdY4s1+R710+9J b t l v c h f R30 T300\r\n", with_noop=False
+        b"mg lCV3WxKxtWrdY4s1+R710+9J b t l v h f R30 T300\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
     memcache_socket.get_response.return_value = Value(size=0)
-    cache_pool.get_or_lease(
+    cache_client.get_or_lease(
         key=Key("foo"),
         lease_policy=LeasePolicy(),
         touch_ttl=300,
@@ -428,10 +434,10 @@ def test_get_cmd(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> 
     memcache_socket.sendall.reset_mock()
 
 
-def test_get_miss(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> None:
+def test_get_miss(memcache_socket: MemcacheSocket, cache_client: CacheClient) -> None:
     memcache_socket.get_response.return_value = Miss()
 
-    result, cas_token = cache_pool.get_cas_typed(key=Key("foo"), cls=Foo)
+    result, cas_token = cache_client.get_cas_typed(key=Key("foo"), cls=Foo)
     assert result is None
     assert cas_token is None
     memcache_socket.sendall.assert_called_once_with(
@@ -439,14 +445,14 @@ def test_get_miss(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) ->
     )
     memcache_socket.sendall.reset_mock()
 
-    result = cache_pool.get_typed(key=Key("foo"), cls=Foo)
+    result = cache_client.get_typed(key=Key("foo"), cls=Foo)
     assert result is None
     memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f\r\n", with_noop=False
+        b"mg foo t l v h f\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
-    result, cas_token = cache_pool.get_cas(key=Key("foo"))
+    result, cas_token = cache_client.get_cas(key=Key("foo"))
     assert result is None
     assert cas_token is None
     memcache_socket.sendall.assert_called_once_with(
@@ -454,15 +460,15 @@ def test_get_miss(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) ->
     )
     memcache_socket.sendall.reset_mock()
 
-    result = cache_pool.get(key=Key("foo"))
+    result = cache_client.get(key=Key("foo"))
     assert result is None
     memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f\r\n", with_noop=False
+        b"mg foo t l v h f\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
 
-def test_get_value(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> None:
+def test_get_value(memcache_socket: MemcacheSocket, cache_client: CacheClient) -> None:
     expected_cas_token = 123
     expected_value = Foo("hello world")
     encoded_value = MixedSerializer().serialize(expected_value)
@@ -475,28 +481,28 @@ def test_get_value(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -
     )
     memcache_socket.get_value.return_value = encoded_value.data
 
-    result, cas_token = cache_pool.get_cas_typed(
+    result, cas_token = cache_client.get_cas_typed(
         key=Key("foo"),
         cls=Foo,
     )
     assert result == expected_value
     assert cas_token == expected_cas_token
 
-    result = cache_pool.get_typed(key=Key("foo"), cls=Foo)
+    result = cache_client.get_typed(key=Key("foo"), cls=Foo)
     assert result == expected_value
 
-    result, cas_token = cache_pool.get_cas(key=Key("foo"))
+    result, cas_token = cache_client.get_cas(key=Key("foo"))
     assert result == expected_value
     assert cas_token == expected_cas_token
 
-    result = cache_pool.get(key=Key("foo"))
+    result = cache_client.get(key=Key("foo"))
     assert result == expected_value
 
 
-def test_get_other(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> None:
+def test_get_other(memcache_socket: MemcacheSocket, cache_client: CacheClient) -> None:
     memcache_socket.get_response.return_value = Success()
     try:
-        cache_pool.get(
+        cache_client.get(
             key=Key("foo"),
         )
         raise AssertionError("Should not be reached")
@@ -505,7 +511,7 @@ def test_get_other(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -
 
 
 def test_value_wrong_type(
-    memcache_socket: MemcacheSocket, cache_pool: FakeCachePool
+    memcache_socket: MemcacheSocket, cache_client: CacheClient
 ) -> None:
     expected_cas_token = 123
     expected_value = Foo("hello world")
@@ -519,34 +525,36 @@ def test_value_wrong_type(
     )
     memcache_socket.get_value.return_value = encoded_value.data
 
-    result, cas_token = cache_pool.get_cas_typed(key=Key("foo"), cls=Bar)
+    result, cas_token = cache_client.get_cas_typed(key=Key("foo"), cls=Bar)
     assert result is None
     assert cas_token == expected_cas_token
     memcache_socket.get_value.assert_called_once_with(len(encoded_value.data))
 
     try:
-        cache_pool.get_cas_typed(key=Key("foo"), cls=Bar, error_on_type_mismatch=True)
+        cache_client.get_cas_typed(key=Key("foo"), cls=Bar, error_on_type_mismatch=True)
         raise AssertionError("Should not be reached")
     except ValueError as e:
-        assert "Expecting <class 'tests.base.cache_pool_test.Bar'> got Foo" in str(e)
+        assert "Expecting <class 'tests.commands_test.Bar'> got Foo" in str(e)
 
-    result = cache_pool.get_typed(key=Key("foo"), cls=Bar)
+    result = cache_client.get_typed(key=Key("foo"), cls=Bar)
     assert result is None
 
     try:
-        cache_pool.get_typed(key=Key("foo"), cls=Bar, error_on_type_mismatch=True)
+        cache_client.get_typed(key=Key("foo"), cls=Bar, error_on_type_mismatch=True)
         raise AssertionError("Should not be reached")
     except ValueError as e:
-        assert "Expecting <class 'tests.base.cache_pool_test.Bar'> got Foo" in str(e)
+        assert "Expecting <class 'tests.commands_test.Bar'> got Foo" in str(e)
 
 
 @pytest.fixture
 def time(mocker: MockerFixture) -> MagicMock:
-    return mocker.patch("meta_memcache.base.cache_pool.time", autospec=True)
+    return mocker.patch(
+        "meta_memcache.commands.high_level_commands.time", autospec=True
+    )
 
 
 def test_recache_win_returns_miss(
-    memcache_socket: MemcacheSocket, cache_pool: FakeCachePool, time: MagicMock
+    memcache_socket: MemcacheSocket, cache_client: CacheClient, time: MagicMock
 ) -> None:
     expected_cas_token = 123
     expected_value = Foo("hello world")
@@ -561,13 +569,13 @@ def test_recache_win_returns_miss(
     )
     memcache_socket.get_value.return_value = encoded_value.data
 
-    result, cas_token = cache_pool.get_cas(key=Key("foo"))
+    result, cas_token = cache_client.get_cas(key=Key("foo"))
     assert result is None
     assert cas_token == expected_cas_token
 
 
 def test_recache_lost_returns_stale_value(
-    memcache_socket: MemcacheSocket, cache_pool: FakeCachePool, time: MagicMock
+    memcache_socket: MemcacheSocket, cache_client: CacheClient, time: MagicMock
 ) -> None:
     expected_cas_token = 123
     expected_value = Foo("hello world")
@@ -582,13 +590,13 @@ def test_recache_lost_returns_stale_value(
     )
     memcache_socket.get_value.return_value = encoded_value.data
 
-    result, cas_token = cache_pool.get_cas(key=Key("foo"))
+    result, cas_token = cache_client.get_cas(key=Key("foo"))
     assert result == expected_value
     assert cas_token == expected_cas_token
 
 
 def test_get_or_lease_hit(
-    memcache_socket: MemcacheSocket, cache_pool: FakeCachePool, time: MagicMock
+    memcache_socket: MemcacheSocket, cache_client: CacheClient, time: MagicMock
 ) -> None:
     expected_cas_token = 123
     expected_value = Foo("hello world")
@@ -602,7 +610,7 @@ def test_get_or_lease_hit(
     )
     memcache_socket.get_value.return_value = encoded_value.data
 
-    result, cas_token = cache_pool.get_or_lease_cas(
+    result, cas_token = cache_client.get_or_lease_cas(
         key=Key("foo"), lease_policy=LeasePolicy()
     )
     assert result == expected_value
@@ -615,7 +623,7 @@ def test_get_or_lease_hit(
 
 
 def test_get_or_lease_miss_win(
-    memcache_socket: MemcacheSocket, cache_pool: FakeCachePool, time: MagicMock
+    memcache_socket: MemcacheSocket, cache_client: CacheClient, time: MagicMock
 ) -> None:
     expected_cas_token = 123
     memcache_socket.get_response.return_value = Value(
@@ -627,7 +635,7 @@ def test_get_or_lease_miss_win(
     )
     memcache_socket.get_value.return_value = b""
 
-    result, cas_token = cache_pool.get_or_lease_cas(
+    result, cas_token = cache_client.get_or_lease_cas(
         key=Key("foo"), lease_policy=LeasePolicy()
     )
     assert result is None
@@ -640,7 +648,7 @@ def test_get_or_lease_miss_win(
 
 
 def test_get_or_lease_miss_lost_then_data(
-    memcache_socket: MemcacheSocket, cache_pool: FakeCachePool, time: MagicMock
+    memcache_socket: MemcacheSocket, cache_client: CacheClient, time: MagicMock
 ) -> None:
     expected_cas_token = 123
     expected_value = Foo("hello world")
@@ -670,7 +678,7 @@ def test_get_or_lease_miss_lost_then_data(
     ]
     memcache_socket.get_value.side_effect = [b"", b"", encoded_value.data]
 
-    result, cas_token = cache_pool.get_or_lease_cas(
+    result, cas_token = cache_client.get_or_lease_cas(
         key=Key("foo"), lease_policy=LeasePolicy()
     )
     assert result == expected_value
@@ -693,7 +701,7 @@ def test_get_or_lease_miss_lost_then_data(
 
 
 def test_get_or_lease_miss_lost_then_win(
-    memcache_socket: MemcacheSocket, cache_pool: FakeCachePool, time: MagicMock
+    memcache_socket: MemcacheSocket, cache_client: CacheClient, time: MagicMock
 ) -> None:
     expected_cas_token = 123
     memcache_socket.get_response.side_effect = [
@@ -721,7 +729,7 @@ def test_get_or_lease_miss_lost_then_win(
     ]
     memcache_socket.get_value.side_effect = [b"", b"", b""]
 
-    result, cas_token = cache_pool.get_or_lease_cas(
+    result, cas_token = cache_client.get_or_lease_cas(
         key=Key("foo"), lease_policy=LeasePolicy()
     )
     assert result is None
@@ -744,7 +752,7 @@ def test_get_or_lease_miss_lost_then_win(
 
 
 def test_get_or_lease_miss_runs_out_of_retries(
-    memcache_socket: MemcacheSocket, cache_pool: FakeCachePool, time: MagicMock
+    memcache_socket: MemcacheSocket, cache_client: CacheClient, time: MagicMock
 ) -> None:
     expected_cas_token = 123
     memcache_socket.get_response.return_value = Value(
@@ -756,7 +764,7 @@ def test_get_or_lease_miss_runs_out_of_retries(
     )
     memcache_socket.get_value.return_value = b""
 
-    result, cas_token = cache_pool.get_or_lease_cas(
+    result, cas_token = cache_client.get_or_lease_cas(
         key=Key("foo"),
         lease_policy=LeasePolicy(
             miss_retries=4, wait_backoff_factor=10, miss_max_retry_wait=15
@@ -784,12 +792,12 @@ def test_get_or_lease_miss_runs_out_of_retries(
 
 
 def test_get_or_lease_errors(
-    memcache_socket: MemcacheSocket, cache_pool: FakeCachePool
+    memcache_socket: MemcacheSocket, cache_client: CacheClient
 ) -> None:
     # We should never get a miss
     memcache_socket.get_response.return_value = Miss()
     try:
-        cache_pool.get_or_lease(
+        cache_client.get_or_lease(
             key=Key("foo"),
             lease_policy=LeasePolicy(),
             touch_ttl=300,
@@ -804,7 +812,7 @@ def test_get_or_lease_errors(
     memcache_socket.sendall.reset_mock()
 
     try:
-        cache_pool.get_or_lease(
+        cache_client.get_or_lease(
             key=Key("foo"),
             lease_policy=LeasePolicy(miss_retries=-10),
             touch_ttl=300,
@@ -816,17 +824,18 @@ def test_get_or_lease_errors(
 
 
 def test_on_write_failure(
-    cache_pool: FakeCachePool,
+    cache_client: CacheClient,
+    connection_pool: ConnectionPool,
 ) -> None:
     failures_tracked: list[Key] = []
     on_failure: Callable[[Key], None] = lambda key: failures_tracked.append(key)
-    cache_pool.on_write_failure += on_failure
+    cache_client.on_write_failure += on_failure
 
-    cache_pool.connection_pool.get_connection.side_effect = MemcacheServerError(
+    connection_pool.get_connection.side_effect = MemcacheServerError(
         server="broken:11211", message="uh-oh"
     )
     try:
-        cache_pool.get(key=Key("foo"))
+        cache_client.get(key=Key("foo"))
         raise AssertionError("Should not be reached")
     except MemcacheServerError as e:
         assert "uh-oh" in str(e)
@@ -834,7 +843,7 @@ def test_on_write_failure(
     failures_tracked.clear()
 
     try:
-        cache_pool.delete(key=Key("foo"))
+        cache_client.delete(key=Key("foo"))
         raise AssertionError("Should not be reached")
     except MemcacheServerError as e:
         assert "uh-oh" in str(e)
@@ -843,68 +852,82 @@ def test_on_write_failure(
     failures_tracked.clear()
 
     try:
-        cache_pool.set(key=Key("foo"), value=1, ttl=10)
+        cache_client.set(key=Key("foo"), value=1, ttl=10)
         raise AssertionError("Should not be reached")
     except MemcacheServerError as e:
         assert "uh-oh" in str(e)
     assert len(failures_tracked) == 1
     assert failures_tracked[0] == Key("foo")
+    failures_tracked.clear()
+
+    try:
+        cache_client.multi_get(keys=[Key("foo"), Key("bar")])
+        raise AssertionError("Should not be reached")
+    except MemcacheServerError as e:
+        assert "uh-oh" in str(e)
+    assert len(failures_tracked) == 0
     failures_tracked.clear()
 
 
 def test_write_failure_not_raise_on_server_error(
-    cache_pool_not_raise_on_server_error: FakeCachePool,
+    cache_client_not_raise_on_server_error: CacheClient,
+    connection_pool: ConnectionPool,
 ) -> None:
-    cache_pool = cache_pool_not_raise_on_server_error
+    cache_client = cache_client_not_raise_on_server_error
     failures_tracked: list[Key] = []
     on_failure: Callable[[Key], None] = lambda key: failures_tracked.append(key)
-    cache_pool.on_write_failure += on_failure
+    cache_client.on_write_failure += on_failure
 
-    cache_pool.connection_pool.get_connection.side_effect = MemcacheServerError(
+    connection_pool.get_connection.side_effect = MemcacheServerError(
         server="broken:11211", message="uh-oh"
     )
-    result = cache_pool.get(key=Key("foo"))
+    result = cache_client.get(key=Key("foo"))
     assert result is None
     assert len(failures_tracked) == 0
     failures_tracked.clear()
 
-    result = cache_pool.delete(key=Key("foo"))
+    result = cache_client.delete(key=Key("foo"))
     assert result is False
     assert len(failures_tracked) == 1
     assert failures_tracked[0] == Key("foo")
     failures_tracked.clear()
 
-    result = cache_pool.set(key=Key("foo"), value=1, ttl=10)
+    result = cache_client.set(key=Key("foo"), value=1, ttl=10)
     assert result is False
     assert len(failures_tracked) == 1
     assert failures_tracked[0] == Key("foo")
     failures_tracked.clear()
 
+    result = cache_client.multi_get(keys=[Key("foo"), Key("bar")])
+    assert result == {Key("foo"): None, Key("bar"): None}
+    assert len(failures_tracked) == 0
+    failures_tracked.clear()
 
-def test_delta_cmd(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> None:
+
+def test_delta_cmd(memcache_socket: MemcacheSocket, cache_client: CacheClient) -> None:
     memcache_socket.get_response.return_value = Miss()
 
-    cache_pool.delta(key="foo", delta=1, no_reply=True)
+    cache_client.delta(key="foo", delta=1, no_reply=True)
     memcache_socket.sendall.assert_called_once_with(b"ma foo q D1\r\n", with_noop=True)
     memcache_socket.sendall.reset_mock()
 
-    cache_pool.delta(key=Key("foo"), delta=1, no_reply=True)
+    cache_client.delta(key=Key("foo"), delta=1, no_reply=True)
     memcache_socket.sendall.assert_called_once_with(b"ma foo q D1\r\n", with_noop=True)
     memcache_socket.sendall.reset_mock()
 
-    cache_pool.delta(key=Key("foo"), delta=1, refresh_ttl=60, no_reply=True)
+    cache_client.delta(key=Key("foo"), delta=1, refresh_ttl=60, no_reply=True)
     memcache_socket.sendall.assert_called_once_with(
         b"ma foo q D1 T60\r\n", with_noop=True
     )
     memcache_socket.sendall.reset_mock()
 
-    cache_pool.delta(key=Key("foo"), delta=-2, no_reply=True)
+    cache_client.delta(key=Key("foo"), delta=-2, no_reply=True)
     memcache_socket.sendall.assert_called_once_with(
         b"ma foo q D2 M-\r\n", with_noop=True
     )
     memcache_socket.sendall.reset_mock()
 
-    cache_pool.delta_initialize(
+    cache_client.delta_initialize(
         key=Key("foo"),
         delta=1,
         initial_value=10,
@@ -919,19 +942,19 @@ def test_delta_cmd(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -
 
     memcache_socket.get_response.assert_not_called()
 
-    result = cache_pool.delta(key=Key("foo"), delta=1)
+    result = cache_client.delta(key=Key("foo"), delta=1)
     assert result is False
     memcache_socket.sendall.assert_called_once_with(b"ma foo D1\r\n", with_noop=False)
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
 
-    result = cache_pool.delta_and_get(key=Key("foo"), delta=1)
+    result = cache_client.delta_and_get(key=Key("foo"), delta=1)
     assert result is None
     memcache_socket.sendall.assert_called_once_with(b"ma foo v D1\r\n", with_noop=False)
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
 
-    result = cache_pool.delta_initialize_and_get(
+    result = cache_client.delta_initialize_and_get(
         key=Key("foo"), delta=1, initial_value=0, initial_ttl=60
     )
     assert result is None
@@ -941,9 +964,11 @@ def test_delta_cmd(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
 
+    # memcache_socket.get_response.return_value = Value(size=2, b"10")
+
     memcache_socket.get_response.return_value = Success()
 
-    result = cache_pool.delta(key=Key("foo"), delta=1)
+    result = cache_client.delta(key=Key("foo"), delta=1)
     assert result is True
     memcache_socket.sendall.assert_called_once_with(b"ma foo D1\r\n", with_noop=False)
     memcache_socket.sendall.reset_mock()
@@ -952,15 +977,25 @@ def test_delta_cmd(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -
     memcache_socket.get_response.return_value = Value(size=2)
     memcache_socket.get_value.return_value = b"10"
 
-    result = cache_pool.delta_and_get(key=Key("foo"), delta=1)
+    result = cache_client.delta_and_get(key=Key("foo"), delta=1)
     assert result == 10
     memcache_socket.sendall.assert_called_once_with(b"ma foo v D1\r\n", with_noop=False)
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
     memcache_socket.get_value.reset_mock()
 
+    result = cache_client.delta_initialize_and_get(
+        key=Key("foo"), delta=1, initial_value=0, initial_ttl=60
+    )
+    assert result == 10
+    memcache_socket.sendall.assert_called_once_with(
+        b"ma foo v D1 J0 N60\r\n", with_noop=False
+    )
+    memcache_socket.sendall.reset_mock()
+    memcache_socket.get_response.reset_mock()
 
-def test_multi_get(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -> None:
+
+def test_multi_get(memcache_socket: MemcacheSocket, cache_client: CacheClient) -> None:
     memcache_socket.get_response.side_effect = [
         Miss(),
         Value(size=2, int_flags={IntFlag.CLIENT_FLAG: MixedSerializer.BINARY}),
@@ -968,7 +1003,7 @@ def test_multi_get(memcache_socket: MemcacheSocket, cache_pool: FakeCachePool) -
     ]
     memcache_socket.get_value.return_value = b"OK"
 
-    results = cache_pool.multi_get(
+    results = cache_client.multi_get(
         keys=[
             Key("miss"),
             Key("found"),

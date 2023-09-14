@@ -4,7 +4,7 @@ from typing import Callable, List
 import pytest
 from pytest_mock import MockerFixture
 
-from meta_memcache.base.memcache_socket import MemcacheSocket
+from meta_memcache.connection.memcache_socket import MemcacheSocket
 from meta_memcache.errors import MemcacheError
 from meta_memcache.protocol import (
     Conflict,

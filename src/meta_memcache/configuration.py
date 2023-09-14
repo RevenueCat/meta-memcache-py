@@ -1,10 +1,11 @@
+import base64
 import hashlib
 import socket
-from typing import Callable, NamedTuple, Optional
+from typing import Callable, Dict, Iterable, NamedTuple, Optional, Tuple
 
-from meta_memcache.base.connection_pool import ConnectionPool
+from meta_memcache.connection.pool import ConnectionPool
 from meta_memcache.protocol import Key, ServerVersion
-from meta_memcache.settings import DEFAULT_MARK_DOWN_PERIOD_S
+from meta_memcache.settings import DEFAULT_MARK_DOWN_PERIOD_S, MAX_KEY_SIZE
 
 
 class ServerAddress(NamedTuple):
@@ -97,6 +98,16 @@ def connection_pool_factory_builder(
     return connection_pool_builder
 
 
+def build_server_pool(
+    servers: Iterable[ServerAddress],
+    connection_pool_factory_fn: Callable[[ServerAddress], ConnectionPool],
+) -> Dict[ServerAddress, ConnectionPool]:
+    server_pool: Dict[ServerAddress, ConnectionPool] = {
+        server: connection_pool_factory_fn(server) for server in servers
+    }
+    return server_pool
+
+
 class RecachePolicy(NamedTuple):
     """
     This controls the recache herd control behavior
@@ -145,9 +156,14 @@ class StalePolicy(NamedTuple):
     mark_stale_on_cas_mismatch: bool = False
 
 
-def default_binary_key_encoding(key: Key) -> bytes:
+def default_key_encoder(key: Key) -> Tuple[bytes, bool]:
     """
-    Generate binary key from Key, used for keys with unicode,
-    binary or those too long.
+    Generate valid memcache key as bytes for given Key.
     """
-    return hashlib.blake2b(key.key.encode(), digest_size=18).digest()
+    if key.is_unicode or len(key.key) > MAX_KEY_SIZE:
+        key_hash = hashlib.blake2b(key.key.encode(), digest_size=18).digest()
+        return base64.b64encode(key_hash), True
+    elif " " in key.key:
+        raise ValueError(f"Invalid key {key}")
+    else:
+        return key.key.encode("ascii"), False

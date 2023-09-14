@@ -1,14 +1,27 @@
 import time
-from typing import Any, Dict, Iterable, Optional, Set, Tuple, Type, TypeVar, Union
+from typing import (
+    Any,
+    Dict,
+    Iterable,
+    Optional,
+    Protocol,
+    Set,
+    Tuple,
+    Type,
+    TypeVar,
+    Union,
+)
 
-from meta_memcache.base.base_cache_pool import BaseCachePool
 from meta_memcache.configuration import LeasePolicy, RecachePolicy, StalePolicy
 from meta_memcache.errors import MemcacheError
+from meta_memcache.interfaces.high_level_commands import HighLevelCommandsProtocol
+from meta_memcache.interfaces.meta_commands import MetaCommandsProtocol
 from meta_memcache.protocol import (
     Flag,
     IntFlag,
     Key,
     Miss,
+    ReadResponse,
     SetMode,
     Success,
     TokenFlag,
@@ -18,9 +31,47 @@ from meta_memcache.protocol import (
 T = TypeVar("T")
 
 
-class CachePool(BaseCachePool):
-    def set(
+class HighLevelCommandMixinWithMetaCommands(
+    HighLevelCommandsProtocol, MetaCommandsProtocol, Protocol
+):
+    def _get(
         self,
+        key: Union[Key, str],
+        touch_ttl: Optional[int] = None,
+        lease_policy: Optional[LeasePolicy] = None,
+        recache_policy: Optional[RecachePolicy] = None,
+        return_cas_token: bool = False,
+    ) -> Optional[Value]:
+        ...  # pragma: no cover
+
+    def _process_get_result(
+        self, key: Union[Key, str], result: ReadResponse
+    ) -> Optional[Value]:
+        ...  # pragma: no cover
+
+    def _get_typed_value(
+        self,
+        key: Union[Key, str],
+        value: Any,
+        cls: Type[T],
+        error_on_type_mismatch: bool = False,
+    ) -> Optional[T]:
+        ...  # pragma: no cover
+
+    def _get_delta_flags(
+        self,
+        delta: int,
+        refresh_ttl: Optional[int] = None,
+        no_reply: bool = False,
+        cas_token: Optional[int] = None,
+        return_value: bool = False,
+    ) -> Tuple[Set[Flag], Dict[IntFlag, int], Dict[TokenFlag, bytes]]:
+        ...  # pragma: no cover
+
+
+class HighLevelCommandsMixin:
+    def set(
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         value: Any,
         ttl: int,
@@ -30,10 +81,10 @@ class CachePool(BaseCachePool):
         set_mode: SetMode = SetMode.SET,
     ) -> bool:
         key = key if isinstance(key, Key) else Key(key)
-        flags = set()
+        flags: Set[Flag] = set()
         if no_reply:
             flags.add(Flag.NOREPLY)
-        int_flags = {
+        int_flags: Dict[IntFlag, int] = {
             IntFlag.CACHE_TTL: ttl,
         }
         if cas_token is not None:
@@ -57,15 +108,15 @@ class CachePool(BaseCachePool):
         return isinstance(result, Success)
 
     def delete(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         cas_token: Optional[int] = None,
         no_reply: bool = False,
         stale_policy: Optional[StalePolicy] = None,
     ) -> bool:
         key = key if isinstance(key, Key) else Key(key)
-        flags = set()
-        int_flags = {}
+        flags: Set[Flag] = set()
+        int_flags: Dict[IntFlag, int] = {}
         if no_reply:
             flags.add(Flag.NOREPLY)
         if cas_token is not None:
@@ -83,13 +134,13 @@ class CachePool(BaseCachePool):
         return isinstance(result, Success)
 
     def touch(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         ttl: int,
         no_reply: bool = False,
     ) -> bool:
         key = key if isinstance(key, Key) else Key(key)
-        flags = set()
+        flags: Set[Flag] = set()
         int_flags = {IntFlag.CACHE_TTL: ttl}
         if no_reply:
             flags.add(Flag.NOREPLY)
@@ -98,7 +149,7 @@ class CachePool(BaseCachePool):
         return isinstance(result, Success)
 
     def get_or_lease(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         lease_policy: LeasePolicy,
         touch_ttl: Optional[int] = None,
@@ -113,32 +164,16 @@ class CachePool(BaseCachePool):
         return value
 
     def get_or_lease_cas(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         lease_policy: LeasePolicy,
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Tuple[Optional[Any], Optional[int]]:
-        key = key if isinstance(key, Key) else Key(key)
         if lease_policy.miss_retries <= 0:
             raise ValueError(
                 "Wrong lease_policy: miss_retries needs to be greater than 0"
             )
-        flags = {
-            Flag.RETURN_VALUE,
-            Flag.RETURN_TTL,
-            Flag.RETURN_CLIENT_FLAG,
-            Flag.RETURN_CAS_TOKEN,
-            Flag.RETURN_LAST_ACCESS,
-            Flag.RETURN_FETCHED,
-        }
-        int_flags = {
-            IntFlag.MISS_LEASE_TTL: lease_policy.ttl,
-        }
-        if recache_policy:
-            int_flags[IntFlag.RECACHE_TTL] = recache_policy.ttl
-        if touch_ttl is not None and touch_ttl >= 0:
-            int_flags[IntFlag.CACHE_TTL] = touch_ttl
         i = 0
         while True:
             if i > 0:
@@ -151,7 +186,13 @@ class CachePool(BaseCachePool):
                 )
             i += 1
 
-            result = self.meta_get(key, flags=flags, int_flags=int_flags)
+            result = self._get(
+                key=key,
+                touch_ttl=touch_ttl,
+                lease_policy=lease_policy,
+                recache_policy=recache_policy,
+                return_cas_token=True,
+            )
 
             if isinstance(result, Value):
                 # It is a hit.
@@ -167,7 +208,7 @@ class CachePool(BaseCachePool):
                     if i < lease_policy.miss_retries:
                         continue
                     else:
-                        # We run of retries, behave as a miss
+                        # We run out of retries, behave as a miss
                         return None, cas_token
                 else:
                     # There is data, either the is no lease or
@@ -179,22 +220,39 @@ class CachePool(BaseCachePool):
                 raise MemcacheError(f"Unexpected response: {result} for key {key}")
 
     def get(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Optional[Any]:
-        value, _ = self.get_cas(
-            key=key, touch_ttl=touch_ttl, recache_policy=recache_policy
+        result = self._get(
+            key=key,
+            touch_ttl=touch_ttl,
+            recache_policy=recache_policy,
+            return_cas_token=False,
         )
-        return value
+        return result.value if result is not None else None
 
     def multi_get(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         keys: Iterable[Union[Key, str]],
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Dict[Key, Optional[Any]]:
+        results = self._multi_get(
+            keys=keys,
+            touch_ttl=touch_ttl,
+            recache_policy=recache_policy,
+        )
+        return {k: v.value if v is not None else None for k, v in results.items()}
+
+    def _multi_get(
+        self: HighLevelCommandMixinWithMetaCommands,
+        keys: Iterable[Union[Key, str]],
+        touch_ttl: Optional[int] = None,
+        recache_policy: Optional[RecachePolicy] = None,
+        return_cas_token: bool = False,
+    ) -> Dict[Key, Optional[Value]]:
         flags = {
             Flag.RETURN_VALUE,
             Flag.RETURN_TTL,
@@ -202,87 +260,103 @@ class CachePool(BaseCachePool):
             Flag.RETURN_LAST_ACCESS,
             Flag.RETURN_FETCHED,
         }
+        if return_cas_token:
+            flags.add(Flag.RETURN_CAS_TOKEN)
         int_flags = {}
         if recache_policy:
             int_flags[IntFlag.RECACHE_TTL] = recache_policy.ttl
         if touch_ttl is not None and touch_ttl >= 0:
             int_flags[IntFlag.CACHE_TTL] = touch_ttl
 
-        results: Dict[Key, Optional[Any]] = {}
-        for key, result in self.meta_multiget(
+        results = self.meta_multiget(
             keys=[key if isinstance(key, Key) else Key(key) for key in keys],
             flags=flags,
             int_flags=int_flags,
-        ).items():
-            if isinstance(result, Value):
-                # It is a hit
-                if Flag.WIN in result.flags:
-                    # Win flag present, meaning we got the lease to
-                    # recache the item. We need to mimic a miss.
-                    results[key] = None
-                else:
-                    results[key] = result.value
-            elif isinstance(result, Miss):
-                results[key] = None
-            else:
-                raise MemcacheError(f"Unexpected response: {result} for key {key}")
-        return results
+        )
+        return {k: self._process_get_result(k, v) for k, v in results.items()}
 
     def get_cas(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Tuple[Optional[Any], Optional[int]]:
+        result = self._get(
+            key=key,
+            touch_ttl=touch_ttl,
+            recache_policy=recache_policy,
+            return_cas_token=True,
+        )
+        if result is None:
+            return None, None
+        else:
+            cas_token = result.int_flags.get(IntFlag.RETURNED_CAS_TOKEN)
+            return result.value, cas_token
+
+    def _get(
+        self: HighLevelCommandMixinWithMetaCommands,
+        key: Union[Key, str],
+        touch_ttl: Optional[int] = None,
+        lease_policy: Optional[LeasePolicy] = None,
+        recache_policy: Optional[RecachePolicy] = None,
+        return_cas_token: bool = False,
+    ) -> Optional[Value]:
         key = key if isinstance(key, Key) else Key(key)
         flags = {
             Flag.RETURN_VALUE,
             Flag.RETURN_TTL,
             Flag.RETURN_CLIENT_FLAG,
-            Flag.RETURN_CAS_TOKEN,
             Flag.RETURN_LAST_ACCESS,
             Flag.RETURN_FETCHED,
         }
+        if return_cas_token:
+            flags.add(Flag.RETURN_CAS_TOKEN)
         int_flags = {}
+        if lease_policy:
+            int_flags[IntFlag.MISS_LEASE_TTL] = lease_policy.ttl
         if recache_policy:
             int_flags[IntFlag.RECACHE_TTL] = recache_policy.ttl
         if touch_ttl is not None and touch_ttl >= 0:
             int_flags[IntFlag.CACHE_TTL] = touch_ttl
 
         result = self.meta_get(key, flags=flags, int_flags=int_flags)
+        return self._process_get_result(key, result)
+
+    def _process_get_result(
+        self: HighLevelCommandMixinWithMetaCommands,
+        key: Union[Key, str],
+        result: ReadResponse,
+    ) -> Optional[Value]:
         if isinstance(result, Value):
             # It is a hit
-            cas_token = result.int_flags.get(IntFlag.RETURNED_CAS_TOKEN)
             if Flag.WIN in result.flags:
                 # Win flag present, meaning we got the lease to
-                # recache the item. We need to mimic a miss.
-                return None, cas_token
-            else:
-                return result.value, cas_token
+                # recache the item. We need to mimic a miss, so
+                # we set the value to None.
+                result.value = None
+            return result
         elif isinstance(result, Miss):
-            return None, None
+            return None
         else:
             raise MemcacheError(f"Unexpected response: {result} for key {key}")
 
     def get_typed(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         cls: Type[T],
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
         error_on_type_mismatch: bool = False,
     ) -> Optional[T]:
-        value, _ = self.get_cas_typed(
+        value = self.get(
             key=key,
-            cls=cls,
             touch_ttl=touch_ttl,
             recache_policy=recache_policy,
-            error_on_type_mismatch=error_on_type_mismatch,
         )
-        return value
+        return self._get_typed_value(key, value, cls, error_on_type_mismatch)
 
     def get_cas_typed(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         cls: Type[T],
         touch_ttl: Optional[int] = None,
@@ -292,27 +366,36 @@ class CachePool(BaseCachePool):
         value, cas_token = self.get_cas(
             key=key, touch_ttl=touch_ttl, recache_policy=recache_policy
         )
+        return self._get_typed_value(key, value, cls, error_on_type_mismatch), cas_token
 
-        if not isinstance(value, cls):
-            if error_on_type_mismatch:
+    def _get_typed_value(
+        self: HighLevelCommandMixinWithMetaCommands,
+        key: Union[Key, str],
+        value: Any,
+        cls: Type[T],
+        error_on_type_mismatch: bool = False,
+    ) -> Optional[T]:
+        result: Optional[T] = None
+        if value is not None:
+            if isinstance(value, cls):
+                result = value
+            elif error_on_type_mismatch:
                 raise ValueError(f"Expecting {cls} got {value} for {key}")
-            else:
-                value = None
-        return value, cas_token
+        return result
 
     def _get_delta_flags(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         delta: int,
         refresh_ttl: Optional[int] = None,
         no_reply: bool = False,
         cas_token: Optional[int] = None,
         return_value: bool = False,
     ) -> Tuple[Set[Flag], Dict[IntFlag, int], Dict[TokenFlag, bytes]]:
-        flags = set()
-        int_flags = {
+        flags: Set[Flag] = set()
+        int_flags: Dict[IntFlag, int] = {
             IntFlag.MA_DELTA_VALUE: abs(delta),
         }
-        token_flags = {}
+        token_flags: Dict[TokenFlag, bytes] = {}
 
         if return_value:
             flags.add(Flag.RETURN_VALUE)
@@ -328,7 +411,7 @@ class CachePool(BaseCachePool):
         return flags, int_flags, token_flags
 
     def delta(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         delta: int,
         refresh_ttl: Optional[int] = None,
@@ -348,7 +431,7 @@ class CachePool(BaseCachePool):
         return isinstance(result, Success)
 
     def delta_initialize(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         delta: int,
         initial_value: int,
@@ -372,7 +455,7 @@ class CachePool(BaseCachePool):
         return isinstance(result, Success)
 
     def delta_and_get(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         delta: int,
         refresh_ttl: Optional[int] = None,
@@ -398,7 +481,7 @@ class CachePool(BaseCachePool):
         return None
 
     def delta_initialize_and_get(
-        self,
+        self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],
         delta: int,
         initial_value: int,

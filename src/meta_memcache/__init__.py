@@ -1,12 +1,12 @@
 __version__ = "0.1.0"
 
-from meta_memcache.base.cache_pool import CachePool
-from meta_memcache.cache_pools import ShardedCachePool, ShardedWithGutterCachePool
+from meta_memcache.cache_client import CacheClient
 from meta_memcache.configuration import (
     LeasePolicy,
     RecachePolicy,
     ServerAddress,
     StalePolicy,
+    build_server_pool,
     connection_pool_factory_builder,
     socket_factory_builder,
 )

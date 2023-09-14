@@ -17,7 +17,7 @@ class HighLevelCommandsProtocol(Protocol):
         stale_policy: Optional[StalePolicy] = None,
         set_mode: SetMode = SetMode.SET,
     ) -> bool:
-        ...
+        ...  # pragma: no cover
 
     def delete(
         self,
@@ -26,7 +26,7 @@ class HighLevelCommandsProtocol(Protocol):
         no_reply: bool = False,
         stale_policy: Optional[StalePolicy] = None,
     ) -> bool:
-        ...
+        ...  # pragma: no cover
 
     def touch(
         self,
@@ -34,7 +34,7 @@ class HighLevelCommandsProtocol(Protocol):
         ttl: int,
         no_reply: bool = False,
     ) -> bool:
-        ...
+        ...  # pragma: no cover
 
     def get_or_lease(
         self,
@@ -43,7 +43,7 @@ class HighLevelCommandsProtocol(Protocol):
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Optional[Any]:
-        ...
+        ...  # pragma: no cover
 
     def get_or_lease_cas(
         self,
@@ -52,7 +52,7 @@ class HighLevelCommandsProtocol(Protocol):
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Tuple[Optional[Any], Optional[int]]:
-        ...
+        ...  # pragma: no cover
 
     def get(
         self,
@@ -60,7 +60,7 @@ class HighLevelCommandsProtocol(Protocol):
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Optional[Any]:
-        ...
+        ...  # pragma: no cover
 
     def multi_get(
         self,
@@ -68,7 +68,7 @@ class HighLevelCommandsProtocol(Protocol):
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Dict[Key, Optional[Any]]:
-        ...
+        ...  # pragma: no cover
 
     def _multi_get(
         self,
@@ -77,7 +77,7 @@ class HighLevelCommandsProtocol(Protocol):
         recache_policy: Optional[RecachePolicy] = None,
         return_cas_token: bool = False,
     ) -> Dict[Key, Optional[Value]]:
-        ...
+        ...  # pragma: no cover
 
     def get_cas(
         self,
@@ -85,7 +85,7 @@ class HighLevelCommandsProtocol(Protocol):
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Tuple[Optional[Any], Optional[int]]:
-        ...
+        ...  # pragma: no cover
 
     def _get(
         self,
@@ -95,7 +95,7 @@ class HighLevelCommandsProtocol(Protocol):
         recache_policy: Optional[RecachePolicy] = None,
         return_cas_token: bool = False,
     ) -> Optional[Value]:
-        ...
+        ...  # pragma: no cover
 
     def get_typed(
         self,
@@ -105,7 +105,7 @@ class HighLevelCommandsProtocol(Protocol):
         recache_policy: Optional[RecachePolicy] = None,
         error_on_type_mismatch: bool = False,
     ) -> Optional[T]:
-        ...
+        ...  # pragma: no cover
 
     def get_cas_typed(
         self,
@@ -115,7 +115,7 @@ class HighLevelCommandsProtocol(Protocol):
         recache_policy: Optional[RecachePolicy] = None,
         error_on_type_mismatch: bool = False,
     ) -> Tuple[Optional[T], Optional[int]]:
-        ...
+        ...  # pragma: no cover
 
     def delta(
         self,
@@ -125,7 +125,7 @@ class HighLevelCommandsProtocol(Protocol):
         no_reply: bool = False,
         cas_token: Optional[int] = None,
     ) -> bool:
-        ...
+        ...  # pragma: no cover
 
     def delta_initialize(
         self,
@@ -137,7 +137,7 @@ class HighLevelCommandsProtocol(Protocol):
         no_reply: bool = False,
         cas_token: Optional[int] = None,
     ) -> bool:
-        ...
+        ...  # pragma: no cover
 
     def delta_and_get(
         self,
@@ -146,7 +146,7 @@ class HighLevelCommandsProtocol(Protocol):
         refresh_ttl: Optional[int] = None,
         cas_token: Optional[int] = None,
     ) -> Optional[int]:
-        ...
+        ...  # pragma: no cover
 
     def delta_initialize_and_get(
         self,
@@ -157,4 +157,4 @@ class HighLevelCommandsProtocol(Protocol):
         refresh_ttl: Optional[int] = None,
         cas_token: Optional[int] = None,
     ) -> Optional[int]:
-        ...
+        ...  # pragma: no cover

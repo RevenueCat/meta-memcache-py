@@ -7,16 +7,16 @@ Modern, pure python, memcache client with support for new meta commands.
 ```
 pip install meta-memcache
 ```
-## Configure a pool:
+## Configure a client:
 ```python:
 from meta_memcache import (
     Key,
     ServerAddress,
-    ShardedCachePool,
+    CacheClient,
     connection_pool_factory_builder,
 )
 
-pool = ShardedCachePool.from_server_addresses(
+pool = CacheClient.cache_client_from_servers(
     servers=[
         ServerAddress(host="1.1.1.1", port=11211),
         ServerAddress(host="2.2.2.2", port=11211),
@@ -29,9 +29,9 @@ pool = ShardedCachePool.from_server_addresses(
 The design is very pluggable. Rather than supporting a lot of features, it
 relies on dependency injection to configure behavior.
 
-The `CachePool`s expects a `connection_pool_factory_fn` callback to build the
-internal connection pool. And the connection pool receives a function to create
-a new memcache connection.
+The `CacheClient.cache_client_from_servers`s expects a `connection_pool_factory_fn`
+callback to build the internal connection pool. And the connection pool receives
+a function to create a new memcache connection.
 
 While this is very flexible, it can be complex to initialize, so there is a
 default builder provided to tune the most frequent things:
@@ -76,7 +76,7 @@ and override the `socket_factory_fn`.
 
 ## Use the pool:
 ```python:
-cache_pool.set(key=Key("bar"), value=1, ttl=1000)
+cache_client.set(key=Key("bar"), value=1, ttl=1000)
 ```
 
 ## Keys:
@@ -123,15 +123,34 @@ Regarding cache client features, relies in inheritance to abstract different
 layers of responsibility, augment the capabilities while abstracting details
 out:
 
+## Architecture
+Code should rely on the [`CacheApi`](https://github.com/RevenueCat/meta-memcache-py/blob/main/src/meta_memcache/interfaces/cache_api.py) prototol.
+
+The client itself is just two mixins that implement meta-commands and high-level commands.
+
+The client uses a `Router` to execute the commands. Routers are reponsible of routing
+the request to the appropriate place.
+
+By default a client has a single Cache pool defined, with each of the servers
+having its own connection pool. The Router will map the key to the appropriate
+server's connection pool. It can also implement more complex routing policies
+like shadowing and mirroring.
+
+The Router uses the connection pool and the executor to execute the command and read the
+response.
+
+By mixing and plugging routers and executors is possible to build advanced
+behaviors. Check [`CacheClient`](https://github.com/RevenueCat/meta-memcache-py/blob/main/src/meta_memcache/cache_client.py) and [`extras/`](https://github.com/RevenueCat/meta-memcache-py/blob/main/src/meta_memcache/extrasy) for some examples.
+
 ## Low level meta commands:
 
-The low-level class is
-[BaseCachePool](https://github.com/RevenueCat/meta-memcache-py/blob/main/src/meta_memcache/base/base_cache_pool.py).
-Implements the connection pool handling as well as the memcache protocol,
-focusing on the new
+The low-level commands are in
+[BaseCacheClient](https://github.com/RevenueCat/meta-memcache-py/blob/main/src/meta_memcache/commands/meta_commands.py).
+
+They implement the new
 [Memcache MetaCommands](https://github.com/memcached/memcached/blob/master/doc/protocol.txt#L79):
 meta get, meta set, meta delete and meta arithmetic. They implement the full set
-of flags, and features, but are very low level.
+of flags, and features, but are very low level for general use.
 
 ```python:
     def meta_multiget(
@@ -183,8 +202,8 @@ command. See below for the usual memcache api.
 ## High level commands:
 
 The
-[CachePool](https://github.com/RevenueCat/meta-memcache-py/blob/main/src/meta_memcache/base/cache_pool.py)
-augments the low-level class and implements the more high-level memcache
+[High level commands](https://github.com/RevenueCat/meta-memcache-py/blob/main/src/meta_memcache/commands/high_level_commands.py)
+augments the low-level api and implement the more usual, high-level memcache
 operations (get, set, touch, cas...), plus the memcached's
 [new MetaCommands anti-dogpiling techniques](https://github.com/memcached/memcached/wiki/MetaCommands)
 for high qps caching needs: Atomic Stampeding control, Herd Handling, Early
@@ -370,49 +389,53 @@ class StalePolicy(NamedTuple):
 
 ## Pool level features:
 Finally in
-[`cache_pools.py`](https://github.com/RevenueCat/meta-memcache-py/blob/main/src/meta_memcache/cache_pools.py)
-a few classes implement the pool-level semantics:
-* `ShardedCachePool`: implements a consistent hashing cache pool using uhashring's `HashRing`.
-* `ShardedWithGutterCachePool`: implements a sharded cache pool like above, but
-  with a 'gutter pool' (See
+[`cache_client.py`](https://github.com/RevenueCat/meta-memcache-py/blob/main/src/meta_memcache/cache_client.py)
+helps building different `CacheClient`s with different characteristics:
+* `cache_client_from_servers`: Implements the default, shardedconsistent hashing
+  cache pool using uhashring's `HashRing`.
+* `cache_client_with_gutter_from_servers`: implements a sharded cache pool like
+  above, but with a 'gutter pool' (See
   [Scaling Memcache at Facebook](http://www.cs.utah.edu/~stutsman/cs6963/public/papers/memcached.pdf)),
   so when a server of the primary pool is down, requests are sent to the
   'gutter' pool, with TTLs overriden and lowered on the fly, so they provide
   some level of caching instead of hitting the backend for each request.
 
-These pools also provide an option to register a callback for write failure events. This might be useful
+These clients also provide an option to register a callback for write failure events. This might be useful
 if you are serious about cache consistency. If you have transient network issues, some writes might fail,
 and if the server comes back without being restarted or the cache flushed, the data will be stale. The
 events allows for failed writes to be collected and logged. Affected keys can then be invalidated later
 and eventual cache consistency guaranteed.
 
-It should be trivial to implement your own cache pool if you need custom
+It should be trivial to implement your own cache client if you need custom
 sharding, shadowing, pools that support live migrations, etc. Feel free to
 contribute!
 
 ## Write failure tracking
-When a write failure occures with a `SET` or `DELETE` opperation occures then the `pool.on_write_failure` event
+When a write failure occures with a `SET` or `DELETE` opperation occures then the `cache_client.on_write_failure` event
 handler will be triggered. Consumers subscribing to this handler will receive the key that failed. The
 following is an example on how to subscribe to these events:
 ```python:
-from meta_memcache import CachePool, Key
+from meta_memcache import CacheClient, Key
 
 class SomeConsumer(object):
-    def __init__(self, pool: CachePool):
-        self.pool = pool
-        self.pool.on_write_failures += self.on_write_failure_handler
+    def __init__(self, cache_client: CacheClient):
+        self.cache_client = cache_client
+        self.cache_client.on_write_failures += self.on_write_failure_handler
 
     def call_before_dereferencing(self):
-        self.pool.on_write_failures -= self.on_write_failure_handler
+        self.cache_client.on_write_failures -= self.on_write_failure_handler
 
     def on_write_failure_handler(self, key: Key) -> None:
         # Handle the failures here
         pass
-        
 ```
 
+Ideally you should track such errors and attempt to invalidate the affected keys
+later, when the cache server is back, so you keep high cache consistency, avoiding
+stale entries.
+
 ## Stats:
-The cache pools offer a `get_counters()` that return information about the state
+The cache clients offer a `get_counters()` that return information about the state
 of the servers and their connection pools:
 
 ```python:
