@@ -188,7 +188,7 @@ class MigrationMode(IntEnum):
     POPULATE_WRITES_AND_READS_1PCT = 3
 
     # Use the origin cache pool, but replicate writes
-    # and 1% of reads to the destination cache pool
+    # and 10% of reads to the destination cache pool
     POPULATE_WRITES_AND_READS_10PCT = 4
 
     # Use the destination cache pool, but update the
