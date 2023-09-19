@@ -6,7 +6,7 @@ package = "meta_memcache"
 nox.options.sessions = "lint", "types", "tests"
 locations = "src", "tests", "noxfile.py"
 DEFAULT_VERSION = "3.8"
-VERSIONS = ["3.8", "3.10"]
+VERSIONS = ["3.8", "3.11"]
 
 
 @session(python=DEFAULT_VERSION)
@@ -38,6 +38,7 @@ def lint(session: Session) -> None:
 @session(python=DEFAULT_VERSION)
 def types(session: Session) -> None:
     """Type-check using mypy."""
+    session.run("poetry", "install", "--with", "extras", external=True)
     session.install("mypy", ".")
     session.run("mypy", "src/")
 
@@ -46,9 +47,8 @@ def types(session: Session) -> None:
 def tests(session: Session) -> None:
     """Run the test suite."""
     args = session.posargs or ["--cov"]
-    session.run("poetry", "install", "--no-dev", external=True)
+    session.run("poetry", "install", "--with", "extras", external=True)
     session.install(
-        # "coverage[toml]",
         "pytest",
         "pytest-cov",
         "pytest-mock",

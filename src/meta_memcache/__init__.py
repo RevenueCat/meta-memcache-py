@@ -1,4 +1,4 @@
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 from meta_memcache.cache_client import CacheClient
 from meta_memcache.configuration import (
@@ -21,6 +21,11 @@ from meta_memcache.errors import MemcacheError, MemcacheServerError
 from meta_memcache.events.write_failure_event import WriteFailureEvent
 from meta_memcache.executors.default import DefaultExecutor
 from meta_memcache.interfaces.cache_api import CacheApi
+from meta_memcache.interfaces.commands import CommandsProtocol
+from meta_memcache.interfaces.executor import Executor
+from meta_memcache.interfaces.high_level_commands import HighLevelCommandsProtocol
+from meta_memcache.interfaces.meta_commands import MetaCommandsProtocol
+from meta_memcache.interfaces.router import HasRouter, Router
 from meta_memcache.protocol import (
     Conflict,
     Flag,

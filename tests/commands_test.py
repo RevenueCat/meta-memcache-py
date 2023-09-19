@@ -370,44 +370,83 @@ def test_touch_cmd(
     memcache_socket.get_response.reset_mock()
 
 
+def assert_called_once_with_command(mock, expected_cmd, **expected_kwargs):
+    assert_called_with_commands(mock, [expected_cmd], **expected_kwargs)
+
+
+def assert_called_with_commands(mock, expected_cmds, **expected_kwargs):
+    def split_cmd(cmd: bytes):
+        assert cmd.endswith(b"\r\n"), f"Unexpected cmd format: {cmd}"
+        pieces = cmd[:-2].split(b" ")
+        command = pieces.pop(0)
+        key = pieces.pop(0)
+        return command, key, set(pieces)
+
+    calls = mock.call_args_list
+    assert len(calls) == len(
+        expected_cmds
+    ), f"Expected exactly {len(expected_cmds)} calls to {mock}"
+    for i in range(len(calls)):
+        args, kwargs = calls[i]
+        expected_cmd = expected_cmds[i]
+        assert len(args) == 1, f"Unexpected num of args to {mock}"
+        assert (
+            kwargs == expected_kwargs
+        ), f"Unexpected kwargs to {mock}: {kwargs} expected {expected_kwargs}"
+        cmd = args[0]
+        actual_cmd, actual_key, actual_flags = split_cmd(cmd)
+        expected_cmd, expected_key, expected_flags = split_cmd(expected_cmd)
+        assert (
+            actual_cmd == expected_cmd
+        ), f"Unexpected cmd to {mock}: {actual_cmd} expected {expected_cmd}"
+        assert (
+            actual_key == expected_key
+        ), f"Unexpected key to {mock}: {actual_key} expected {expected_key}"
+        assert (
+            actual_flags == expected_flags
+        ), f"Unexpected flags to {mock}: {actual_flags} expected {expected_flags}"
+
+
 def test_get_cmd(memcache_socket: MemcacheSocket, cache_client: CacheClient) -> None:
     memcache_socket.get_response.return_value = Miss()
 
     cache_client.get(key="foo")
-    memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v h f\r\n", with_noop=False
+    assert_called_once_with_command(
+        memcache_socket.sendall, b"mg foo t l v h f\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
     cache_client.get(key=Key("foo"))
-    memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v h f\r\n", with_noop=False
+    assert_called_once_with_command(
+        memcache_socket.sendall, b"mg foo t l v h f\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
     cache_client.get(key=Key("foo"), touch_ttl=300)
-    memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v h f T300\r\n", with_noop=False
+    assert_called_once_with_command(
+        memcache_socket.sendall, b"mg foo t l v h f T300\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
     cache_client.get(key=Key("foo"), recache_policy=RecachePolicy())
-    memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v h f R30\r\n", with_noop=False
+    assert_called_once_with_command(
+        memcache_socket.sendall, b"mg foo t l v h f R30\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
     cache_client.get(key=Key("foo"), touch_ttl=300, recache_policy=RecachePolicy())
-    memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v h f R30 T300\r\n", with_noop=False
+    assert_called_once_with_command(
+        memcache_socket.sendall, b"mg foo t l v h f R30 T300\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
     cache_client.get(
         key=Key("large_key" * 50), touch_ttl=300, recache_policy=RecachePolicy()
     )
-    memcache_socket.sendall.assert_called_once_with(
-        b"mg 4gCNJuSyOJPGW8kRddioRlPx b t l v h f R30 T300\r\n", with_noop=False
+    assert_called_once_with_command(
+        memcache_socket.sendall,
+        b"mg 4gCNJuSyOJPGW8kRddioRlPx b t l v h f R30 T300\r\n",
+        with_noop=False,
     )
     memcache_socket.sendall.reset_mock()
 
@@ -416,8 +455,10 @@ def test_get_cmd(memcache_socket: MemcacheSocket, cache_client: CacheClient) -> 
         touch_ttl=300,
         recache_policy=RecachePolicy(),
     )
-    memcache_socket.sendall.assert_called_once_with(
-        b"mg lCV3WxKxtWrdY4s1+R710+9J b t l v h f R30 T300\r\n", with_noop=False
+    assert_called_once_with_command(
+        memcache_socket.sendall,
+        b"mg lCV3WxKxtWrdY4s1+R710+9J b t l v h f R30 T300\r\n",
+        with_noop=False,
     )
     memcache_socket.sendall.reset_mock()
 
@@ -428,8 +469,8 @@ def test_get_cmd(memcache_socket: MemcacheSocket, cache_client: CacheClient) -> 
         touch_ttl=300,
         recache_policy=RecachePolicy(ttl=60),
     )
-    memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f N30 R60 T300\r\n", with_noop=False
+    assert_called_once_with_command(
+        memcache_socket.sendall, b"mg foo t l v c h f N30 R60 T300\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
@@ -440,30 +481,30 @@ def test_get_miss(memcache_socket: MemcacheSocket, cache_client: CacheClient) ->
     result, cas_token = cache_client.get_cas_typed(key=Key("foo"), cls=Foo)
     assert result is None
     assert cas_token is None
-    memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f\r\n", with_noop=False
+    assert_called_once_with_command(
+        memcache_socket.sendall, b"mg foo t l v c h f\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
     result = cache_client.get_typed(key=Key("foo"), cls=Foo)
     assert result is None
-    memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v h f\r\n", with_noop=False
+    assert_called_once_with_command(
+        memcache_socket.sendall, b"mg foo t l v h f\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
     result, cas_token = cache_client.get_cas(key=Key("foo"))
     assert result is None
     assert cas_token is None
-    memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f\r\n", with_noop=False
+    assert_called_once_with_command(
+        memcache_socket.sendall, b"mg foo t l v c h f\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
     result = cache_client.get(key=Key("foo"))
     assert result is None
-    memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v h f\r\n", with_noop=False
+    assert_called_once_with_command(
+        memcache_socket.sendall, b"mg foo t l v h f\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
@@ -615,8 +656,8 @@ def test_get_or_lease_hit(
     )
     assert result == expected_value
     assert cas_token == expected_cas_token
-    memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f N30\r\n", with_noop=False
+    assert_called_once_with_command(
+        memcache_socket.sendall, b"mg foo t l v c h f N30\r\n", with_noop=False
     )
     memcache_socket.get_value.assert_called_once_with(len(encoded_value.data))
     time.sleep.assert_not_called()
@@ -640,8 +681,8 @@ def test_get_or_lease_miss_win(
     )
     assert result is None
     assert cas_token == expected_cas_token
-    memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f N30\r\n", with_noop=False
+    assert_called_once_with_command(
+        memcache_socket.sendall, b"mg foo t l v c h f N30\r\n", with_noop=False
     )
     memcache_socket.get_value.assert_called_once_with(0)
     time.sleep.assert_not_called()
@@ -683,12 +724,14 @@ def test_get_or_lease_miss_lost_then_data(
     )
     assert result == expected_value
     assert cas_token == expected_cas_token
-    memcache_socket.sendall.assert_has_calls(
+    assert_called_with_commands(
+        memcache_socket.sendall,
         [
-            call(b"mg foo t l v c h f N30\r\n", with_noop=False),
-            call(b"mg foo t l v c h f N30\r\n", with_noop=False),
-            call(b"mg foo t l v c h f N30\r\n", with_noop=False),
-        ]
+            b"mg foo t l v c h f N30\r\n",
+            b"mg foo t l v c h f N30\r\n",
+            b"mg foo t l v c h f N30\r\n",
+        ],
+        with_noop=False,
     )
     memcache_socket.get_value.assert_has_calls(
         [
@@ -734,12 +777,14 @@ def test_get_or_lease_miss_lost_then_win(
     )
     assert result is None
     assert cas_token == expected_cas_token
-    memcache_socket.sendall.assert_has_calls(
+    assert_called_with_commands(
+        memcache_socket.sendall,
         [
-            call(b"mg foo t l v c h f N30\r\n", with_noop=False),
-            call(b"mg foo t l v c h f N30\r\n", with_noop=False),
-            call(b"mg foo t l v c h f N30\r\n", with_noop=False),
-        ]
+            b"mg foo t l v c h f N30\r\n",
+            b"mg foo t l v c h f N30\r\n",
+            b"mg foo t l v c h f N30\r\n",
+        ],
+        with_noop=False,
     )
     memcache_socket.get_value.assert_has_calls(
         [
@@ -772,13 +817,15 @@ def test_get_or_lease_miss_runs_out_of_retries(
     )
     assert result is None
     assert cas_token == expected_cas_token
-    memcache_socket.sendall.assert_has_calls(
+    assert_called_with_commands(
+        memcache_socket.sendall,
         [
-            call(b"mg foo t l v c h f N30\r\n", with_noop=False),
-            call(b"mg foo t l v c h f N30\r\n", with_noop=False),
-            call(b"mg foo t l v c h f N30\r\n", with_noop=False),
-            call(b"mg foo t l v c h f N30\r\n", with_noop=False),
-        ]
+            b"mg foo t l v c h f N30\r\n",
+            b"mg foo t l v c h f N30\r\n",
+            b"mg foo t l v c h f N30\r\n",
+            b"mg foo t l v c h f N30\r\n",
+        ],
+        with_noop=False,
     )
     memcache_socket.get_value.assert_has_calls(
         [
@@ -806,8 +853,8 @@ def test_get_or_lease_errors(
         raise AssertionError("Should not be reached")
     except MemcacheError:
         pass
-    memcache_socket.sendall.assert_called_once_with(
-        b"mg foo t l v c h f N30 R60 T300\r\n", with_noop=False
+    assert_called_once_with_command(
+        memcache_socket.sendall, b"mg foo t l v c h f N30 R60 T300\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
 
@@ -1010,11 +1057,15 @@ def test_multi_get(memcache_socket: MemcacheSocket, cache_client: CacheClient) -
             Key("lease"),
         ]
     )
-    assert memcache_socket.sendall.mock_calls == [
-        call(b"mg miss t l v h f\r\n", with_noop=False),
-        call(b"mg found t l v h f\r\n", with_noop=False),
-        call(b"mg lease t l v h f\r\n", with_noop=False),
-    ]
+    assert_called_with_commands(
+        memcache_socket.sendall,
+        [
+            b"mg miss t l v h f\r\n",
+            b"mg found t l v h f\r\n",
+            b"mg lease t l v h f\r\n",
+        ],
+        with_noop=False,
+    )
     assert memcache_socket.get_response.call_count == 3
     assert memcache_socket.get_value.mock_calls == [
         call(2),

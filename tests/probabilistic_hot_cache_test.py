@@ -1,6 +1,8 @@
 from typing import Dict, List, Optional, Set
 from unittest.mock import Mock
 
+from prometheus_client import CollectorRegistry
+
 import pytest
 
 from meta_memcache import CacheClient, IntFlag, Key, Value
@@ -9,6 +11,7 @@ from meta_memcache.extras.probabilistic_hot_cache import (
     CachedValue,
     ProbabilisticHotCache,
 )
+from meta_memcache.metrics.prometheus import PrometheusMetricsCollector
 from meta_memcache.protocol import Flag, Miss, ReadResponse, TokenFlag
 
 
@@ -89,6 +92,9 @@ def test_get_without_prefixes(
     client: Mock,
 ) -> None:
     store = {}
+    metrics_collector = PrometheusMetricsCollector(
+        namespace="test", registry=CollectorRegistry()
+    )
     hot_cache = ProbabilisticHotCache(
         client=client,
         store=store,
@@ -97,6 +103,7 @@ def test_get_without_prefixes(
         probability_factor=1,
         max_stale_while_revalidate_seconds=10,
         allowed_prefixes=None,
+        metrics_collector=metrics_collector,
     )
 
     time.time.return_value = 0
@@ -184,6 +191,16 @@ def test_get_without_prefixes(
     assert hot_cache.get(key="foo_hot") == 1
     client.meta_get.assert_not_called()
 
+    assert metrics_collector.get_counters() == {
+        "test_hot_cache_hits": 3,
+        "test_hot_cache_misses": 8,
+        "test_hot_cache_skips": 0,
+        "test_hot_cache_item_count": 1,
+        "test_hot_cache_hot_candidates": 1,
+        "test_hot_cache_hot_skips": 0,
+        "test_hot_cache_candidate_misses": 0,
+    }
+
 
 def test_get_miss(
     time: Mock,
@@ -219,6 +236,9 @@ def test_get_prefixes(
     client: Mock,
 ) -> None:
     store = {}
+    metrics_collector = PrometheusMetricsCollector(
+        namespace="test", registry=CollectorRegistry()
+    )
     hot_cache = ProbabilisticHotCache(
         client=client,
         store=store,
@@ -227,11 +247,11 @@ def test_get_prefixes(
         probability_factor=1,
         max_stale_while_revalidate_seconds=10,
         allowed_prefixes=["allowed:", "also_allowed:"],
+        metrics_collector=metrics_collector,
     )
 
     time.time.return_value = 0
 
-    # Request a key that is a miss. It will not be cached
     assert hot_cache.get(key="allowed_is_not:foo_hot") == 1
     assert "allowed_is_not:foo_hot" not in store
 
@@ -258,6 +278,16 @@ def test_get_prefixes(
 
     assert hot_cache.get(key="also_allowed:foo_miss") is None
     assert "also_allowed:foo_miss" not in store
+
+    assert metrics_collector.get_counters() == {
+        "test_hot_cache_hits": 0,
+        "test_hot_cache_misses": 6,
+        "test_hot_cache_skips": 3,
+        "test_hot_cache_item_count": 2,
+        "test_hot_cache_hot_candidates": 2,
+        "test_hot_cache_hot_skips": 1,
+        "test_hot_cache_candidate_misses": 2,
+    }
 
 
 def test_random_factor(
