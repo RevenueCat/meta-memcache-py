@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "meta-memcache"
-version = "1.0.0"
+version = "1.0.1"
 description = "Modern, pure python, memcache client with support for new meta commands."
 license = "MIT"
 readme = "README.md"
@@ -13,14 +13,8 @@ python = "^3.8"
 uhashring = "^2.1"
 marisa-trie = "^1.0.0"
 
-[tool.poetry.dev-dependencies]
-flake8 = "^5"
-flake8-annotations = "^2.9"
-flake8-bandit = "^4.1"
-flake8-black = "^0.3"
-flake8-bugbear = "^22"
-flake8-docstrings = "^1.6"
-mypy = "^0"
+[tool.poetry.group.extras.dependencies]
+prometheus-client = "^0.17.1"
 
 [tool.pytest.ini_options]
 addopts = "-ra"

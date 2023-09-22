@@ -8,16 +8,16 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.8', '3.10']
+        python-version: ['3.8', '3.11']
     name: Python ${{ matrix.python-version }}
     steps:
-    - uses: actions/checkout@v2
-    - uses: actions/setup-python@v1
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.python-version }}
         architecture: x64
     - run: pip install -r dev-requirements.txt
-    - run: nox
+    - run: nox -p ${{ matrix.python-version }}
 
   deploy-vnext:
     runs-on: ubuntu-latest
@@ -28,11 +28,11 @@ jobs:
       NODE_ENV: production
 
     steps:
-      - uses: actions/checkout@v2
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v2
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: '3.11'
           architecture: x64
       - name: Install dependencies
         run: |
@@ -79,11 +79,11 @@ jobs:
       NODE_ENV: production
 
     steps:
-      - uses: actions/checkout@v2
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v2
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: '3.11'
           architecture: x64
       - name: Install dependencies
         run: |
