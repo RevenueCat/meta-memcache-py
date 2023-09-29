@@ -3,6 +3,7 @@ import zlib
 from dataclasses import dataclass
 from typing import Callable
 from unittest.mock import MagicMock, call
+from meta_memcache.base.base_serializer import EncodedValue
 from meta_memcache.connection.providers import HostConnectionPoolProvider
 from meta_memcache.executors.default import DefaultExecutor
 from meta_memcache.routers.default import DefaultRouter
@@ -587,6 +588,24 @@ def test_value_wrong_type(
         assert "Expecting <class 'tests.commands_test.Bar'> got Foo" in str(e)
 
 
+def test_deserialization_error(
+    memcache_socket: MemcacheSocket, cache_client: CacheClient
+) -> None:
+    expected_cas_token = 123
+    encoded_value = EncodedValue(data=b"invalid", encoding_id=MixedSerializer.PICKLE)
+    memcache_socket.get_response.return_value = Value(
+        size=len(encoded_value.data),
+        int_flags={
+            IntFlag.CLIENT_FLAG: encoded_value.encoding_id,
+            IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
+        },
+    )
+    memcache_socket.get_value.return_value = encoded_value.data
+
+    result = cache_client.get(key=Key("foo"))
+    assert result is None
+
+
 @pytest.fixture
 def time(mocker: MockerFixture) -> MagicMock:
     return mocker.patch(
@@ -882,14 +901,6 @@ def test_on_write_failure(
         server="broken:11211", message="uh-oh"
     )
     try:
-        cache_client.get(key=Key("foo"))
-        raise AssertionError("Should not be reached")
-    except MemcacheServerError as e:
-        assert "uh-oh" in str(e)
-    assert len(failures_tracked) == 0
-    failures_tracked.clear()
-
-    try:
         cache_client.delete(key=Key("foo"))
         raise AssertionError("Should not be reached")
     except MemcacheServerError as e:
@@ -907,12 +918,69 @@ def test_on_write_failure(
     assert failures_tracked[0] == Key("foo")
     failures_tracked.clear()
 
+
+def test_on_write_failure_for_reads(
+    cache_client: CacheClient,
+    connection_pool: ConnectionPool,
+) -> None:
+    failures_tracked: list[Key] = []
+    on_failure: Callable[[Key], None] = lambda key: failures_tracked.append(key)
+    cache_client.on_write_failure += on_failure
+
+    connection_pool.get_connection.side_effect = MemcacheServerError(
+        server="broken:11211", message="uh-oh"
+    )
+    try:
+        cache_client.get(key=Key("foo"))
+        raise AssertionError("Should not be reached")
+    except MemcacheServerError as e:
+        assert "uh-oh" in str(e)
+    assert len(failures_tracked) == 0
+    failures_tracked.clear()
+
+    try:
+        cache_client.touch(Key("foo"), ttl=3000)
+        raise AssertionError("Should not be reached")
+    except MemcacheServerError as e:
+        assert "uh-oh" in str(e)
+    assert len(failures_tracked) == 0
+    failures_tracked.clear()
+
+    try:
+        cache_client.touch(Key("foo"), ttl=30)
+        raise AssertionError("Should not be reached")
+    except MemcacheServerError as e:
+        assert "uh-oh" in str(e)
+    assert len(failures_tracked) == 1
+    failures_tracked.clear()
+
+
+def test_on_write_failure_for_multi_ops(
+    cache_client: CacheClient,
+    connection_pool: ConnectionPool,
+) -> None:
+    failures_tracked: list[Key] = []
+    on_failure: Callable[[Key], None] = lambda key: failures_tracked.append(key)
+    cache_client.on_write_failure += on_failure
+
+    connection_pool.get_connection.side_effect = MemcacheServerError(
+        server="broken:11211", message="uh-oh"
+    )
+
     try:
         cache_client.multi_get(keys=[Key("foo"), Key("bar")])
         raise AssertionError("Should not be reached")
     except MemcacheServerError as e:
         assert "uh-oh" in str(e)
     assert len(failures_tracked) == 0
+    failures_tracked.clear()
+
+    try:
+        cache_client.multi_get(keys=[Key("foo"), Key("bar")], touch_ttl=30)
+        raise AssertionError("Should not be reached")
+    except MemcacheServerError as e:
+        assert "uh-oh" in str(e)
+    assert len(failures_tracked) == 2
     failures_tracked.clear()
 
 
