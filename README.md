@@ -230,6 +230,14 @@ Invalidation...
         stale_policy: Optional[StalePolicy] = None,
     ) -> bool:
 
+    def invalidate(
+        self,
+        key: Union[Key, str],
+        cas_token: Optional[int] = None,
+        no_reply: bool = False,
+        stale_policy: Optional[StalePolicy] = None,
+    ) -> bool:
+
     def touch(
         self,
         key: Union[Key, str],

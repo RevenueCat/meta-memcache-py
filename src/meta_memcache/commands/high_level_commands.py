@@ -114,6 +114,12 @@ class HighLevelCommandsMixin:
         no_reply: bool = False,
         stale_policy: Optional[StalePolicy] = None,
     ) -> bool:
+        """
+        Returns True if the key existed and it was deleted.
+        If the key is not found in the cache it will return False. If
+        you just want to the key to be deleted not caring of whether
+        it exists or not, use invalidate() instead.
+        """
         key = key if isinstance(key, Key) else Key(key)
         flags: Set[Flag] = set()
         int_flags: Dict[IntFlag, int] = {}
@@ -132,6 +138,35 @@ class HighLevelCommandsMixin:
         )
 
         return isinstance(result, Success)
+
+    def invalidate(
+        self: HighLevelCommandMixinWithMetaCommands,
+        key: Union[Key, str],
+        cas_token: Optional[int] = None,
+        no_reply: bool = False,
+        stale_policy: Optional[StalePolicy] = None,
+    ) -> bool:
+        """
+        Returns true of the key deleted or it didn't exist anyway
+        """
+        key = key if isinstance(key, Key) else Key(key)
+        flags: Set[Flag] = set()
+        int_flags: Dict[IntFlag, int] = {}
+        if no_reply:
+            flags.add(Flag.NOREPLY)
+        if cas_token is not None:
+            int_flags[IntFlag.CAS_TOKEN] = cas_token
+        if stale_policy and stale_policy.mark_stale_on_deletion_ttl > 0:
+            flags.add(Flag.MARK_STALE)
+            int_flags[IntFlag.CACHE_TTL] = stale_policy.mark_stale_on_deletion_ttl
+
+        result = self.meta_delete(
+            key=key,
+            flags=flags,
+            int_flags=int_flags,
+        )
+
+        return isinstance(result, (Success, Miss))
 
     def touch(
         self: HighLevelCommandMixinWithMetaCommands,

@@ -26,6 +26,24 @@ class HighLevelCommandsProtocol(Protocol):
         no_reply: bool = False,
         stale_policy: Optional[StalePolicy] = None,
     ) -> bool:
+        """
+        Returns True if the key existed and it was deleted.
+        If the key is not found in the cache it will return False. If
+        you just want to the key to be deleted not caring of whether
+        it exists or not, use invalidate() instead.
+        """
+        ...  # pragma: no cover
+
+    def invalidate(
+        self,
+        key: Union[Key, str],
+        cas_token: Optional[int] = None,
+        no_reply: bool = False,
+        stale_policy: Optional[StalePolicy] = None,
+    ) -> bool:
+        """
+        Returns true of the key deleted or it didn't exist anyway
+        """
         ...  # pragma: no cover
 
     def touch(
