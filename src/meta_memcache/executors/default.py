@@ -34,10 +34,12 @@ class DefaultExecutor:
         serializer: BaseSerializer,
         key_encoder_fn: Callable[[Key], Tuple[bytes, bool]] = default_key_encoder,
         raise_on_server_error: bool = True,
+        touch_ttl_to_consider_write_failure: Optional[int] = 50,
     ) -> None:
         self._serializer = serializer
         self._key_encoder_fn = key_encoder_fn
         self._raise_on_server_error = raise_on_server_error
+        self._touch_ttl_to_consider_write_failure = touch_ttl_to_consider_write_failure
         self.on_write_failure = WriteFailureEvent()
 
     def _build_cmd(
@@ -78,6 +80,23 @@ class DefaultExecutor:
         int_flags[IntFlag.SET_CLIENT_FLAG] = encoded_value.encoding_id
         return encoded_value.data, int_flags
 
+    def _is_a_write_failure(
+        self, command: MetaCommand, int_flags: Optional[Dict[IntFlag, int]]
+    ) -> bool:
+        if command in (
+            MetaCommand.META_DELETE,
+            MetaCommand.META_SET,
+        ):
+            return True
+        if (
+            self._touch_ttl_to_consider_write_failure is not None
+            and command == MetaCommand.META_GET
+            and (touch_ttl := (int_flags or {}).get(IntFlag.CACHE_TTL, None))
+            and 0 < touch_ttl <= self._touch_ttl_to_consider_write_failure
+        ):
+            return True
+        return False
+
     def exec_on_pool(
         self,
         pool: ConnectionPool,
@@ -113,10 +132,7 @@ class DefaultExecutor:
                 )
                 return self._conn_recv_response(conn, flags=flags)
         except MemcacheServerError:
-            if track_write_failures and command in (
-                MetaCommand.META_DELETE,
-                MetaCommand.META_SET,
-            ):
+            if track_write_failures and self._is_a_write_failure(command, int_flags):
                 self.on_write_failure(key)
             if raise_on_server_error:
                 raise
@@ -165,10 +181,7 @@ class DefaultExecutor:
                 for key, _ in key_values:
                     results[key] = self._conn_recv_response(conn, flags=flags)
         except MemcacheServerError:
-            if track_write_failures and command in (
-                MetaCommand.META_DELETE,
-                MetaCommand.META_SET,
-            ):
+            if track_write_failures and self._is_a_write_failure(command, int_flags):
                 for key, _ in key_values:
                     self.on_write_failure(key)
             if raise_on_server_error:
