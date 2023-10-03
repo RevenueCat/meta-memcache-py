@@ -339,8 +339,77 @@ def test_delete_success_fail(
     result = cache_client.delete(key=Key("foo"))
     assert result is True
 
+    memcache_socket.get_response.return_value = Miss()
+    result = cache_client.delete(key=Key("foo"))
+    assert result is False
+
     memcache_socket.get_response.return_value = NotStored()
     result = cache_client.delete(key=Key("foo"))
+    assert result is False
+
+
+def test_invalidate_cmd(
+    memcache_socket: MemcacheSocket,
+    cache_client: CacheClient,
+) -> None:
+    memcache_socket.get_response.return_value = Success()
+
+    cache_client.invalidate(key="foo")
+    memcache_socket.sendall.assert_called_once_with(b"md foo\r\n", with_noop=False)
+    memcache_socket.get_response.assert_called_once_with()
+    memcache_socket.sendall.reset_mock()
+    memcache_socket.get_response.reset_mock()
+
+    cache_client.invalidate(key=Key("foo"))
+    memcache_socket.sendall.assert_called_once_with(b"md foo\r\n", with_noop=False)
+    memcache_socket.get_response.assert_called_once_with()
+    memcache_socket.sendall.reset_mock()
+    memcache_socket.get_response.reset_mock()
+
+    cache_client.invalidate(key=Key("foo"), cas_token=666)
+    memcache_socket.sendall.assert_called_once_with(b"md foo C666\r\n", with_noop=False)
+    memcache_socket.get_response.assert_called_once_with()
+    memcache_socket.sendall.reset_mock()
+    memcache_socket.get_response.reset_mock()
+
+    cache_client.invalidate(key=Key("foo"), no_reply=True)
+    memcache_socket.sendall.assert_called_once_with(b"md foo q\r\n", with_noop=True)
+    memcache_socket.get_response.assert_not_called()
+    memcache_socket.sendall.reset_mock()
+    memcache_socket.get_response.reset_mock()
+
+    cache_client.invalidate(key=Key("foo"), stale_policy=StalePolicy())
+    memcache_socket.sendall.assert_called_once_with(b"md foo\r\n", with_noop=False)
+    memcache_socket.get_response.assert_called_once_with()
+    memcache_socket.sendall.reset_mock()
+    memcache_socket.get_response.reset_mock()
+
+    cache_client.invalidate(
+        key=Key("foo"),
+        stale_policy=StalePolicy(mark_stale_on_deletion_ttl=30),
+    )
+    memcache_socket.sendall.assert_called_once_with(
+        b"md foo I T30\r\n", with_noop=False
+    )
+    memcache_socket.get_response.assert_called_once_with()
+    memcache_socket.sendall.reset_mock()
+    memcache_socket.get_response.reset_mock()
+
+
+def test_invalidate_success_fail(
+    memcache_socket: MemcacheSocket,
+    cache_client: CacheClient,
+) -> None:
+    memcache_socket.get_response.return_value = Success()
+    result = cache_client.invalidate(key=Key("foo"))
+    assert result is True
+
+    memcache_socket.get_response.return_value = Miss()
+    result = cache_client.invalidate(key=Key("foo"))
+    assert result is True
+
+    memcache_socket.get_response.return_value = NotStored()
+    result = cache_client.invalidate(key=Key("foo"))
     assert result is False
 
 
