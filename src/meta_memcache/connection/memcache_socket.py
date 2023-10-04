@@ -132,7 +132,7 @@ class MemcacheSocket:
         endl_pos = self._buf.find(ENDL, self._pos, self._read)
         while endl_pos < 0 and self._read < self._buffer_size:
             # Missing data, but still space in buffer, so read more
-            if self._recv_info_buffer() < 0:
+            if self._recv_info_buffer() <= 0:
                 break
             endl_pos = self._buf.find(ENDL, self._pos, self._read)
 
