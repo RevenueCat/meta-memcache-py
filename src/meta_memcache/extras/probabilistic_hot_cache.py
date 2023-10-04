@@ -83,7 +83,10 @@ class ProbabilisticHotCache(ClientWrapper):
             ttl = found.expiration - now
             if ttl > 0:
                 is_found = True
-            elif not found.extended and ttl < self._max_stale_while_revalidate_seconds:
+            elif (
+                not found.extended
+                and abs(ttl) < self._max_stale_while_revalidate_seconds
+            ):
                 # Expired but the value is still fresh enough. We will try to
                 # use stale-while-revalidate to avoid thundering herds. Only
                 # one thread will get to refresh the cache.
@@ -100,8 +103,11 @@ class ProbabilisticHotCache(ClientWrapper):
                         found.extended = True
                         is_found = False
             else:
-                # Expired and the value is too stale to use.
+                # Expired and the value is too stale to use. No longer hot.
+                self._clear_hot_cache_if_necessary(key)
                 is_found = False
+                is_hot = False
+                value = None
         else:
             # Not found so not hot
             is_found = False
@@ -140,6 +146,16 @@ class ProbabilisticHotCache(ClientWrapper):
         )
         self._metrics and self._metrics.gauge_set("item_count", len(self._store))
 
+    def _clear_hot_cache_if_necessary(self, key: Key) -> bool:
+        if found := self._store.get(key.key):
+            if time.time() > found.expiration:
+                del self._store[key.key]
+                self._metrics and self._metrics.gauge_set(
+                    "item_count", len(self._store)
+                )
+                return True
+        return False
+
     def get(
         self,
         key: Union[Key, str],
@@ -165,6 +181,7 @@ class ProbabilisticHotCache(ClientWrapper):
         )
         if result is None:
             allowed and self._metrics and self._metrics.metric_inc("candidate_misses")
+            is_hot and self._clear_hot_cache_if_necessary(key)
             return None
         else:
             self._store_in_hot_cache_if_necessary(key, result, is_hot, allowed)
@@ -204,6 +221,7 @@ class ProbabilisticHotCache(ClientWrapper):
                     allowed and self._metrics and self._metrics.metric_inc(
                         "candidate_misses"
                     )
+                    is_hot and self._clear_hot_cache_if_necessary(key)
                     values[key] = None
                 else:
                     if allowed:
