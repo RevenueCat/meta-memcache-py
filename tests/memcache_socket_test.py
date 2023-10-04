@@ -108,6 +108,15 @@ def test_noreply(
     assert isinstance(ms.get_response(), Success)
 
 
+def test_socket_closed(
+    fake_socket: socket.socket,
+) -> None:
+    fake_socket.recv_into.side_effect = recv_into_mock([b""])
+    ms = MemcacheSocket(fake_socket)
+    with pytest.raises(MemcacheError):
+        ms.get_response()
+
+
 def test_get_value(
     fake_socket: socket.socket,
 ) -> None:
