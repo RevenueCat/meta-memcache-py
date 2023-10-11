@@ -147,7 +147,7 @@ def test_get_without_prefixes(
     time.time.return_value = 120
 
     # mimic cache error, so we can see the hot cache extended by the winner thread
-    originsl_meta_get = client.meta_get.side_effect
+    original_meta_get = client.meta_get.side_effect
     client.meta_get.side_effect = MemcacheError("mimic cache error")
 
     with pytest.raises(MemcacheError):
@@ -181,7 +181,7 @@ def test_get_without_prefixes(
     client.meta_get.reset_mock()
 
     # restore the original meta_get, and check hot cache is again updated and used
-    client.meta_get.side_effect = originsl_meta_get
+    client.meta_get.side_effect = original_meta_get
 
     assert hot_cache.get(key="foo_hot") == 1
     assert store.get("foo_hot") == CachedValue(value=1, expiration=190, extended=False)
@@ -196,7 +196,7 @@ def test_get_without_prefixes(
         "test_hot_cache_misses": 8,
         "test_hot_cache_skips": 0,
         "test_hot_cache_item_count": 1,
-        "test_hot_cache_hot_candidates": 1,
+        "test_hot_cache_hot_candidates": 2,
         "test_hot_cache_hot_skips": 0,
         "test_hot_cache_candidate_misses": 0,
     }
@@ -324,6 +324,9 @@ def test_multi_get(
     client: Mock,
 ) -> None:
     store = {}
+    metrics_collector = PrometheusMetricsCollector(
+        namespace="test", registry=CollectorRegistry()
+    )
     hot_cache = ProbabilisticHotCache(
         client=client,
         store=store,
@@ -332,6 +335,7 @@ def test_multi_get(
         probability_factor=1,
         max_stale_while_revalidate_seconds=10,
         allowed_prefixes=["allowed:"],
+        metrics_collector=metrics_collector,
     )
 
     time.time.return_value = 0
@@ -393,3 +397,130 @@ def test_multi_get(
         ],
         **DEFAULT_FLAGS,
     )
+    assert metrics_collector.get_counters() == {
+        "test_hot_cache_hits": 1,
+        "test_hot_cache_misses": 5,
+        "test_hot_cache_skips": 6,
+        "test_hot_cache_item_count": 1,
+        "test_hot_cache_hot_candidates": 1,
+        "test_hot_cache_hot_skips": 2,
+        "test_hot_cache_candidate_misses": 2,
+    }
+
+
+def test_hot_miss_invalidates_hot_cache(
+    time: Mock,
+    client: Mock,
+) -> None:
+    store = {}
+    metrics_collector = PrometheusMetricsCollector(
+        namespace="test", registry=CollectorRegistry()
+    )
+    hot_cache = ProbabilisticHotCache(
+        client=client,
+        store=store,
+        cache_ttl=60,
+        max_last_access_age_seconds=10,
+        probability_factor=1,
+        max_stale_while_revalidate_seconds=10,
+        allowed_prefixes=None,
+        metrics_collector=metrics_collector,
+    )
+
+    time.time.return_value = 0
+
+    # Request a key that is hot, it is stored in the hot cache
+    assert hot_cache.get(key="foo_hot") == 1
+    assert store.get("foo_hot") == CachedValue(value=1, expiration=60, extended=False)
+    client.meta_get.assert_called_once_with(key=Key(key="foo_hot"), **DEFAULT_FLAGS)
+    client.meta_get.reset_mock()
+
+    # Time goes by
+    time.time.return_value = 60
+
+    # mimic cache miss, so we can see the hot cache extended by the winner thread
+    client.meta_get.side_effect = lambda *args, **kwargs: Miss()
+
+    # First call gets the miss, extends the hot cache and returns None
+    assert hot_cache.get(key="foo_hot") is None
+    assert store.get("foo_hot") == CachedValue(value=1, expiration=70, extended=True)
+    client.meta_get.assert_called_once_with(key=Key(key="foo_hot"), **DEFAULT_FLAGS)
+    client.meta_get.reset_mock()
+
+    # Second call gets the cached Value, that hasn't been cleared from hot cache
+    assert hot_cache.get(key="foo_hot") == 1
+    assert store.get("foo_hot") == CachedValue(value=1, expiration=70, extended=True)
+    client.meta_get.assert_not_called()
+    client.meta_get.reset_mock()
+
+    # Time goes by
+    time.time.return_value = 71
+
+    # If the origin cache is still miss, the value will be cleared from hot cache
+    assert hot_cache.get(key="foo_hot") is None
+    assert store.get("foo_hot") is None
+    client.meta_get.assert_called_once_with(key=Key(key="foo_hot"), **DEFAULT_FLAGS)
+    client.meta_get.reset_mock()
+
+    assert metrics_collector.get_counters() == {
+        "test_hot_cache_hits": 1,
+        "test_hot_cache_misses": 3,
+        "test_hot_cache_skips": 0,
+        "test_hot_cache_item_count": 0,
+        "test_hot_cache_hot_candidates": 1,
+        "test_hot_cache_hot_skips": 0,
+        "test_hot_cache_candidate_misses": 2,
+    }
+
+
+def test_stale_expires(
+    time: Mock,
+    client: Mock,
+) -> None:
+    store = {}
+    metrics_collector = PrometheusMetricsCollector(
+        namespace="test", registry=CollectorRegistry()
+    )
+    hot_cache = ProbabilisticHotCache(
+        client=client,
+        store=store,
+        cache_ttl=60,
+        max_last_access_age_seconds=10,
+        probability_factor=1,
+        max_stale_while_revalidate_seconds=10,
+        allowed_prefixes=None,
+        metrics_collector=metrics_collector,
+    )
+
+    time.time.return_value = 0
+
+    # Request a key that is hot, it is stored in the hot cache
+    assert hot_cache.get(key="foo_hot") == 1
+    assert store.get("foo_hot") == CachedValue(value=1, expiration=60, extended=False)
+    client.meta_get.assert_called_once_with(key=Key(key="foo_hot"), **DEFAULT_FLAGS)
+    client.meta_get.reset_mock()
+
+    # Time goes by
+    time.time.return_value = 10
+    assert hot_cache.get(key="foo_hot") == 1
+    assert store.get("foo_hot") == CachedValue(value=1, expiration=60, extended=False)
+    client.meta_get.assert_not_called()
+    client.meta_get.reset_mock()
+
+    # Time goes by so much that the item will expire
+    time.time.return_value = 300
+    # And the item is no longer hot
+    client.meta_get.side_effect = lambda *args, **kwargs: Value(
+        size=1,
+        value=1,
+        int_flags={
+            IntFlag.HIT_AFTER_WRITE: 1,
+            IntFlag.LAST_READ_AGE: 9999,
+        },
+    )
+
+    # The item will no longer be in the hot cache
+    assert hot_cache.get(key="foo_hot") == 1
+    assert store.get("foo_hot") is None
+    client.meta_get.assert_called_once_with(key=Key(key="foo_hot"), **DEFAULT_FLAGS)
+    client.meta_get.reset_mock()
