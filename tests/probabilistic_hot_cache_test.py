@@ -290,6 +290,60 @@ def test_get_prefixes(
     }
 
 
+def test_multi_get_prefixes(
+    time: Mock,
+    client: Mock,
+) -> None:
+    store = {}
+    metrics_collector = PrometheusMetricsCollector(
+        namespace="test", registry=CollectorRegistry()
+    )
+    hot_cache = ProbabilisticHotCache(
+        client=client,
+        store=store,
+        cache_ttl=60,
+        max_last_access_age_seconds=10,
+        probability_factor=1,
+        max_stale_while_revalidate_seconds=10,
+        allowed_prefixes=["allowed:", "also_allowed:"],
+        metrics_collector=metrics_collector,
+    )
+
+    time.time.return_value = 0
+
+    assert hot_cache.multi_get(keys=["allowed:hot"]) == {Key(key="allowed:hot"): 1}
+    assert hot_cache.multi_get(keys=["allowed:cold"]) == {Key(key="allowed:cold"): 1}
+    assert hot_cache.multi_get(keys=["allowed:miss"]) == {Key(key="allowed:miss"): None}
+    assert hot_cache.multi_get(keys=["hot"]) == {Key(key="hot"): 1}
+    assert hot_cache.multi_get(keys=["cold"]) == {Key(key="cold"): 1}
+    assert hot_cache.multi_get(keys=["miss"]) == {Key(key="miss"): None}
+    assert "allowed:hot" in store
+    assert "allowed:cold" not in store
+    assert "allowed:miss" not in store
+    assert "hot" not in store
+    assert "cold" not in store
+    assert "miss" not in store
+
+    store.clear()
+
+    assert hot_cache.multi_get(
+        keys=["allowed:hot", "allowed:cold", "allowed:miss", "hot", "cold", "miss"]
+    ) == {
+        Key(key="allowed:hot"): 1,
+        Key(key="allowed:cold"): 1,
+        Key(key="allowed:miss"): None,
+        Key(key="hot"): 1,
+        Key(key="cold"): 1,
+        Key(key="miss"): None,
+    }
+    assert "allowed:hot" in store
+    assert "allowed:cold" not in store
+    assert "allowed:miss" not in store
+    assert "hot" not in store
+    assert "cold" not in store
+    assert "miss" not in store
+
+
 def test_random_factor(
     time: Mock,
     random: Mock,
@@ -431,45 +485,117 @@ def test_hot_miss_invalidates_hot_cache(
 
     # Request a key that is hot, it is stored in the hot cache
     assert hot_cache.get(key="foo_hot") == 1
+    assert hot_cache.multi_get(["multi_hot", "multi_cold"]) == {
+        Key("multi_hot"): 1,
+        Key("multi_cold"): 1,
+    }
+    assert hot_cache.multi_get(["one_hot", "two_hot"]) == {
+        Key("one_hot"): 1,
+        Key("two_hot"): 1,
+    }
     assert store.get("foo_hot") == CachedValue(value=1, expiration=60, extended=False)
+    assert store.get("multi_hot") == CachedValue(value=1, expiration=60, extended=False)
+    assert store.get("multi_cold") is None
+    assert store.get("one_hot") == CachedValue(value=1, expiration=60, extended=False)
+    assert store.get("two_hot") == CachedValue(value=1, expiration=60, extended=False)
     client.meta_get.assert_called_once_with(key=Key(key="foo_hot"), **DEFAULT_FLAGS)
+    client.meta_multiget.assert_any_call(
+        keys=[Key(key="multi_hot"), Key(key="multi_cold")], **DEFAULT_FLAGS
+    )
+    client.meta_multiget.assert_any_call(
+        keys=[Key(key="one_hot"), Key(key="two_hot")], **DEFAULT_FLAGS
+    )
     client.meta_get.reset_mock()
+    client.meta_multiget.reset_mock()
 
     # Time goes by
     time.time.return_value = 60
 
     # mimic cache miss, so we can see the hot cache extended by the winner thread
     client.meta_get.side_effect = lambda *args, **kwargs: Miss()
+    client.meta_multiget.side_effect = lambda keys, *args, **kwargs: {
+        key: Miss() for key in keys
+    }
 
     # First call gets the miss, extends the hot cache and returns None
     assert hot_cache.get(key="foo_hot") is None
+    assert hot_cache.multi_get(["multi_hot", "multi_cold"]) == {
+        Key("multi_hot"): None,
+        Key("multi_cold"): None,
+    }
+    assert hot_cache.multi_get(["one_hot", "two_hot"]) == {
+        Key("one_hot"): None,
+        Key("two_hot"): None,
+    }
     assert store.get("foo_hot") == CachedValue(value=1, expiration=70, extended=True)
     client.meta_get.assert_called_once_with(key=Key(key="foo_hot"), **DEFAULT_FLAGS)
+    client.meta_multiget.assert_any_call(
+        keys=[Key(key="multi_hot"), Key(key="multi_cold")], **DEFAULT_FLAGS
+    )
+    client.meta_multiget.assert_any_call(
+        keys=[Key(key="one_hot"), Key(key="two_hot")], **DEFAULT_FLAGS
+    )
     client.meta_get.reset_mock()
+    client.meta_multiget.reset_mock()
 
     # Second call gets the cached Value, that hasn't been cleared from hot cache
     assert hot_cache.get(key="foo_hot") == 1
+    assert hot_cache.multi_get(["multi_hot", "multi_cold"]) == {
+        Key("multi_hot"): 1,
+        Key("multi_cold"): None,
+    }
+    assert hot_cache.multi_get(["one_hot", "two_hot"]) == {
+        Key("one_hot"): 1,
+        Key("two_hot"): 1,
+    }
     assert store.get("foo_hot") == CachedValue(value=1, expiration=70, extended=True)
+    assert store.get("multi_hot") == CachedValue(value=1, expiration=70, extended=True)
+    assert store.get("multi_cold") is None
+    assert store.get("one_hot") == CachedValue(value=1, expiration=70, extended=True)
+    assert store.get("two_hot") == CachedValue(value=1, expiration=70, extended=True)
     client.meta_get.assert_not_called()
+    client.meta_multiget.assert_called_once_with(
+        keys=[Key(key="multi_cold")], **DEFAULT_FLAGS
+    )
     client.meta_get.reset_mock()
+    client.meta_multiget.reset_mock()
 
     # Time goes by
     time.time.return_value = 71
 
     # If the origin cache is still miss, the value will be cleared from hot cache
     assert hot_cache.get(key="foo_hot") is None
+    assert hot_cache.multi_get(["multi_hot", "multi_cold"]) == {
+        Key("multi_hot"): None,
+        Key("multi_cold"): None,
+    }
+    assert hot_cache.multi_get(["one_hot", "two_hot"]) == {
+        Key("one_hot"): None,
+        Key("two_hot"): None,
+    }
     assert store.get("foo_hot") is None
+    assert store.get("multi_hot") is None
+    assert store.get("multi_cold") is None
+    assert store.get("one_hot") is None
+    assert store.get("two_hot") is None
     client.meta_get.assert_called_once_with(key=Key(key="foo_hot"), **DEFAULT_FLAGS)
+    client.meta_multiget.assert_any_call(
+        keys=[Key(key="multi_hot"), Key(key="multi_cold")], **DEFAULT_FLAGS
+    )
+    client.meta_multiget.assert_any_call(
+        keys=[Key(key="one_hot"), Key(key="two_hot")], **DEFAULT_FLAGS
+    )
     client.meta_get.reset_mock()
+    client.meta_multiget.reset_mock()
 
     assert metrics_collector.get_counters() == {
-        "test_hot_cache_hits": 1,
-        "test_hot_cache_misses": 3,
+        "test_hot_cache_hits": 4,
+        "test_hot_cache_misses": 16,
         "test_hot_cache_skips": 0,
         "test_hot_cache_item_count": 0,
-        "test_hot_cache_hot_candidates": 1,
+        "test_hot_cache_hot_candidates": 4,
         "test_hot_cache_hot_skips": 0,
-        "test_hot_cache_candidate_misses": 2,
+        "test_hot_cache_candidate_misses": 11,
     }
 
 
