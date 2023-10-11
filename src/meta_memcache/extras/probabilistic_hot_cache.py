@@ -217,6 +217,7 @@ class ProbabilisticHotCache(ClientWrapper):
             )
             for key, result in results.items():
                 allowed = key not in ineligible_keys
+                is_hot = key in values if allowed else False
                 if result is None:
                     allowed and self._metrics and self._metrics.metric_inc(
                         "candidate_misses"
@@ -224,10 +225,6 @@ class ProbabilisticHotCache(ClientWrapper):
                     is_hot and self._clear_hot_cache_if_necessary(key)
                     values[key] = None
                 else:
-                    if allowed:
-                        is_hot = key in values
-                    else:
-                        is_hot = False
                     self._store_in_hot_cache_if_necessary(key, result, is_hot, allowed)
                     values[key] = result.value
         return values
