@@ -19,6 +19,31 @@ class HighLevelCommandsProtocol(Protocol):
     ) -> bool:
         ...  # pragma: no cover
 
+    def refill(
+        self,
+        key: Union[Key, str],
+        value: Any,
+        ttl: int,
+        no_reply: bool = False,
+    ) -> bool:
+        """
+        Try to refill a value.
+
+        Use this method when you got a cache miss, read from DB and
+        are trying to refill the value.
+
+        DO NOT USE to write new state.
+
+        It will:
+         * use "ADD" mode, so it will fail if the value is already
+           present in cache.
+         * It will also disable write failure tracking. The write
+           failure tracking is often used to invalidate keys that
+           fail to be written. Since this is not writting new state,
+           there is no need to track failures.
+        """
+        ...  # pragma: no cover
+
     def delete(
         self,
         key: Union[Key, str],

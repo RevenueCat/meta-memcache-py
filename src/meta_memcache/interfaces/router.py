@@ -1,8 +1,8 @@
-from typing import Dict, List, Optional, Protocol, Set
+from typing import Dict, List, NamedTuple, Optional, Protocol, Set
+
 from meta_memcache.configuration import ServerAddress
 from meta_memcache.connection.pool import PoolCounters
 from meta_memcache.interfaces.executor import Executor
-
 from meta_memcache.protocol import (
     Flag,
     IntFlag,
@@ -15,6 +15,19 @@ from meta_memcache.protocol import (
 )
 
 
+class FailureHandling(NamedTuple):
+    """
+    Override the default failure handling for a execution
+    """
+
+    # None means use the default for the pool
+    raise_on_server_error: Optional[bool] = None
+    track_write_failures: bool = True
+
+
+DEFAULT_FAILURE_HANDLING = FailureHandling()
+
+
 class Router(Protocol):
     def exec(
         self,
@@ -24,6 +37,7 @@ class Router(Protocol):
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> MemcacheResponse:
         """
         Gets a connection for the key and executes the command
@@ -41,6 +55,7 @@ class Router(Protocol):
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> Dict[Key, MemcacheResponse]:
         """
         Groups keys by destination, gets a connection and executes the commands

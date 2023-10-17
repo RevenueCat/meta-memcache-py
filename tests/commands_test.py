@@ -3,15 +3,11 @@ import zlib
 from dataclasses import dataclass
 from typing import Callable
 from unittest.mock import MagicMock, call
-from meta_memcache.base.base_serializer import EncodedValue
-from meta_memcache.connection.providers import HostConnectionPoolProvider
-from meta_memcache.executors.default import DefaultExecutor
-from meta_memcache.routers.default import DefaultRouter
+from meta_memcache.interfaces.router import FailureHandling
 
 import pytest
-from pytest_mock import MockerFixture
-
 from meta_memcache import CacheClient, Key, MemcacheError, SetMode
+from meta_memcache.base.base_serializer import EncodedValue
 from meta_memcache.configuration import (
     LeasePolicy,
     RecachePolicy,
@@ -21,7 +17,13 @@ from meta_memcache.configuration import (
 )
 from meta_memcache.connection.memcache_socket import MemcacheSocket
 from meta_memcache.connection.pool import ConnectionPool
+from meta_memcache.connection.providers import HostConnectionPoolProvider
 from meta_memcache.errors import MemcacheServerError
+from meta_memcache.events.write_failure_event import WriteFailureEvent
+from meta_memcache.executors.default import DefaultExecutor
+from meta_memcache.extras.client_wrapper import ClientWrapper
+from meta_memcache.interfaces.cache_api import CacheApi
+from meta_memcache.interfaces.meta_commands import MetaCommandsProtocol
 from meta_memcache.protocol import (
     Flag,
     IntFlag,
@@ -29,9 +31,12 @@ from meta_memcache.protocol import (
     NotStored,
     ServerVersion,
     Success,
+    TokenFlag,
     Value,
 )
+from meta_memcache.routers.default import DefaultRouter
 from meta_memcache.serializer import MixedSerializer
+from pytest_mock import MockerFixture
 
 
 @dataclass
@@ -94,6 +99,18 @@ def get_test_cache_client(
         executor=executor,
     )
     return CacheClient(router=router)
+
+
+@pytest.fixture
+def meta_command_mock(mocker: MockerFixture) -> MagicMock:
+    result = mocker.MagicMock(spec=MetaCommandsProtocol)
+    result.on_write_failure = WriteFailureEvent()
+    return result
+
+
+@pytest.fixture
+def cache_client_with_mocked_meta_commands(meta_command_mock: MagicMock) -> CacheApi:
+    return ClientWrapper(meta_command_mock)
 
 
 @pytest.fixture
@@ -281,6 +298,22 @@ def test_set_success_fail(
     memcache_socket.get_response.return_value = NotStored()
     result = cache_client.set(key=Key("foo"), value="bar", ttl=300)
     assert result is False
+
+
+def test_refill(
+    cache_client_with_mocked_meta_commands: CacheApi, meta_command_mock: MagicMock
+) -> None:
+    meta_command_mock.meta_set.return_value = Success()
+    cache_client_with_mocked_meta_commands.refill(key="foo", value="bar", ttl=300)
+    meta_command_mock.meta_set.assert_called_once_with(
+        key=Key(key="foo"),
+        value="bar",
+        ttl=300,
+        flags=set(),
+        int_flags={IntFlag.CACHE_TTL: 300},
+        token_flags={TokenFlag.MODE: SetMode.ADD.value},
+        failure_handling=FailureHandling(track_write_failures=False),
+    )
 
 
 def test_delete_cmd(
@@ -1051,6 +1084,40 @@ def test_on_write_failure_for_multi_ops(
         assert "uh-oh" in str(e)
     assert len(failures_tracked) == 2
     failures_tracked.clear()
+
+
+def test_on_write_failure_disabled(
+    cache_client: CacheClient,
+    connection_pool: ConnectionPool,
+) -> None:
+    failures_tracked: list[Key] = []
+    on_failure: Callable[[Key], None] = lambda key: failures_tracked.append(key)
+    cache_client.on_write_failure += on_failure
+
+    connection_pool.get_connection.side_effect = MemcacheServerError(
+        server="broken:11211", message="uh-oh"
+    )
+    try:
+        cache_client.meta_delete(
+            key=Key("foo"),
+            failure_handling=FailureHandling(track_write_failures=False),
+        )
+        raise AssertionError("Should not be reached")
+    except MemcacheServerError as e:
+        assert "uh-oh" in str(e)
+    assert len(failures_tracked) == 0
+
+    try:
+        cache_client.meta_set(
+            key=Key("foo"),
+            value=1,
+            ttl=10,
+            failure_handling=FailureHandling(track_write_failures=False),
+        )
+        raise AssertionError("Should not be reached")
+    except MemcacheServerError as e:
+        assert "uh-oh" in str(e)
+    assert len(failures_tracked) == 0
 
 
 def test_write_failure_not_raise_on_server_error(

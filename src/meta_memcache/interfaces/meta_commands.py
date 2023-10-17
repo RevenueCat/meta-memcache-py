@@ -1,6 +1,6 @@
-from typing import Protocol
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Protocol, Set
 
+from meta_memcache.interfaces.router import FailureHandling, DEFAULT_FAILURE_HANDLING
 from meta_memcache.protocol import (
     Flag,
     IntFlag,
@@ -18,6 +18,7 @@ class MetaCommandsProtocol(Protocol):
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> Dict[Key, ReadResponse]:
         ...  # pragma: no cover
 
@@ -27,6 +28,7 @@ class MetaCommandsProtocol(Protocol):
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> ReadResponse:
         ...  # pragma: no cover
 
@@ -38,6 +40,7 @@ class MetaCommandsProtocol(Protocol):
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> WriteResponse:
         ...  # pragma: no cover
 
@@ -47,6 +50,7 @@ class MetaCommandsProtocol(Protocol):
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> WriteResponse:
         ...  # pragma: no cover
 
@@ -56,5 +60,6 @@ class MetaCommandsProtocol(Protocol):
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> WriteResponse:
         ...  # pragma: no cover

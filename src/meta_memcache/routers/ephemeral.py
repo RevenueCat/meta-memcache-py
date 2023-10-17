@@ -2,6 +2,7 @@ from typing import Dict, List, Optional, Set
 
 from meta_memcache.connection.providers import ConnectionPoolProvider
 from meta_memcache.interfaces.executor import Executor
+from meta_memcache.interfaces.router import DEFAULT_FAILURE_HANDLING, FailureHandling
 from meta_memcache.protocol import (
     Flag,
     IntFlag,
@@ -54,6 +55,7 @@ class EphemeralRouter(DefaultRouter):
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> MemcacheResponse:
         return super().exec(
             command=command,
@@ -62,6 +64,7 @@ class EphemeralRouter(DefaultRouter):
             flags=flags,
             int_flags=adjust_int_flags_for_max_ttl(int_flags, self._max_ttl),
             token_flags=token_flags,
+            failure_handling=failure_handling,
         )
 
     def exec_multi(
@@ -72,6 +75,7 @@ class EphemeralRouter(DefaultRouter):
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> Dict[Key, MemcacheResponse]:
         return super().exec_multi(
             command=command,
@@ -80,4 +84,5 @@ class EphemeralRouter(DefaultRouter):
             flags=flags,
             int_flags=adjust_int_flags_for_max_ttl(int_flags, self._max_ttl),
             token_flags=token_flags,
+            failure_handling=failure_handling,
         )
