@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum, IntEnum
-from typing import Any, Dict, List, NamedTuple, Optional, Set, Union
+from typing import Any, Dict, List, Optional, Set, Union
 
 ENDL = b"\r\n"
 NOOP: bytes = b"mn" + ENDL
@@ -8,10 +8,25 @@ ENDL_LEN = 2
 SPACE: int = ord(" ")
 
 
-class Key(NamedTuple):
+@dataclass
+class Key:
+    __slots__ = ("key", "routing_key", "is_unicode")
     key: str
-    routing_key: Optional[str] = None
-    is_unicode: bool = False
+    routing_key: Optional[str]
+    is_unicode: bool
+
+    def __init__(
+        self,
+        key: str,
+        routing_key: Optional[str] = None,
+        is_unicode: bool = False,
+    ) -> None:
+        self.key = key
+        self.routing_key = routing_key
+        self.is_unicode = is_unicode
+
+    def __hash__(self) -> int:
+        return hash((self.key, self.routing_key))
 
 
 class MetaCommand(Enum):
@@ -84,16 +99,19 @@ int_flags_values: Dict[int, IntFlag] = {f.value[0]: f for f in IntFlag}
 token_flags_values: Dict[int, TokenFlag] = {f.value[0]: f for f in TokenFlag}
 
 
+@dataclass
 class MemcacheResponse:
-    pass
+    __slots__ = ()
 
 
+@dataclass
 class Miss(MemcacheResponse):
-    pass
+    __slots__ = ()
 
 
 @dataclass
 class Success(MemcacheResponse):
+    __slots__ = ("flags", "int_flags", "token_flags")
     flags: Set[Flag]
     int_flags: Dict[IntFlag, int]
     token_flags: Dict[TokenFlag, bytes]
@@ -111,6 +129,7 @@ class Success(MemcacheResponse):
 
 @dataclass
 class Value(Success):
+    __slots__ = ("flags", "int_flags", "token_flags", "size", "value")
     size: int
     value: Optional[Any]
 
@@ -127,7 +146,9 @@ class Value(Success):
         self.value = value
 
 
-class ValueContainer(NamedTuple):
+@dataclass
+class ValueContainer:
+    __slots__ = ("value",)
     value: Any
 
 
@@ -137,12 +158,12 @@ MaybeValues = Optional[List[ValueContainer]]
 
 @dataclass
 class NotStored(MemcacheResponse):
-    pass
+    __slots__ = ()
 
 
 @dataclass
 class Conflict(MemcacheResponse):
-    pass
+    __slots__ = ()
 
 
 ReadResponse = Union[Miss, Value, Success]

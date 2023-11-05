@@ -21,6 +21,9 @@ from meta_memcache.protocol import (
 )
 
 _log: logging.Logger = logging.getLogger(__name__)
+NOT_STORED = NotStored()
+MISS = Miss()
+CONFLICT = Conflict()
 
 
 class MemcacheSocket:
@@ -224,15 +227,15 @@ class MemcacheSocket:
                 self._add_flags(result, chunks)
             elif response_code == b"NS":
                 # Value response, parse size and flags
-                result = NotStored()
+                result = NOT_STORED
                 assert len(chunks) == 0  # noqa: S101
             elif response_code == b"EX":
                 # Already exists, not changed, CAS conflict
-                result = Conflict()
+                result = CONFLICT
                 assert len(chunks) == 0  # noqa: S101
             elif response_code == b"EN" or response_code == b"NF":
                 # Not Found, Miss.
-                result = Miss()
+                result = MISS
                 assert len(chunks) == 0  # noqa: S101
             else:
                 raise MemcacheError(f"Unknown response: {bytes(response_code)!r}")
