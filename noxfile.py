@@ -6,6 +6,7 @@ package = "meta_memcache"
 nox.options.sessions = "lint", "types", "tests"
 locations = "src", "tests", "noxfile.py"
 DEFAULT_VERSION = "3.8"
+DEFAULT_BENCHMARK_VERSION = "3.11"
 VERSIONS = ["3.8", "3.11"]
 
 
@@ -54,3 +55,15 @@ def tests(session: Session) -> None:
         "pytest-mock",
     )
     session.run("pytest", *args, env={"PYTHONHASHSEED": "0"})
+
+
+@session(python=DEFAULT_BENCHMARK_VERSION)
+def benchmark(session: Session) -> None:
+    """Run the benchmark suite."""
+    args = session.posargs
+    session.run("poetry", "install", "--with", "extras", external=True)
+    session.install(
+        "click",
+    )
+    session.run("python", "--version")
+    session.run("python", "benchmark.py", *args)
