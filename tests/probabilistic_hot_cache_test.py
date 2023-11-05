@@ -85,7 +85,7 @@ DEFAULT_FLAGS = {
         Flag.RETURN_FETCHED,
         Flag.RETURN_CLIENT_FLAG,
     },
-    "int_flags": {},
+    "int_flags": None,
     "token_flags": None,
     "failure_handling": DEFAULT_FAILURE_HANDLING,
 }
