@@ -1,4 +1,5 @@
 from typing import Dict, List, Protocol
+import zlib
 
 from uhashring import HashRing  # type: ignore
 
@@ -43,6 +44,25 @@ class HashRingConnectionPoolProvider:
     def get_pool(self, key: Key) -> ConnectionPool:
         routing_key = key.routing_key or key.key
         server: ServerAddress = self._ring.get_node(routing_key)
+        return self._server_pool[server]
+
+    def get_counters(self) -> Dict[ServerAddress, PoolCounters]:
+        return {
+            server: pool.get_counters() for server, pool in self._server_pool.items()
+        }
+
+
+class NonConsistentHashPoolProvider:
+    def __init__(self, server_pool: Dict[ServerAddress, ConnectionPool]) -> None:
+        self._server_pool = server_pool
+        self._server_count = len(server_pool)
+        self._servers: List[ServerAddress] = [x for x in server_pool.keys()]
+
+    def get_pool(self, key: Key) -> ConnectionPool:
+        routing_key = key.routing_key or key.key
+        server: ServerAddress = self._servers[
+            zlib.crc32(routing_key.encode()) % self._server_count
+        ]
         return self._server_pool[server]
 
     def get_counters(self) -> Dict[ServerAddress, PoolCounters]:
