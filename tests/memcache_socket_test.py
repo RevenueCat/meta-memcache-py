@@ -8,13 +8,10 @@ from meta_memcache.connection.memcache_socket import MemcacheSocket
 from meta_memcache.errors import MemcacheError
 from meta_memcache.protocol import (
     Conflict,
-    Flag,
-    IntFlag,
     Miss,
     NotStored,
     ServerVersion,
     Success,
-    TokenFlag,
     Value,
 )
 
@@ -70,11 +67,11 @@ def test_get_response(
     ms = MemcacheSocket(fake_socket)
     result = ms.get_response()
     assert isinstance(result, Success)
-    assert result.int_flags == {IntFlag.RETURNED_CAS_TOKEN: 1}
+    assert result.cas_token == 1
 
     result = ms.get_response()
     assert isinstance(result, Value)
-    assert result.int_flags == {IntFlag.RETURNED_CAS_TOKEN: 1}
+    assert result.cas_token == 1
     assert result.size == 2
 
 
@@ -87,11 +84,11 @@ def test_get_response_1_6_6(
     ms = MemcacheSocket(fake_socket, version=ServerVersion.AWS_1_6_6)
     result = ms.get_response()
     assert isinstance(result, Success)
-    assert result.int_flags == {IntFlag.RETURNED_CAS_TOKEN: 1}
+    assert result.cas_token == 1
 
     result = ms.get_response()
     assert isinstance(result, Value)
-    assert result.int_flags == {IntFlag.RETURNED_CAS_TOKEN: 1}
+    assert result.cas_token == 1
     assert result.size == 2
 
 
@@ -124,7 +121,7 @@ def test_get_value(
     ms = MemcacheSocket(fake_socket)
     result = ms.get_response()
     assert isinstance(result, Value)
-    assert result.int_flags == {IntFlag.RETURNED_CAS_TOKEN: 1}
+    assert result.cas_token == 1
     assert result.size == 2
     ms.get_value(2)
 
@@ -138,9 +135,9 @@ def test_get_value_large(
     ms = MemcacheSocket(fake_socket, buffer_size=100)
     result = ms.get_response()
     assert isinstance(result, Value)
-    assert result.int_flags == {IntFlag.RETURNED_CAS_TOKEN: 1}
-    assert result.flags == set([Flag.WIN])
-    assert result.token_flags == {TokenFlag.OPAQUE: b"xxx"}
+    assert result.cas_token == 1
+    assert result.win is True
+    assert result.opaque == b"xxx"
     assert result.size == 200
     value = ms.get_value(result.size)
     assert len(value) == result.size
@@ -225,7 +222,8 @@ def test_reset_buffer(
     assert len(value) == result.size
     assert value == b"1234567890" * 5
     ms._reset_buffer()
-    assert ms._pos == len(data) // 2
+    assert ms._pos == 0
+
     result = ms.get_response()
     value = ms.get_value(result.size)
     assert len(value) == result.size

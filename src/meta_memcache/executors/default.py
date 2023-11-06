@@ -252,12 +252,12 @@ class DefaultExecutor:
         Read response on a connection
         """
         if flags and Flag.NOREPLY in flags:
-            return Success(flags=set([Flag.NOREPLY]))
+            return Success()
         result = conn.get_response()
         if isinstance(result, Value):
             data = conn.get_value(result.size)
             if result.size > 0:
-                encoding_id = result.int_flags.get(IntFlag.CLIENT_FLAG, 0)
+                encoding_id = result.client_flag or 0
                 try:
                     result.value = self._serializer.unserialize(data, encoding_id)
                 except Exception:

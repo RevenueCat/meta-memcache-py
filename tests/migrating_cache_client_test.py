@@ -74,17 +74,13 @@ def _set_cache_client_mock_get_return_values(client: Mock, ttl: int = 10) -> Non
     client.meta_get.return_value = Value(
         size=3,
         value="bar",
-        flags=set(),
-        int_flags={IntFlag.TTL: ttl},
-        token_flags={},
+        ttl=ttl,
     )
     client.meta_multiget.return_value = {
         Key(key="foo", routing_key=None, is_unicode=False): Value(
             size=3,
             value="bar",
-            flags=set(),
-            int_flags={IntFlag.TTL: ttl},
-            token_flags={},
+            ttl=ttl,
         )
     }
 

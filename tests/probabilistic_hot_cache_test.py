@@ -29,10 +29,8 @@ def client() -> Mock:
             return Value(
                 size=1,
                 value=1,
-                int_flags={
-                    IntFlag.HIT_AFTER_WRITE: 1,
-                    IntFlag.LAST_READ_AGE: 1,
-                },
+                fetched=1,
+                last_access=1,
             )
         elif key.key.endswith("miss"):
             return Miss()
@@ -40,10 +38,8 @@ def client() -> Mock:
             return Value(
                 size=1,
                 value=1,
-                int_flags={
-                    IntFlag.HIT_AFTER_WRITE: 1,
-                    IntFlag.LAST_READ_AGE: 9999,
-                },
+                fetched=1,
+                last_access=9999,
             )
 
     def meta_multiget(
@@ -643,10 +639,8 @@ def test_stale_expires(
     client.meta_get.side_effect = lambda *args, **kwargs: Value(
         size=1,
         value=1,
-        int_flags={
-            IntFlag.HIT_AFTER_WRITE: 1,
-            IntFlag.LAST_READ_AGE: 9999,
-        },
+        fetched=1,
+        last_access=9999,
     )
 
     # The item will no longer be in the hot cache
