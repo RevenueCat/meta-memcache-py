@@ -115,24 +115,29 @@ class ConnectionPool:
 
     @contextmanager
     def get_connection(self) -> Generator[MemcacheSocket, None, None]:
-        try:
-            conn = self._pool.popleft()
-        except IndexError:
-            conn = None
-
-        if conn is None:
-            conn = self._create_connection()
-
+        conn = self.pop_connection()
         try:
             yield conn
         except Exception as e:
+            self.release_connection(conn, error=True)
+            raise MemcacheServerError(self.server, "Memcache error") from e
+        else:
+            self.release_connection(conn, error=False)
+
+    def pop_connection(self) -> MemcacheSocket:
+        try:
+            return self._pool.popleft()
+        except IndexError:
+            return self._create_connection()
+
+    def release_connection(self, conn: MemcacheSocket, error: bool) -> None:
+        if error:
             # Errors, assume connection is in bad state
             _log.warning(
                 "Error during cache conn context (discarding connection)",
                 exc_info=True,
             )
             self._discard_connection(conn, error=True)
-            raise MemcacheServerError(self.server, "Memcache error") from e
         else:
             if len(self._pool) < self._max_pool_size:
                 # If there is a race, the  deque might end with more than
