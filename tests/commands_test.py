@@ -68,7 +68,7 @@ def connection_pool(
     mocker: MockerFixture, memcache_socket: MemcacheSocket
 ) -> ConnectionPool:
     connection_pool = mocker.MagicMock(spec=ConnectionPool)
-    connection_pool.get_connection().__enter__.return_value = memcache_socket
+    connection_pool.pop_connection.return_value = memcache_socket
     return connection_pool
 
 
@@ -77,7 +77,7 @@ def connection_pool_1_6_6(
     mocker: MockerFixture, memcache_socket_1_6_6: MemcacheSocket
 ) -> ConnectionPool:
     connection_pool = mocker.MagicMock(spec=ConnectionPool)
-    connection_pool.get_connection().__enter__.return_value = memcache_socket_1_6_6
+    connection_pool.pop_connection.return_value = memcache_socket_1_6_6
     return connection_pool
 
 
@@ -999,7 +999,7 @@ def test_on_write_failure(
     on_failure: Callable[[Key], None] = lambda key: failures_tracked.append(key)
     cache_client.on_write_failure += on_failure
 
-    connection_pool.get_connection.side_effect = MemcacheServerError(
+    connection_pool.pop_connection.side_effect = MemcacheServerError(
         server="broken:11211", message="uh-oh"
     )
     try:
@@ -1029,7 +1029,7 @@ def test_on_write_failure_for_reads(
     on_failure: Callable[[Key], None] = lambda key: failures_tracked.append(key)
     cache_client.on_write_failure += on_failure
 
-    connection_pool.get_connection.side_effect = MemcacheServerError(
+    connection_pool.pop_connection.side_effect = MemcacheServerError(
         server="broken:11211", message="uh-oh"
     )
     try:
@@ -1065,7 +1065,7 @@ def test_on_write_failure_for_multi_ops(
     on_failure: Callable[[Key], None] = lambda key: failures_tracked.append(key)
     cache_client.on_write_failure += on_failure
 
-    connection_pool.get_connection.side_effect = MemcacheServerError(
+    connection_pool.pop_connection.side_effect = MemcacheServerError(
         server="broken:11211", message="uh-oh"
     )
 
@@ -1094,7 +1094,7 @@ def test_on_write_failure_disabled(
     on_failure: Callable[[Key], None] = lambda key: failures_tracked.append(key)
     cache_client.on_write_failure += on_failure
 
-    connection_pool.get_connection.side_effect = MemcacheServerError(
+    connection_pool.pop_connection.side_effect = MemcacheServerError(
         server="broken:11211", message="uh-oh"
     )
     try:
@@ -1129,7 +1129,7 @@ def test_write_failure_not_raise_on_server_error(
     on_failure: Callable[[Key], None] = lambda key: failures_tracked.append(key)
     cache_client.on_write_failure += on_failure
 
-    connection_pool.get_connection.side_effect = MemcacheServerError(
+    connection_pool.pop_connection.side_effect = MemcacheServerError(
         server="broken:11211", message="uh-oh"
     )
     result = cache_client.get(key=Key("foo"))
@@ -1214,8 +1214,6 @@ def test_delta_cmd(memcache_socket: MemcacheSocket, cache_client: CacheClient) -
     )
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
-
-    # memcache_socket.get_response.return_value = Value(size=2, b"10")
 
     memcache_socket.get_response.return_value = Success()
 

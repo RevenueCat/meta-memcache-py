@@ -115,7 +115,9 @@ class DefaultExecutor:
             else self._prepare_serialized_value_and_int_flags(value, int_flags)
         )
         try:
-            with pool.get_connection() as conn:
+            conn = pool.pop_connection()
+            error = False
+            try:
                 self._conn_send_cmd(
                     conn,
                     command=command,
@@ -126,6 +128,11 @@ class DefaultExecutor:
                     token_flags=token_flags,
                 )
                 return self._conn_recv_response(conn, flags=flags)
+            except Exception as e:
+                error = True
+                raise MemcacheServerError(pool.server, "Memcache error") from e
+            finally:
+                pool.release_connection(conn, error=error)
         except MemcacheServerError:
             if track_write_failures and self._is_a_write_failure(command, int_flags):
                 self.on_write_failure(key)
@@ -141,7 +148,7 @@ class DefaultExecutor:
             else:
                 return NotStored()
 
-    def exec_multi_on_pool(
+    def exec_multi_on_pool(  # noqa: C901
         self,
         pool: ConnectionPool,
         command: MetaCommand,
@@ -154,7 +161,10 @@ class DefaultExecutor:
     ) -> Dict[Key, MemcacheResponse]:
         results: Dict[Key, MemcacheResponse] = {}
         try:
-            with pool.get_connection() as conn:
+            conn = pool.pop_connection()
+            error = False
+            try:
+                # with pool.get_connection() as conn:
                 for key, value in key_values:
                     cmd_value, int_flags = (
                         (None, int_flags)
@@ -175,6 +185,11 @@ class DefaultExecutor:
                     )
                 for key, _ in key_values:
                     results[key] = self._conn_recv_response(conn, flags=flags)
+            except Exception as e:
+                error = True
+                raise MemcacheServerError(pool.server, "Memcache error") from e
+            finally:
+                pool.release_connection(conn, error=error)
         except MemcacheServerError:
             if track_write_failures and self._is_a_write_failure(command, int_flags):
                 for key, _ in key_values:
