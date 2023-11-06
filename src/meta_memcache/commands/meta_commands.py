@@ -1,7 +1,11 @@
 from typing import Any, Dict, List, Optional, Set
 
 from meta_memcache.errors import MemcacheError
-from meta_memcache.interfaces.router import HasRouter
+from meta_memcache.interfaces.router import (
+    DEFAULT_FAILURE_HANDLING,
+    FailureHandling,
+    HasRouter,
+)
 from meta_memcache.protocol import (
     Conflict,
     Flag,
@@ -26,6 +30,7 @@ class MetaCommandsMixin:
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> Dict[Key, ReadResponse]:
         results: Dict[Key, ReadResponse] = {}
         for key, result in self.router.exec_multi(
@@ -34,6 +39,7 @@ class MetaCommandsMixin:
             flags=flags,
             int_flags=int_flags,
             token_flags=token_flags,
+            failure_handling=failure_handling,
         ).items():
             if not isinstance(result, (Miss, Value, Success)):
                 raise MemcacheError(
@@ -48,6 +54,7 @@ class MetaCommandsMixin:
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> ReadResponse:
         result = self.router.exec(
             command=MetaCommand.META_GET,
@@ -55,6 +62,7 @@ class MetaCommandsMixin:
             flags=flags,
             int_flags=int_flags,
             token_flags=token_flags,
+            failure_handling=failure_handling,
         )
         if not isinstance(result, (Miss, Value, Success)):
             raise MemcacheError(f"Unexpected response for Meta Get command: {result}")
@@ -68,6 +76,7 @@ class MetaCommandsMixin:
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> WriteResponse:
         result = self.router.exec(
             command=MetaCommand.META_SET,
@@ -76,6 +85,7 @@ class MetaCommandsMixin:
             flags=flags,
             int_flags=int_flags,
             token_flags=token_flags,
+            failure_handling=failure_handling,
         )
         if not isinstance(result, (Success, NotStored, Conflict, Miss)):
             raise MemcacheError(f"Unexpected response for Meta Set command: {result}")
@@ -87,6 +97,7 @@ class MetaCommandsMixin:
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> WriteResponse:
         result = self.router.exec(
             command=MetaCommand.META_DELETE,
@@ -94,6 +105,7 @@ class MetaCommandsMixin:
             flags=flags,
             int_flags=int_flags,
             token_flags=token_flags,
+            failure_handling=failure_handling,
         )
         if not isinstance(result, (Success, NotStored, Conflict, Miss)):
             raise MemcacheError(
@@ -107,6 +119,7 @@ class MetaCommandsMixin:
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> WriteResponse:
         result = self.router.exec(
             command=MetaCommand.META_ARITHMETIC,
@@ -114,6 +127,7 @@ class MetaCommandsMixin:
             flags=flags,
             int_flags=int_flags,
             token_flags=token_flags,
+            failure_handling=failure_handling,
         )
         if not isinstance(result, (Success, NotStored, Conflict, Miss, Value)):
             raise MemcacheError(

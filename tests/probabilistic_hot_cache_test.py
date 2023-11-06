@@ -2,6 +2,7 @@ from typing import Dict, List, Optional, Set
 from unittest.mock import Mock
 
 from prometheus_client import CollectorRegistry
+from meta_memcache.interfaces.router import DEFAULT_FAILURE_HANDLING, FailureHandling
 
 import pytest
 
@@ -22,6 +23,7 @@ def client() -> Mock:
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> ReadResponse:
         if key.key.endswith("hot"):
             return Value(
@@ -49,6 +51,7 @@ def client() -> Mock:
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> Dict[Key, ReadResponse]:
         return {key: meta_get(key=key) for key in keys}
 
@@ -84,6 +87,7 @@ DEFAULT_FLAGS = {
     },
     "int_flags": {},
     "token_flags": None,
+    "failure_handling": DEFAULT_FAILURE_HANDLING,
 }
 
 

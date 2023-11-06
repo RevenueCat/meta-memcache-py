@@ -1,10 +1,11 @@
 from collections import defaultdict
 from typing import Callable, DefaultDict, Dict, List, Optional, Set, Tuple
-from meta_memcache.configuration import ServerAddress
 
+from meta_memcache.configuration import ServerAddress
 from meta_memcache.connection.pool import ConnectionPool, PoolCounters
 from meta_memcache.connection.providers import ConnectionPoolProvider
 from meta_memcache.interfaces.executor import Executor
+from meta_memcache.interfaces.router import DEFAULT_FAILURE_HANDLING, FailureHandling
 from meta_memcache.protocol import (
     Flag,
     IntFlag,
@@ -34,6 +35,7 @@ class DefaultRouter:
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> MemcacheResponse:
         """
         Gets a connection for the key and executes the command
@@ -49,7 +51,8 @@ class DefaultRouter:
             flags=flags,
             int_flags=int_flags,
             token_flags=token_flags,
-            track_write_failures=True,
+            track_write_failures=failure_handling.track_write_failures,
+            raise_on_server_error=failure_handling.raise_on_server_error,
         )
 
     def exec_multi(
@@ -60,6 +63,7 @@ class DefaultRouter:
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> Dict[Key, MemcacheResponse]:
         """
         Groups keys by destination, gets a connection and executes the commands
@@ -76,7 +80,8 @@ class DefaultRouter:
                     flags=flags,
                     int_flags=int_flags,
                     token_flags=token_flags,
-                    track_write_failures=True,
+                    track_write_failures=failure_handling.track_write_failures,
+                    raise_on_server_error=failure_handling.raise_on_server_error,
                 )
             )
         return results

@@ -16,6 +16,7 @@ from meta_memcache.configuration import LeasePolicy, RecachePolicy, StalePolicy
 from meta_memcache.errors import MemcacheError
 from meta_memcache.interfaces.high_level_commands import HighLevelCommandsProtocol
 from meta_memcache.interfaces.meta_commands import MetaCommandsProtocol
+from meta_memcache.interfaces.router import FailureHandling
 from meta_memcache.protocol import (
     Flag,
     IntFlag,
@@ -29,6 +30,7 @@ from meta_memcache.protocol import (
 )
 
 T = TypeVar("T")
+_REFILL_FAILURE_HANDLING = FailureHandling(track_write_failures=False)
 
 
 class HighLevelCommandMixinWithMetaCommands(
@@ -103,6 +105,46 @@ class HighLevelCommandsMixin:
             flags=flags,
             int_flags=int_flags,
             token_flags=token_flags,
+        )
+
+        return isinstance(result, Success)
+
+    def refill(
+        self: HighLevelCommandMixinWithMetaCommands,
+        key: Union[Key, str],
+        value: Any,
+        ttl: int,
+        no_reply: bool = False,
+    ) -> bool:
+        """
+        Try to refill a value.
+
+        Use this method when you got a cache miss, read from DB and
+        are trying to refill the value.
+
+        DO NOT USE to write new state.
+
+        It will:
+         * use "ADD" mode, so it will fail if the value is already
+           present in cache.
+         * It will also disable write failure tracking. The write
+           failure tracking is often used to invalidate keys that
+           fail to be written. Since this is not writting new state,
+           there is no need to track failures.
+        """
+        key = key if isinstance(key, Key) else Key(key)
+        flags: Set[Flag] = set()
+        if no_reply:
+            flags.add(Flag.NOREPLY)
+
+        result = self.meta_set(
+            key=key,
+            value=value,
+            ttl=ttl,
+            flags=flags,
+            int_flags={IntFlag.CACHE_TTL: ttl},
+            token_flags={TokenFlag.MODE: SetMode.ADD.value},
+            failure_handling=_REFILL_FAILURE_HANDLING,
         )
 
         return isinstance(result, Success)

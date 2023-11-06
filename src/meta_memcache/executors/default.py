@@ -109,11 +109,6 @@ class DefaultExecutor:
         track_write_failures: bool,
         raise_on_server_error: Optional[bool] = None,
     ) -> MemcacheResponse:
-        raise_on_server_error = (
-            raise_on_server_error
-            if raise_on_server_error is not None
-            else self._raise_on_server_error
-        )
         cmd_value, int_flags = (
             (None, int_flags)
             if value is None
@@ -134,6 +129,11 @@ class DefaultExecutor:
         except MemcacheServerError:
             if track_write_failures and self._is_a_write_failure(command, int_flags):
                 self.on_write_failure(key)
+            raise_on_server_error = (
+                raise_on_server_error
+                if raise_on_server_error is not None
+                else self._raise_on_server_error
+            )
             if raise_on_server_error:
                 raise
             if command == MetaCommand.META_GET:
@@ -152,11 +152,6 @@ class DefaultExecutor:
         track_write_failures: bool,
         raise_on_server_error: Optional[bool] = None,
     ) -> Dict[Key, MemcacheResponse]:
-        raise_on_server_error = (
-            raise_on_server_error
-            if raise_on_server_error is not None
-            else self._raise_on_server_error
-        )
         results: Dict[Key, MemcacheResponse] = {}
         try:
             with pool.get_connection() as conn:
@@ -184,6 +179,11 @@ class DefaultExecutor:
             if track_write_failures and self._is_a_write_failure(command, int_flags):
                 for key, _ in key_values:
                     self.on_write_failure(key)
+            raise_on_server_error = (
+                raise_on_server_error
+                if raise_on_server_error is not None
+                else self._raise_on_server_error
+            )
             if raise_on_server_error:
                 raise
             failure_result = Miss() if command == MetaCommand.META_GET else NotStored()

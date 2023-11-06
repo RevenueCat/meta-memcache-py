@@ -3,6 +3,7 @@ from typing import Dict, List, Optional, Set
 from meta_memcache.connection.providers import ConnectionPoolProvider
 from meta_memcache.errors import MemcacheServerError
 from meta_memcache.interfaces.executor import Executor
+from meta_memcache.interfaces.router import DEFAULT_FAILURE_HANDLING, FailureHandling
 from meta_memcache.protocol import (
     Flag,
     IntFlag,
@@ -40,6 +41,7 @@ class GutterRouter(DefaultRouter):
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> MemcacheResponse:
         """
         Implements the gutter logic
@@ -57,10 +59,11 @@ class GutterRouter(DefaultRouter):
                 flags=flags,
                 int_flags=int_flags,
                 token_flags=token_flags,
-                track_write_failures=True,
                 # We always want to raise on server errors so we can
                 # try the gutter pool
                 raise_on_server_error=True,
+                # On the regular pool, respect the track_write_failures flag
+                track_write_failures=failure_handling.track_write_failures,
             )
         except MemcacheServerError:
             # Override TTLs > than gutter TTL
@@ -73,8 +76,11 @@ class GutterRouter(DefaultRouter):
                 flags=flags,
                 int_flags=int_flags,
                 token_flags=token_flags,
-                # We don't need to track write failures on gutter, since it has
-                # limited TTL already in place
+                # Respect the raise_on_server_error flag if the gutter pool also
+                # fails
+                raise_on_server_error=failure_handling.raise_on_server_error,
+                # On the gutter pool we never need to track write failures, since
+                # it has limited TTL already in place
                 track_write_failures=False,
             )
 
@@ -86,6 +92,7 @@ class GutterRouter(DefaultRouter):
         flags: Optional[Set[Flag]] = None,
         int_flags: Optional[Dict[IntFlag, int]] = None,
         token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> Dict[Key, MemcacheResponse]:
         """
         Groups keys by destination, gets a connection and executes the commands
@@ -105,10 +112,11 @@ class GutterRouter(DefaultRouter):
                         flags=flags,
                         int_flags=int_flags,
                         token_flags=token_flags,
-                        track_write_failures=True,
                         # We always want to raise on server errors so we can
                         # try the gutter pool
                         raise_on_server_error=True,
+                        # On the regular pool, respect the track_write_failures flag
+                        track_write_failures=failure_handling.track_write_failures,
                     )
                 )
             except MemcacheServerError:
@@ -130,8 +138,11 @@ class GutterRouter(DefaultRouter):
                         flags=flags,
                         int_flags=int_flags,
                         token_flags=token_flags,
-                        # We don't need to track write failures on gutter, since it has
-                        # limited TTL already in place
+                        # Respect the raise_on_server_error flag if the gutter pool also
+                        # fails
+                        raise_on_server_error=failure_handling.raise_on_server_error,
+                        # On the gutter pool we never need to track write failures,
+                        # since # it has limited TTL already in place
                         track_write_failures=False,
                     )
                 )
