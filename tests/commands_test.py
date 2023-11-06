@@ -25,12 +25,11 @@ from meta_memcache.extras.client_wrapper import ClientWrapper
 from meta_memcache.interfaces.cache_api import CacheApi
 from meta_memcache.interfaces.meta_commands import MetaCommandsProtocol
 from meta_memcache.protocol import (
-    Flag,
-    IntFlag,
     Miss,
     NotStored,
     ServerVersion,
     Success,
+    IntFlag,
     TokenFlag,
     Value,
 )
@@ -565,7 +564,7 @@ def test_get_cmd(memcache_socket: MemcacheSocket, cache_client: CacheClient) -> 
     )
     memcache_socket.sendall.reset_mock()
 
-    memcache_socket.get_response.return_value = Value(size=0)
+    memcache_socket.get_response.return_value = Value(size=0, value=None)
     cache_client.get_or_lease(
         key=Key("foo"),
         lease_policy=LeasePolicy(),
@@ -618,10 +617,9 @@ def test_get_value(memcache_socket: MemcacheSocket, cache_client: CacheClient) -
     encoded_value = MixedSerializer().serialize(expected_value)
     memcache_socket.get_response.return_value = Value(
         size=len(encoded_value.data),
-        int_flags={
-            IntFlag.CLIENT_FLAG: encoded_value.encoding_id,
-            IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
-        },
+        value=None,
+        cas_token=expected_cas_token,
+        client_flag=encoded_value.encoding_id,
     )
     memcache_socket.get_value.return_value = encoded_value.data
 
@@ -662,10 +660,9 @@ def test_value_wrong_type(
     encoded_value = MixedSerializer().serialize(expected_value)
     memcache_socket.get_response.return_value = Value(
         size=len(encoded_value.data),
-        int_flags={
-            IntFlag.CLIENT_FLAG: encoded_value.encoding_id,
-            IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
-        },
+        value=None,
+        cas_token=expected_cas_token,
+        client_flag=encoded_value.encoding_id,
     )
     memcache_socket.get_value.return_value = encoded_value.data
 
@@ -697,10 +694,9 @@ def test_deserialization_error(
     encoded_value = EncodedValue(data=b"invalid", encoding_id=MixedSerializer.PICKLE)
     memcache_socket.get_response.return_value = Value(
         size=len(encoded_value.data),
-        int_flags={
-            IntFlag.CLIENT_FLAG: encoded_value.encoding_id,
-            IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
-        },
+        value=None,
+        cas_token=expected_cas_token,
+        client_flag=encoded_value.encoding_id,
     )
     memcache_socket.get_value.return_value = encoded_value.data
 
@@ -723,11 +719,11 @@ def test_recache_win_returns_miss(
     encoded_value = MixedSerializer().serialize(expected_value)
     memcache_socket.get_response.return_value = Value(
         size=len(encoded_value.data),
-        flags=set([Flag.WIN, Flag.STALE]),
-        int_flags={
-            IntFlag.CLIENT_FLAG: encoded_value.encoding_id,
-            IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
-        },
+        value=None,
+        win=True,
+        stale=True,
+        cas_token=expected_cas_token,
+        client_flag=encoded_value.encoding_id,
     )
     memcache_socket.get_value.return_value = encoded_value.data
 
@@ -744,11 +740,11 @@ def test_recache_lost_returns_stale_value(
     encoded_value = MixedSerializer().serialize(expected_value)
     memcache_socket.get_response.return_value = Value(
         size=len(encoded_value.data),
-        flags=set([Flag.LOST, Flag.STALE]),
-        int_flags={
-            IntFlag.CLIENT_FLAG: encoded_value.encoding_id,
-            IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
-        },
+        value=None,
+        win=False,
+        stale=True,
+        cas_token=expected_cas_token,
+        client_flag=encoded_value.encoding_id,
     )
     memcache_socket.get_value.return_value = encoded_value.data
 
@@ -765,10 +761,9 @@ def test_get_or_lease_hit(
     encoded_value = MixedSerializer().serialize(expected_value)
     memcache_socket.get_response.return_value = Value(
         size=len(encoded_value.data),
-        int_flags={
-            IntFlag.CLIENT_FLAG: encoded_value.encoding_id,
-            IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
-        },
+        value=None,
+        cas_token=expected_cas_token,
+        client_flag=encoded_value.encoding_id,
     )
     memcache_socket.get_value.return_value = encoded_value.data
 
@@ -790,10 +785,9 @@ def test_get_or_lease_miss_win(
     expected_cas_token = 123
     memcache_socket.get_response.return_value = Value(
         size=0,
-        flags=set([Flag.WIN]),
-        int_flags={
-            IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
-        },
+        value=None,
+        win=True,
+        cas_token=expected_cas_token,
     )
     memcache_socket.get_value.return_value = b""
 
@@ -818,24 +812,21 @@ def test_get_or_lease_miss_lost_then_data(
     memcache_socket.get_response.side_effect = [
         Value(
             size=0,
-            flags=set([Flag.LOST]),
-            int_flags={
-                IntFlag.RETURNED_CAS_TOKEN: expected_cas_token - 1,
-            },
+            value=None,
+            win=False,
+            cas_token=expected_cas_token - 1,
         ),
         Value(
             size=0,
-            flags=set([Flag.LOST]),
-            int_flags={
-                IntFlag.RETURNED_CAS_TOKEN: expected_cas_token - 1,
-            },
+            value=None,
+            win=False,
+            cas_token=expected_cas_token - 1,
         ),
         Value(
             size=len(encoded_value.data),
-            int_flags={
-                IntFlag.CLIENT_FLAG: encoded_value.encoding_id,
-                IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
-            },
+            value=None,
+            cas_token=expected_cas_token,
+            client_flag=encoded_value.encoding_id,
         ),
     ]
     memcache_socket.get_value.side_effect = [b"", b"", encoded_value.data]
@@ -871,24 +862,21 @@ def test_get_or_lease_miss_lost_then_win(
     memcache_socket.get_response.side_effect = [
         Value(
             size=0,
-            flags=set([Flag.LOST]),
-            int_flags={
-                IntFlag.RETURNED_CAS_TOKEN: expected_cas_token - 1,
-            },
+            value=None,
+            win=False,
+            cas_token=expected_cas_token - 1,
         ),
         Value(
             size=0,
-            flags=set([Flag.LOST]),
-            int_flags={
-                IntFlag.RETURNED_CAS_TOKEN: expected_cas_token - 1,
-            },
+            value=None,
+            win=False,
+            cas_token=expected_cas_token - 1,
         ),
         Value(
             size=0,
-            flags=set([Flag.WIN]),
-            int_flags={
-                IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
-            },
+            value=None,
+            win=True,
+            cas_token=expected_cas_token,
         ),
     ]
     memcache_socket.get_value.side_effect = [b"", b"", b""]
@@ -923,10 +911,9 @@ def test_get_or_lease_miss_runs_out_of_retries(
     expected_cas_token = 123
     memcache_socket.get_response.return_value = Value(
         size=0,
-        flags=set([Flag.LOST]),
-        int_flags={
-            IntFlag.RETURNED_CAS_TOKEN: expected_cas_token,
-        },
+        value=None,
+        win=False,
+        cas_token=expected_cas_token,
     )
     memcache_socket.get_value.return_value = b""
 
@@ -1223,7 +1210,7 @@ def test_delta_cmd(memcache_socket: MemcacheSocket, cache_client: CacheClient) -
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
 
-    memcache_socket.get_response.return_value = Value(size=2)
+    memcache_socket.get_response.return_value = Value(size=2, value=None)
     memcache_socket.get_value.return_value = b"10"
 
     result = cache_client.delta_and_get(key=Key("foo"), delta=1)
@@ -1247,8 +1234,8 @@ def test_delta_cmd(memcache_socket: MemcacheSocket, cache_client: CacheClient) -
 def test_multi_get(memcache_socket: MemcacheSocket, cache_client: CacheClient) -> None:
     memcache_socket.get_response.side_effect = [
         Miss(),
-        Value(size=2, int_flags={IntFlag.CLIENT_FLAG: MixedSerializer.BINARY}),
-        Value(size=2, flags=set([Flag.WIN])),
+        Value(size=2, value=None, client_flag=MixedSerializer.BINARY),
+        Value(size=2, value=None, win=True),
     ]
     memcache_socket.get_value.return_value = b"OK"
 

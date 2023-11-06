@@ -1,23 +1,19 @@
 import logging
 import socket
-from typing import Iterable, List, Union
+from typing import Union
 
 from meta_memcache.errors import MemcacheError
 from meta_memcache.protocol import (
     ENDL,
     ENDL_LEN,
     NOOP,
-    SPACE,
     Conflict,
     Miss,
     NotStored,
     ServerVersion,
     Success,
     Value,
-    flag_values,
     get_store_success_response_header,
-    int_flags_values,
-    token_flags_values,
 )
 
 _log: logging.Logger = logging.getLogger(__name__)
@@ -119,73 +115,34 @@ class MemcacheSocket:
         Reset buffer moving remaining bytes in it (if any)
         """
         remaining_data = self._read - self._pos
-        if remaining_data > 0:
-            if self._pos <= self._reset_buffer_size:
-                # Avoid moving memory if buffer still has
-                # spare capacity for new responses. If the
-                # whole buffer us used, we will just reset
-                # the pointers and save a lot of memory
-                # data copies
-                return
-            self._buf_view[0:remaining_data] = self._buf_view[self._pos : self._read]
+        self._buf_view[0:remaining_data] = self._buf_view[self._pos : self._read]
         self._pos = 0
         self._read = remaining_data
 
-    def _recv_header(self) -> memoryview:
-        endl_pos = self._buf.find(ENDL, self._pos, self._read)
-        while endl_pos < 0 and self._read < self._buffer_size:
+    def _get_single_header(self) -> memoryview:
+        # Reset buffer for new data
+        if self._read == self._pos:
+            self._read = 0
+            self._pos = 0
+        elif self._pos > self._reset_buffer_size:
+            self._reset_buffer()
+
+        endl_pos = -1
+        while True:
+            if self._read - self._pos > ENDL_LEN:
+                endl_pos = self._buf.find(ENDL, self._pos, self._read)
+                if endl_pos >= 0:
+                    break
             # Missing data, but still space in buffer, so read more
             if self._recv_info_buffer() <= 0:
                 break
-            endl_pos = self._buf.find(ENDL, self._pos, self._read)
 
         if endl_pos < 0:
             raise MemcacheError("Bad response. Socket might have closed unexpectedly")
 
-        header = self._buf_view[self._pos : endl_pos]
+        pos = self._pos
         self._pos = endl_pos + ENDL_LEN
-        return header
-
-    def _add_flags(self, success: Success, chunks: Iterable[memoryview]) -> None:
-        """
-        Each flag starts with one byte for the flag, and and optional int/byte
-        value depending on the flag.
-        """
-        for chunk in chunks:
-            flag = chunk[0]
-            if len(chunk) == 1:
-                # Flag without value
-                if f := flag_values.get(flag):
-                    success.flags.add(f)
-                else:
-                    _log.warning(f"Unrecognized flag {bytes(chunk)!r}")
-            else:
-                # Value flag
-                if int_flag := int_flags_values.get(flag):
-                    success.int_flags[int_flag] = int(chunk[1:])
-                elif token_flag := token_flags_values.get(flag):
-                    success.token_flags[token_flag] = bytes(chunk[1:])
-                else:
-                    _log.warning(f"Unrecognized flag {bytes(chunk)!r}")
-
-    def _tokenize_header(self, header: memoryview) -> List[memoryview]:
-        """
-        Slice header by spaces into memoryview chunks
-        """
-        chunks = []
-        prev, i = 0, -1
-        for i, v in enumerate(header):
-            if v == SPACE:
-                if i > prev:
-                    chunks.append(header[prev:i])
-                prev = i + 1
-        if prev <= i:
-            chunks.append(header[prev:])
-        return chunks
-
-    def _get_single_header(self) -> List[memoryview]:
-        self._reset_buffer()
-        return self._tokenize_header(self._recv_header())
+        return self._buf_view[pos:endl_pos]
 
     def sendall(self, data: bytes, with_noop: bool = False) -> None:
         if with_noop:
@@ -195,11 +152,11 @@ class MemcacheSocket:
 
     def _read_until_noop_header(self) -> None:
         while self._noop_expected > 0:
-            response_code, *_chunks = self._get_single_header()
-            if response_code == b"MN":
+            header = self._get_single_header()
+            if header[0:2] == b"MN":
                 self._noop_expected -= 1
 
-    def _get_header(self) -> List[memoryview]:
+    def _get_header(self) -> memoryview:
         try:
             if self._noop_expected > 0:
                 self._read_until_noop_header()
@@ -212,37 +169,30 @@ class MemcacheSocket:
     def get_response(
         self,
     ) -> Union[Value, Success, NotStored, Conflict, Miss]:
-        header = self._get_header()
+        header = self._get_header().tobytes()
+        response_code = header[0:2]
         result: Union[Value, Success, NotStored, Conflict, Miss]
         try:
-            response_code, *chunks = header
             if response_code == b"VA":
-                # Value response, parse size and flags
-                value_size = int(chunks.pop(0))
-                result = Value(value_size)
-                self._add_flags(result, chunks)
+                # Value response
+                result = Value.from_header(header)
             elif response_code == self._store_success_response_header:
                 # Stored or no value, return Success
-                result = Success()
-                self._add_flags(result, chunks)
+                result = Success.from_header(header)
             elif response_code == b"NS":
                 # Value response, parse size and flags
                 result = NOT_STORED
-                assert len(chunks) == 0  # noqa: S101
             elif response_code == b"EX":
                 # Already exists, not changed, CAS conflict
                 result = CONFLICT
-                assert len(chunks) == 0  # noqa: S101
             elif response_code == b"EN" or response_code == b"NF":
                 # Not Found, Miss.
                 result = MISS
-                assert len(chunks) == 0  # noqa: S101
             else:
                 raise MemcacheError(f"Unknown response: {bytes(response_code)!r}")
         except Exception as e:
-            response = b" ".join(header).decode()
-            _log.warning(f"Error parsing response header in {self}: {response}")
-            raise MemcacheError(f"Error parsing response header {response}") from e
+            _log.warning(f"Error parsing response header in {self}: {header!r}")
+            raise MemcacheError(f"Error parsing response header {header!r}") from e
 
         return result
 
