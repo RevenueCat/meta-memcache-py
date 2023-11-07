@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from enum import Enum, IntEnum
 from typing import Any, Dict, List, Optional, Union
 
+from meta_socket import ResponseFlags
+
 ENDL = b"\r\n"
 NOOP: bytes = b"mn" + ENDL
 ENDL_LEN = 2
@@ -103,167 +105,24 @@ class Miss(MemcacheResponse):
 
 
 # Response flags
-TOKEN_FLAG_OPAQUE = ord("O")
-INT_FLAG_CAS_TOKEN = ord("c")
-INT_FLAG_FETCHED = ord("h")
-INT_FLAG_LAST_ACCESS = ord("l")
-INT_FLAG_TTL = ord("t")
-INT_FLAG_CLIENT_FLAG = ord("f")
-INT_FLAG_SIZE = ord("s")
-FLAG_WIN = ord("W")
-FLAG_LOST = ord("Z")
-FLAG_STALE = ord("X")
+EMPTY_RESPONSE_FLAGS = ResponseFlags()
 
 
-# @dataclass(slots=True, init=False)
 @dataclass
 class Success(MemcacheResponse):
-    __slots__ = (
-        "cas_token",
-        "fetched",
-        "last_access",
-        "ttl",
-        "client_flag",
-        "win",
-        "stale",
-        "real_size",
-        "opaque",
-    )
-    cas_token: Optional[int]
-    fetched: Optional[int]
-    last_access: Optional[int]
-    ttl: Optional[int]
-    client_flag: Optional[int]
-    win: Optional[bool]
-    stale: bool
-    real_size: Optional[int]
-    opaque: Optional[bytes]
-
-    def __init__(
-        self,
-        *,
-        cas_token: Optional[int] = None,
-        fetched: Optional[int] = None,
-        last_access: Optional[int] = None,
-        ttl: Optional[int] = None,
-        client_flag: Optional[int] = None,
-        win: Optional[bool] = None,
-        stale: bool = False,
-        real_size: Optional[int] = None,
-        opaque: Optional[bytes] = None,
-    ) -> None:
-        self.cas_token = cas_token
-        self.fetched = fetched
-        self.last_access = last_access
-        self.ttl = ttl
-        self.client_flag = client_flag
-        self.win = win
-        self.stale = stale
-        self.real_size = real_size
-        self.opaque = opaque
+    __slots__ = ("flags",)
+    flags: ResponseFlags
 
     @classmethod
-    def from_header(cls, header: "Blob") -> "Success":
-        result = cls()
-        result._set_flags(header)
-        return result
-
-    def _set_flags(self, header: bytes, pos: int = 3) -> None:  # noqa: C901
-        header_size = len(header)
-        while pos < header_size:
-            flag = header[pos]
-            pos += 1
-            if flag == SPACE:
-                continue
-            end = pos
-            while end < header_size:
-                if header[end] == SPACE:
-                    break
-                end += 1
-
-            if flag == INT_FLAG_CAS_TOKEN:
-                self.cas_token = int(header[pos:end])
-            elif flag == INT_FLAG_FETCHED:
-                self.fetched = int(header[pos:end])
-            elif flag == INT_FLAG_LAST_ACCESS:
-                self.last_access = int(header[pos:end])
-            elif flag == INT_FLAG_TTL:
-                self.ttl = int(header[pos:end])
-            elif flag == INT_FLAG_CLIENT_FLAG:
-                self.client_flag = int(header[pos:end])
-            elif flag == FLAG_WIN:
-                self.win = True
-            elif flag == FLAG_LOST:
-                self.win = False
-            elif flag == FLAG_STALE:
-                self.stale = True
-            elif flag == INT_FLAG_SIZE:
-                self.real_size = int(header[pos:end])
-            elif flag == TOKEN_FLAG_OPAQUE:
-                self.opaque = header[pos:end]
-            pos = end + 1
+    def default(cls) -> "Success":
+        return cls(flags=ResponseFlags())
 
 
-# @dataclass(slots=True, init=False)
 @dataclass
 class Value(Success):
-    __slots__ = (
-        "cas_token",
-        "fetched",
-        "last_access",
-        "ttl",
-        "client_flag",
-        "win",
-        "stale",
-        "real_size",
-        "opaque",
-        "size",
-        "value",
-    )
+    __slots__ = ("flags", "size", "value")
     size: int
     value: Optional[Any]
-
-    def __init__(
-        self,
-        *,
-        size: int,
-        value: Optional[Any] = None,
-        cas_token: Optional[int] = None,
-        fetched: Optional[int] = None,
-        last_access: Optional[int] = None,
-        ttl: Optional[int] = None,
-        client_flag: Optional[int] = None,
-        win: Optional[bool] = None,
-        stale: bool = False,
-        real_size: Optional[int] = None,
-        opaque: Optional[bytes] = None,
-    ) -> None:
-        self.size = size
-        self.value = value
-        self.cas_token = cas_token
-        self.fetched = fetched
-        self.last_access = last_access
-        self.ttl = ttl
-        self.client_flag = client_flag
-        self.win = win
-        self.stale = stale
-        self.real_size = real_size
-        self.opaque = opaque
-
-    @classmethod
-    def from_header(cls, header: "Blob") -> "Value":
-        header_size = len(header)
-        if header_size < 4 or header[2] != SPACE:
-            raise ValueError(f"Invalid header {header!r}")
-        end = 4
-        while end < header_size:
-            if header[end] == SPACE:
-                break
-            end += 1
-        size = int(header[3:end])
-        result = cls(size=size)
-        result._set_flags(header, pos=end + 1)
-        return result
 
 
 @dataclass

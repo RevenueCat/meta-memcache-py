@@ -1,17 +1,21 @@
 import logging
 import socket
-from typing import Union
+from typing import Optional, Tuple, Union
+
+import meta_socket
 
 from meta_memcache.errors import MemcacheError
 from meta_memcache.protocol import (
     ENDL,
     ENDL_LEN,
+    EMPTY_RESPONSE_FLAGS,
     NOOP,
     Conflict,
     Miss,
     NotStored,
     ServerVersion,
     Success,
+    ResponseFlags,
     Value,
     get_store_success_response_header,
 )
@@ -119,7 +123,9 @@ class MemcacheSocket:
         self._pos = 0
         self._read = remaining_data
 
-    def _get_single_header(self) -> memoryview:
+    def _get_single_header(
+        self,
+    ) -> Tuple[int, Optional[int], Optional[int], Optional[ResponseFlags]]:
         # Reset buffer for new data
         if self._read == self._pos:
             self._read = 0
@@ -127,22 +133,19 @@ class MemcacheSocket:
         elif self._pos > self._reset_buffer_size:
             self._reset_buffer()
 
-        endl_pos = -1
         while True:
-            if self._read - self._pos > ENDL_LEN:
-                endl_pos = self._buf.find(ENDL, self._pos, self._read)
-                if endl_pos >= 0:
-                    break
+            if self._read != self._pos:
+                # We have data in the buffer: find the header
+                if header_data := meta_socket.parse_header(
+                    self._buf_view, self._pos, self._read
+                ):
+                    self._pos = header_data[0]
+                    return header_data
             # Missing data, but still space in buffer, so read more
             if self._recv_info_buffer() <= 0:
                 break
 
-        if endl_pos < 0:
-            raise MemcacheError("Bad response. Socket might have closed unexpectedly")
-
-        pos = self._pos
-        self._pos = endl_pos + ENDL_LEN
-        return self._buf_view[pos:endl_pos]
+        raise MemcacheError("Bad response. Socket might have closed unexpectedly")
 
     def sendall(self, data: bytes, with_noop: bool = False) -> None:
         if with_noop:
@@ -153,10 +156,12 @@ class MemcacheSocket:
     def _read_until_noop_header(self) -> None:
         while self._noop_expected > 0:
             header = self._get_single_header()
-            if header[0:2] == b"MN":
+            if header[1] == meta_socket.RESPONSE_NOOP:
                 self._noop_expected -= 1
 
-    def _get_header(self) -> memoryview:
+    def _get_header(
+        self,
+    ) -> Tuple[int, Optional[int], Optional[int], Optional[ResponseFlags]]:
         try:
             if self._noop_expected > 0:
                 self._read_until_noop_header()
@@ -169,30 +174,36 @@ class MemcacheSocket:
     def get_response(
         self,
     ) -> Union[Value, Success, NotStored, Conflict, Miss]:
-        header = self._get_header().tobytes()
-        response_code = header[0:2]
+        (_, response_code, size, flags) = self._get_header()
         result: Union[Value, Success, NotStored, Conflict, Miss]
         try:
-            if response_code == b"VA":
+            if response_code == meta_socket.RESPONSE_VALUE:
+                if size is None:
+                    raise MemcacheError("Bad value response. Missing size")
                 # Value response
-                result = Value.from_header(header)
-            elif response_code == self._store_success_response_header:
+                result = Value(
+                    size=size, flags=flags or EMPTY_RESPONSE_FLAGS, value=None
+                )
+            elif response_code == meta_socket.RESPONSE_SUCCESS:
                 # Stored or no value, return Success
-                result = Success.from_header(header)
-            elif response_code == b"NS":
+                result = Success(flags=flags or EMPTY_RESPONSE_FLAGS)
+            elif response_code == meta_socket.RESPONSE_NOT_STORED:
                 # Value response, parse size and flags
                 result = NOT_STORED
-            elif response_code == b"EX":
+            elif response_code == meta_socket.RESPONSE_CONFLICT:
                 # Already exists, not changed, CAS conflict
                 result = CONFLICT
-            elif response_code == b"EN" or response_code == b"NF":
+            elif response_code == meta_socket.RESPONSE_MISS:
                 # Not Found, Miss.
                 result = MISS
             else:
-                raise MemcacheError(f"Unknown response: {bytes(response_code)!r}")
+                raise MemcacheError(f"Unknown response: {response_code}")
         except Exception as e:
-            _log.warning(f"Error parsing response header in {self}: {header!r}")
-            raise MemcacheError(f"Error parsing response header {header!r}") from e
+            _log.warning(
+                f"Error parsing response header in {self}: "
+                f"Response: {response_code}, size {size}, flags: {flags}"
+            )
+            raise MemcacheError("Error parsing response header") from e
 
         return result
 
