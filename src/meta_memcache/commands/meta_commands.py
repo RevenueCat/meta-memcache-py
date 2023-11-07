@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional
 
 from meta_memcache.errors import MemcacheError
 from meta_memcache.interfaces.router import (
@@ -8,15 +8,13 @@ from meta_memcache.interfaces.router import (
 )
 from meta_memcache.protocol import (
     Conflict,
-    Flag,
-    IntFlag,
     Key,
     MetaCommand,
     Miss,
     NotStored,
     ReadResponse,
+    RequestFlags,
     Success,
-    TokenFlag,
     Value,
     ValueContainer,
     WriteResponse,
@@ -27,9 +25,7 @@ class MetaCommandsMixin:
     def meta_multiget(
         self: HasRouter,
         keys: List[Key],
-        flags: Optional[Set[Flag]] = None,
-        int_flags: Optional[Dict[IntFlag, int]] = None,
-        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        flags: Optional[RequestFlags] = None,
         failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> Dict[Key, ReadResponse]:
         results: Dict[Key, ReadResponse] = {}
@@ -37,8 +33,6 @@ class MetaCommandsMixin:
             command=MetaCommand.META_GET,
             keys=keys,
             flags=flags,
-            int_flags=int_flags,
-            token_flags=token_flags,
             failure_handling=failure_handling,
         ).items():
             if not isinstance(result, (Miss, Value, Success)):
@@ -51,17 +45,13 @@ class MetaCommandsMixin:
     def meta_get(
         self: HasRouter,
         key: Key,
-        flags: Optional[Set[Flag]] = None,
-        int_flags: Optional[Dict[IntFlag, int]] = None,
-        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        flags: Optional[RequestFlags] = None,
         failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> ReadResponse:
         result = self.router.exec(
             command=MetaCommand.META_GET,
             key=key,
             flags=flags,
-            int_flags=int_flags,
-            token_flags=token_flags,
             failure_handling=failure_handling,
         )
         if not isinstance(result, (Miss, Value, Success)):
@@ -73,9 +63,7 @@ class MetaCommandsMixin:
         key: Key,
         value: Any,
         ttl: int,
-        flags: Optional[Set[Flag]] = None,
-        int_flags: Optional[Dict[IntFlag, int]] = None,
-        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        flags: Optional[RequestFlags] = None,
         failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> WriteResponse:
         result = self.router.exec(
@@ -83,8 +71,6 @@ class MetaCommandsMixin:
             key=key,
             value=ValueContainer(value),
             flags=flags,
-            int_flags=int_flags,
-            token_flags=token_flags,
             failure_handling=failure_handling,
         )
         if not isinstance(result, (Success, NotStored, Conflict, Miss)):
@@ -94,17 +80,13 @@ class MetaCommandsMixin:
     def meta_delete(
         self: HasRouter,
         key: Key,
-        flags: Optional[Set[Flag]] = None,
-        int_flags: Optional[Dict[IntFlag, int]] = None,
-        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        flags: Optional[RequestFlags] = None,
         failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> WriteResponse:
         result = self.router.exec(
             command=MetaCommand.META_DELETE,
             key=key,
             flags=flags,
-            int_flags=int_flags,
-            token_flags=token_flags,
             failure_handling=failure_handling,
         )
         if not isinstance(result, (Success, NotStored, Conflict, Miss)):
@@ -116,17 +98,13 @@ class MetaCommandsMixin:
     def meta_arithmetic(
         self: HasRouter,
         key: Key,
-        flags: Optional[Set[Flag]] = None,
-        int_flags: Optional[Dict[IntFlag, int]] = None,
-        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        flags: Optional[RequestFlags] = None,
         failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> WriteResponse:
         result = self.router.exec(
             command=MetaCommand.META_ARITHMETIC,
             key=key,
             flags=flags,
-            int_flags=int_flags,
-            token_flags=token_flags,
             failure_handling=failure_handling,
         )
         if not isinstance(result, (Success, NotStored, Conflict, Miss, Value)):

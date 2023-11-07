@@ -28,10 +28,9 @@ from meta_memcache.protocol import (
     Miss,
     NotStored,
     ResponseFlags,
+    RequestFlags,
     ServerVersion,
     Success,
-    IntFlag,
-    TokenFlag,
     Value,
 )
 from meta_memcache.routers.default import DefaultRouter
@@ -243,7 +242,7 @@ def test_set_cmd(
 
     cache_client.set(key=Key("foo"), value=b"123", ttl=300, cas_token=666)
     memcache_socket.sendall.assert_called_once_with(
-        b"ms foo 3 T300 C666 F16\r\n123\r\n", with_noop=False
+        b"ms foo 3 T300 F16 C666\r\n123\r\n", with_noop=False
     )
     memcache_socket.get_response.assert_called_once_with()
     memcache_socket.sendall.reset_mock()
@@ -253,7 +252,7 @@ def test_set_cmd(
         key=Key("foo"), value=b"123", ttl=300, cas_token=666, stale_policy=StalePolicy()
     )
     memcache_socket.sendall.assert_called_once_with(
-        b"ms foo 3 T300 C666 F16\r\n123\r\n", with_noop=False
+        b"ms foo 3 T300 F16 C666\r\n123\r\n", with_noop=False
     )
     memcache_socket.get_response.assert_called_once_with()
     memcache_socket.sendall.reset_mock()
@@ -267,7 +266,7 @@ def test_set_cmd(
         stale_policy=StalePolicy(mark_stale_on_cas_mismatch=True),
     )
     memcache_socket.sendall.assert_called_once_with(
-        b"ms foo 3 I T300 C666 F16\r\n123\r\n", with_noop=False
+        b"ms foo 3 I T300 F16 C666\r\n123\r\n", with_noop=False
     )
     memcache_socket.get_response.assert_called_once_with()
     memcache_socket.sendall.reset_mock()
@@ -309,9 +308,7 @@ def test_refill(
         key=Key(key="foo"),
         value="bar",
         ttl=300,
-        flags=set(),
-        int_flags={IntFlag.CACHE_TTL: 300},
-        token_flags={TokenFlag.MODE: SetMode.ADD.value},
+        flags=RequestFlags(cache_ttl=300, mode=SetMode.ADD.value),
         failure_handling=FailureHandling(track_write_failures=False),
     )
 
@@ -560,7 +557,7 @@ def test_get_cmd(memcache_socket: MemcacheSocket, cache_client: CacheClient) -> 
     )
     assert_called_once_with_command(
         memcache_socket.sendall,
-        b"mg lCV3WxKxtWrdY4s1+R710+9J b t l v h f R30 T300\r\n",
+        b"mg w7puw63Dp29k4o23 b t l v h f R30 T300\r\n",
         with_noop=False,
     )
     memcache_socket.sendall.reset_mock()
@@ -1186,7 +1183,7 @@ def test_delta_cmd(memcache_socket: MemcacheSocket, cache_client: CacheClient) -
 
     cache_client.delta(key=Key("foo"), delta=1, refresh_ttl=60, no_reply=True)
     memcache_socket.sendall.assert_called_once_with(
-        b"ma foo q D1 T60\r\n", with_noop=True
+        b"ma foo q T60 D1\r\n", with_noop=True
     )
     memcache_socket.sendall.reset_mock()
 
@@ -1205,7 +1202,7 @@ def test_delta_cmd(memcache_socket: MemcacheSocket, cache_client: CacheClient) -
         cas_token=123,
     )
     memcache_socket.sendall.assert_called_once_with(
-        b"ma foo q D1 C123 J10 N60\r\n", with_noop=True
+        b"ma foo q N60 J10 D1 C123\r\n", with_noop=True
     )
     memcache_socket.sendall.reset_mock()
 
@@ -1228,7 +1225,7 @@ def test_delta_cmd(memcache_socket: MemcacheSocket, cache_client: CacheClient) -
     )
     assert result is None
     memcache_socket.sendall.assert_called_once_with(
-        b"ma foo v D1 J0 N60\r\n", with_noop=False
+        b"ma foo v N60 J0 D1\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
@@ -1258,7 +1255,7 @@ def test_delta_cmd(memcache_socket: MemcacheSocket, cache_client: CacheClient) -
     )
     assert result == 10
     memcache_socket.sendall.assert_called_once_with(
-        b"ma foo v D1 J0 N60\r\n", with_noop=False
+        b"ma foo v N60 J0 D1\r\n", with_noop=False
     )
     memcache_socket.sendall.reset_mock()
     memcache_socket.get_response.reset_mock()
