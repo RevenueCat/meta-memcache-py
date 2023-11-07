@@ -78,7 +78,11 @@ class MigratingCacheClient(HighLevelCommandsMixin):
             return current_mode
 
     def _get_value_ttl(self, value: Value) -> int:
-        ttl = value.ttl if value.ttl is not None else self._default_read_backfill_ttl
+        ttl = (
+            value.flags.ttl
+            if value.flags.ttl is not None
+            else self._default_read_backfill_ttl
+        )
         if ttl < 0:
             # TTL for items marked to store forvered is returned as -1
             ttl = 0

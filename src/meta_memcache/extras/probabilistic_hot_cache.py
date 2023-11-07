@@ -124,10 +124,11 @@ class ProbabilisticHotCache(ClientWrapper):
         allowed: bool,
     ) -> None:
         if not is_hot:
-            hit_after_write = value.fetched or 0
-            last_read_age = value.last_access if value.last_access is not None else 9999
+            last_read_age = (
+                value.flags.last_access if value.flags.last_access is not None else 9999
+            )
             if (
-                hit_after_write > 0
+                value.flags.fetched
                 and last_read_age <= self._max_last_access_age_seconds
             ):
                 # Is detected as hot

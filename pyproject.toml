@@ -14,6 +14,7 @@ packages = [{include = "meta_memcache", from="src"}]
 python = "^3.8"
 uhashring = "^2.1"
 marisa-trie = "^1.0.0"
+meta-memcache-socket = "^0.1.0"
 
 [tool.poetry.group.extras.dependencies]
 prometheus-client = "^0.17.1"

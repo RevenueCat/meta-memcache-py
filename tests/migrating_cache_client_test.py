@@ -2,7 +2,14 @@ from unittest.mock import Mock
 from meta_memcache.interfaces.router import DEFAULT_FAILURE_HANDLING
 
 import pytest
-from meta_memcache import CacheClient, IntFlag, Key, Value, WriteFailureEvent
+from meta_memcache import (
+    CacheClient,
+    IntFlag,
+    Key,
+    Value,
+    WriteFailureEvent,
+    ResponseFlags,
+)
 from meta_memcache.extras.migrating_cache_client import (
     MigratingCacheClient,
     MigrationMode,
@@ -75,13 +82,17 @@ def _set_cache_client_mock_get_return_values(client: Mock, ttl: int = 10) -> Non
     client.meta_get.return_value = Value(
         size=3,
         value="bar",
-        ttl=ttl,
+        flags=ResponseFlags(
+            ttl=ttl,
+        ),
     )
     client.meta_multiget.return_value = {
         Key(key="foo", routing_key=None, is_unicode=False): Value(
             size=3,
             value="bar",
-            ttl=ttl,
+            flags=ResponseFlags(
+                ttl=ttl,
+            ),
         )
     }
 
