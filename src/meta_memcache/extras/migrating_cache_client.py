@@ -1,6 +1,6 @@
 import random
 import time
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, List, Optional, Union
 
 from meta_memcache.commands.high_level_commands import HighLevelCommandsMixin
 from meta_memcache.configuration import MigrationMode, ServerAddress
@@ -8,12 +8,10 @@ from meta_memcache.connection.pool import PoolCounters
 from meta_memcache.events.write_failure_event import WriteFailureEvent
 from meta_memcache.interfaces.cache_api import CacheApi
 from meta_memcache.protocol import (
-    Flag,
-    IntFlag,
     Key,
     ReadResponse,
+    RequestFlags,
     SetMode,
-    TokenFlag,
     Value,
     WriteResponse,
 )
@@ -94,17 +92,13 @@ class MigratingCacheClient(HighLevelCommandsMixin):
     def meta_multiget(
         self,
         keys: List[Key],
-        flags: Optional[Set[Flag]] = None,
-        int_flags: Optional[Dict[IntFlag, int]] = None,
-        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        flags: Optional[RequestFlags] = None,
     ) -> Dict[Key, ReadResponse]:
         migration_mode = self.get_migration_mode()
         if migration_mode >= MigrationMode.USE_DESTINATION_UPDATE_ORIGIN:
             return self._destination_client.meta_multiget(
                 keys=keys,
                 flags=flags,
-                int_flags=int_flags,
-                token_flags=token_flags,
             )
         elif migration_mode in (
             MigrationMode.POPULATE_WRITES_AND_READS_1PCT,
@@ -113,8 +107,6 @@ class MigratingCacheClient(HighLevelCommandsMixin):
             results = self._origin_client.meta_multiget(
                 keys=keys,
                 flags=flags,
-                int_flags=int_flags,
-                token_flags=token_flags,
             )
             if self._should_populate_read(migration_mode):
                 for key, result in results.items():
@@ -131,24 +123,18 @@ class MigratingCacheClient(HighLevelCommandsMixin):
             return self._origin_client.meta_multiget(
                 keys=keys,
                 flags=flags,
-                int_flags=int_flags,
-                token_flags=token_flags,
             )
 
     def meta_get(
         self,
         key: Key,
-        flags: Optional[Set[Flag]] = None,
-        int_flags: Optional[Dict[IntFlag, int]] = None,
-        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        flags: Optional[RequestFlags] = None,
     ) -> ReadResponse:
         migration_mode = self.get_migration_mode()
         if migration_mode >= MigrationMode.USE_DESTINATION_UPDATE_ORIGIN:
             return self._destination_client.meta_get(
                 key=key,
                 flags=flags,
-                int_flags=int_flags,
-                token_flags=token_flags,
             )
         elif migration_mode in (
             MigrationMode.POPULATE_WRITES_AND_READS_1PCT,
@@ -157,8 +143,6 @@ class MigratingCacheClient(HighLevelCommandsMixin):
             result = self._origin_client.meta_get(
                 key=key,
                 flags=flags,
-                int_flags=int_flags,
-                token_flags=token_flags,
             )
             if isinstance(result, Value) and self._should_populate_read(migration_mode):
                 self._destination_client.set(
@@ -173,8 +157,6 @@ class MigratingCacheClient(HighLevelCommandsMixin):
             return self._origin_client.meta_get(
                 key=key,
                 flags=flags,
-                int_flags=int_flags,
-                token_flags=token_flags,
             )
 
     def meta_set(
@@ -182,9 +164,7 @@ class MigratingCacheClient(HighLevelCommandsMixin):
         key: Key,
         value: Any,
         ttl: int,
-        flags: Optional[Set[Flag]] = None,
-        int_flags: Optional[Dict[IntFlag, int]] = None,
-        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        flags: Optional[RequestFlags] = None,
     ) -> WriteResponse:
         origin_response = destination_response = None
         migration_mode = self.get_migration_mode()
@@ -194,8 +174,6 @@ class MigratingCacheClient(HighLevelCommandsMixin):
                 value=value,
                 ttl=ttl,
                 flags=flags,
-                int_flags=int_flags,
-                token_flags=token_flags,
             )
         if migration_mode > MigrationMode.ONLY_ORIGIN:
             destination_response = self._destination_client.meta_set(
@@ -203,8 +181,6 @@ class MigratingCacheClient(HighLevelCommandsMixin):
                 value=value,
                 ttl=ttl,
                 flags=flags,
-                int_flags=int_flags,
-                token_flags=token_flags,
             )
         if migration_mode >= MigrationMode.USE_DESTINATION_UPDATE_ORIGIN:
             assert destination_response is not None  # noqa: S101
@@ -216,9 +192,7 @@ class MigratingCacheClient(HighLevelCommandsMixin):
     def meta_delete(
         self,
         key: Key,
-        flags: Optional[Set[Flag]] = None,
-        int_flags: Optional[Dict[IntFlag, int]] = None,
-        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        flags: Optional[RequestFlags] = None,
     ) -> WriteResponse:
         origin_response = destination_response = None
         migration_mode = self.get_migration_mode()
@@ -226,15 +200,11 @@ class MigratingCacheClient(HighLevelCommandsMixin):
             origin_response = self._origin_client.meta_delete(
                 key=key,
                 flags=flags,
-                int_flags=int_flags,
-                token_flags=token_flags,
             )
         if migration_mode > MigrationMode.ONLY_ORIGIN:
             destination_response = self._destination_client.meta_delete(
                 key=key,
                 flags=flags,
-                int_flags=int_flags,
-                token_flags=token_flags,
             )
         if migration_mode >= MigrationMode.USE_DESTINATION_UPDATE_ORIGIN:
             assert destination_response is not None  # noqa: S101
@@ -246,9 +216,7 @@ class MigratingCacheClient(HighLevelCommandsMixin):
     def meta_arithmetic(
         self,
         key: Key,
-        flags: Optional[Set[Flag]] = None,
-        int_flags: Optional[Dict[IntFlag, int]] = None,
-        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        flags: Optional[RequestFlags] = None,
     ) -> WriteResponse:
         """
         We can't reliably migrate cache data modified by meta-arithmetic,
@@ -261,15 +229,11 @@ class MigratingCacheClient(HighLevelCommandsMixin):
             return self._destination_client.meta_arithmetic(
                 key=key,
                 flags=flags,
-                int_flags=int_flags,
-                token_flags=token_flags,
             )
         else:
             return self._origin_client.meta_arithmetic(
                 key=key,
                 flags=flags,
-                int_flags=int_flags,
-                token_flags=token_flags,
             )
 
     def touch(

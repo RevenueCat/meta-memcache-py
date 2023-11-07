@@ -1,4 +1,4 @@
-from typing import Callable, Iterable, Optional, Tuple
+from typing import Callable, Iterable, Optional
 
 from meta_memcache.base.base_cache_client import BaseCacheClient
 from meta_memcache.commands.high_level_commands import HighLevelCommandsMixin
@@ -25,7 +25,7 @@ class CacheClient(HighLevelCommandsMixin, MetaCommandsMixin, BaseCacheClient):
         servers: Iterable[ServerAddress],
         connection_pool_factory_fn: Callable[[ServerAddress], ConnectionPool],
         serializer: Optional[BaseSerializer] = None,
-        key_encoder_fn: Callable[[Key], Tuple[bytes, bool]] = default_key_encoder,
+        key_encoder_fn: Callable[[Key], bytes] = default_key_encoder,
         raise_on_server_error: bool = True,
     ) -> CacheApi:
         executor = DefaultExecutor(
@@ -48,7 +48,7 @@ class CacheClient(HighLevelCommandsMixin, MetaCommandsMixin, BaseCacheClient):
         gutter_ttl: int,
         connection_pool_factory_fn: Callable[[ServerAddress], ConnectionPool],
         serializer: Optional[BaseSerializer] = None,
-        key_encoder_fn: Callable[[Key], Tuple[bytes, bool]] = default_key_encoder,
+        key_encoder_fn: Callable[[Key], bytes] = default_key_encoder,
         raise_on_server_error: bool = True,
     ) -> CacheApi:
         executor = DefaultExecutor(
@@ -76,7 +76,7 @@ class CacheClient(HighLevelCommandsMixin, MetaCommandsMixin, BaseCacheClient):
         max_ttl: int,
         connection_pool_factory_fn: Callable[[ServerAddress], ConnectionPool],
         serializer: Optional[BaseSerializer] = None,
-        key_encoder_fn: Callable[[Key], Tuple[bytes, bool]] = default_key_encoder,
+        key_encoder_fn: Callable[[Key], bytes] = default_key_encoder,
         raise_on_server_error: bool = True,
     ) -> CacheApi:
         executor = DefaultExecutor(

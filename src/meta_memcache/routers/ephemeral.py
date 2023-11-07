@@ -1,20 +1,18 @@
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 
 from meta_memcache.connection.providers import ConnectionPoolProvider
 from meta_memcache.interfaces.executor import Executor
 from meta_memcache.interfaces.router import DEFAULT_FAILURE_HANDLING, FailureHandling
 from meta_memcache.protocol import (
-    Flag,
-    IntFlag,
     Key,
     MaybeValue,
     MaybeValues,
     MemcacheResponse,
     MetaCommand,
-    TokenFlag,
+    RequestFlags,
 )
 from meta_memcache.routers.default import DefaultRouter
-from meta_memcache.routers.helpers import adjust_int_flags_for_max_ttl
+from meta_memcache.routers.helpers import adjust_flags_for_max_ttl
 
 
 class EphemeralRouter(DefaultRouter):
@@ -52,18 +50,14 @@ class EphemeralRouter(DefaultRouter):
         command: MetaCommand,
         key: Key,
         value: MaybeValue = None,
-        flags: Optional[Set[Flag]] = None,
-        int_flags: Optional[Dict[IntFlag, int]] = None,
-        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        flags: Optional[RequestFlags] = None,
         failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> MemcacheResponse:
         return super().exec(
             command=command,
             key=key,
             value=value,
-            flags=flags,
-            int_flags=adjust_int_flags_for_max_ttl(int_flags, self._max_ttl),
-            token_flags=token_flags,
+            flags=adjust_flags_for_max_ttl(flags, self._max_ttl),
             failure_handling=failure_handling,
         )
 
@@ -72,17 +66,13 @@ class EphemeralRouter(DefaultRouter):
         command: MetaCommand,
         keys: List[Key],
         values: MaybeValues = None,
-        flags: Optional[Set[Flag]] = None,
-        int_flags: Optional[Dict[IntFlag, int]] = None,
-        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        flags: Optional[RequestFlags] = None,
         failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> Dict[Key, MemcacheResponse]:
         return super().exec_multi(
             command=command,
             keys=keys,
             values=values,
-            flags=flags,
-            int_flags=adjust_int_flags_for_max_ttl(int_flags, self._max_ttl),
-            token_flags=token_flags,
+            flags=adjust_flags_for_max_ttl(flags, self._max_ttl),
             failure_handling=failure_handling,
         )

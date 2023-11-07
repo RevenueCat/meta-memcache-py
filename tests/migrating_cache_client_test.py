@@ -3,12 +3,12 @@ from unittest.mock import Mock
 import pytest
 from meta_memcache import (
     CacheClient,
-    IntFlag,
     Key,
     SetMode,
     Value,
     WriteFailureEvent,
     ResponseFlags,
+    RequestFlags,
 )
 from meta_memcache.extras.migrating_cache_client import (
     MigratingCacheClient,
@@ -167,9 +167,7 @@ def test_migration_mode_origin_only(
         key=Key(key="foo", routing_key=None, is_unicode=False),
         value="bar",
         ttl=10,
-        flags=set(),
-        int_flags={IntFlag.CACHE_TTL: 10},
-        token_flags=None,
+        flags=RequestFlags(cache_ttl=10),
     )
     destination_client.meta_set.assert_not_called()
 
@@ -177,9 +175,7 @@ def test_migration_mode_origin_only(
     migration_client_origin_only.delete(key="foo")
     origin_client.meta_delete.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
-        flags=set(),
-        int_flags={},
-        token_flags=None,
+        flags=RequestFlags(),
     )
     destination_client.meta_delete.assert_not_called()
 
@@ -187,9 +183,7 @@ def test_migration_mode_origin_only(
     migration_client_origin_only.delta(key="foo", delta=1)
     origin_client.meta_arithmetic.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
-        flags=set(),
-        int_flags={IntFlag.MA_DELTA_VALUE: 1},
-        token_flags={},
+        flags=RequestFlags(ma_delta_value=1),
     )
     destination_client.meta_arithmetic.assert_not_called()
 
@@ -227,9 +221,7 @@ def test_migration_mode_destination_only(
         key=Key(key="foo", routing_key=None, is_unicode=False),
         value="bar",
         ttl=10,
-        flags=set(),
-        int_flags={IntFlag.CACHE_TTL: 10},
-        token_flags=None,
+        flags=RequestFlags(cache_ttl=10),
     )
 
     # Deletes
@@ -237,9 +229,7 @@ def test_migration_mode_destination_only(
     origin_client.meta_delete.assert_not_called()
     destination_client.meta_delete.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
-        flags=set(),
-        int_flags={},
-        token_flags=None,
+        flags=RequestFlags(),
     )
 
     # Arithmetic
@@ -247,9 +237,7 @@ def test_migration_mode_destination_only(
     origin_client.meta_arithmetic.assert_not_called()
     destination_client.meta_arithmetic.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
-        flags=set(),
-        int_flags={IntFlag.MA_DELTA_VALUE: 1},
-        token_flags={},
+        flags=RequestFlags(ma_delta_value=1),
     )
 
     # Touch
@@ -289,41 +277,31 @@ def test_migration_mode_populate_writes(
         key=Key(key="foo", routing_key=None, is_unicode=False),
         value="bar",
         ttl=10,
-        flags=set(),
-        int_flags={IntFlag.CACHE_TTL: 10},
-        token_flags=None,
+        flags=RequestFlags(cache_ttl=10),
     )
     destination_client.meta_set.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
         value="bar",
         ttl=10,
-        flags=set(),
-        int_flags={IntFlag.CACHE_TTL: 10},
-        token_flags=None,
+        flags=RequestFlags(cache_ttl=10),
     )
 
     # Deletes (both receive writes)
     migration_client.delete(key="foo")
     origin_client.meta_delete.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
-        flags=set(),
-        int_flags={},
-        token_flags=None,
+        flags=RequestFlags(),
     )
     destination_client.meta_delete.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
-        flags=set(),
-        int_flags={},
-        token_flags=None,
+        flags=RequestFlags(),
     )
 
     # Arithmetic
     migration_client.delta(key="foo", delta=1)
     origin_client.meta_arithmetic.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
-        flags=set(),
-        int_flags={IntFlag.MA_DELTA_VALUE: 1},
-        token_flags={},
+        flags=RequestFlags(ma_delta_value=1),
     )
     destination_client.meta_arithmetic.assert_not_called()
 
@@ -451,41 +429,31 @@ def test_migration_mode_populate_writes_and_reads_1pct(
         key=Key(key="foo", routing_key=None, is_unicode=False),
         value="bar",
         ttl=10,
-        flags=set(),
-        int_flags={IntFlag.CACHE_TTL: 10},
-        token_flags=None,
+        flags=RequestFlags(cache_ttl=10),
     )
     destination_client.meta_set.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
         value="bar",
         ttl=10,
-        flags=set(),
-        int_flags={IntFlag.CACHE_TTL: 10},
-        token_flags=None,
+        flags=RequestFlags(cache_ttl=10),
     )
 
     # Deletes (both receive writes)
     migration_client.delete(key="foo")
     origin_client.meta_delete.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
-        flags=set(),
-        int_flags={},
-        token_flags=None,
+        flags=RequestFlags(),
     )
     destination_client.meta_delete.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
-        flags=set(),
-        int_flags={},
-        token_flags=None,
+        flags=RequestFlags(),
     )
 
     # Arithmetic
     migration_client.delta(key="foo", delta=1)
     origin_client.meta_arithmetic.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
-        flags=set(),
-        int_flags={IntFlag.MA_DELTA_VALUE: 1},
-        token_flags={},
+        flags=RequestFlags(ma_delta_value=1),
     )
     destination_client.meta_arithmetic.assert_not_called()
 
@@ -566,41 +534,31 @@ def test_migration_mode_populate_writes_and_reads_10pct(
         key=Key(key="foo", routing_key=None, is_unicode=False),
         value="bar",
         ttl=10,
-        flags=set(),
-        int_flags={IntFlag.CACHE_TTL: 10},
-        token_flags=None,
+        flags=RequestFlags(cache_ttl=10),
     )
     destination_client.meta_set.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
         value="bar",
         ttl=10,
-        flags=set(),
-        int_flags={IntFlag.CACHE_TTL: 10},
-        token_flags=None,
+        flags=RequestFlags(cache_ttl=10),
     )
 
     # Deletes (both receive writes)
     migration_client.delete(key="foo")
     origin_client.meta_delete.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
-        flags=set(),
-        int_flags={},
-        token_flags=None,
+        flags=RequestFlags(),
     )
     destination_client.meta_delete.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
-        flags=set(),
-        int_flags={},
-        token_flags=None,
+        flags=RequestFlags(),
     )
 
     # Arithmetic
     migration_client.delta(key="foo", delta=1)
     origin_client.meta_arithmetic.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
-        flags=set(),
-        int_flags={IntFlag.MA_DELTA_VALUE: 1},
-        token_flags={},
+        flags=RequestFlags(ma_delta_value=1),
     )
     destination_client.meta_arithmetic.assert_not_called()
 
@@ -644,32 +602,24 @@ def test_migration_mode_use_destination_update_origin(
         key=Key(key="foo", routing_key=None, is_unicode=False),
         value="bar",
         ttl=10,
-        flags=set(),
-        int_flags={IntFlag.CACHE_TTL: 10},
-        token_flags=None,
+        flags=RequestFlags(cache_ttl=10),
     )
     destination_client.meta_set.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
         value="bar",
         ttl=10,
-        flags=set(),
-        int_flags={IntFlag.CACHE_TTL: 10},
-        token_flags=None,
+        flags=RequestFlags(cache_ttl=10),
     )
 
     # Deletes (both receive writes)
     migration_client.delete(key="foo")
     origin_client.meta_delete.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
-        flags=set(),
-        int_flags={},
-        token_flags=None,
+        flags=RequestFlags(),
     )
     destination_client.meta_delete.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
-        flags=set(),
-        int_flags={},
-        token_flags=None,
+        flags=RequestFlags(),
     )
 
     # Arithmetic
@@ -677,9 +627,7 @@ def test_migration_mode_use_destination_update_origin(
     origin_client.meta_arithmetic.assert_not_called()
     destination_client.meta_arithmetic.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
-        flags=set(),
-        int_flags={IntFlag.MA_DELTA_VALUE: 1},
-        token_flags={},
+        flags=RequestFlags(ma_delta_value=1),
     )
 
     # Touch

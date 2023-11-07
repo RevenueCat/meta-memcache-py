@@ -1,5 +1,6 @@
 from collections import defaultdict
-from typing import Callable, DefaultDict, Dict, List, Optional, Set, Tuple
+from typing import Callable, DefaultDict, Dict, List, Optional, Tuple
+
 
 from meta_memcache.configuration import ServerAddress
 from meta_memcache.connection.pool import ConnectionPool, PoolCounters
@@ -7,14 +8,12 @@ from meta_memcache.connection.providers import ConnectionPoolProvider
 from meta_memcache.interfaces.executor import Executor
 from meta_memcache.interfaces.router import DEFAULT_FAILURE_HANDLING, FailureHandling
 from meta_memcache.protocol import (
-    Flag,
-    IntFlag,
     Key,
     MaybeValue,
     MaybeValues,
     MemcacheResponse,
     MetaCommand,
-    TokenFlag,
+    RequestFlags,
 )
 
 
@@ -32,9 +31,7 @@ class DefaultRouter:
         command: MetaCommand,
         key: Key,
         value: MaybeValue = None,
-        flags: Optional[Set[Flag]] = None,
-        int_flags: Optional[Dict[IntFlag, int]] = None,
-        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        flags: Optional[RequestFlags] = None,
         failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> MemcacheResponse:
         """
@@ -49,8 +46,6 @@ class DefaultRouter:
             key=key,
             value=value,
             flags=flags,
-            int_flags=int_flags,
-            token_flags=token_flags,
             track_write_failures=failure_handling.track_write_failures,
             raise_on_server_error=failure_handling.raise_on_server_error,
         )
@@ -60,9 +55,7 @@ class DefaultRouter:
         command: MetaCommand,
         keys: List[Key],
         values: MaybeValues = None,
-        flags: Optional[Set[Flag]] = None,
-        int_flags: Optional[Dict[IntFlag, int]] = None,
-        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        flags: Optional[RequestFlags] = None,
         failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> Dict[Key, MemcacheResponse]:
         """
@@ -78,8 +71,6 @@ class DefaultRouter:
                     command=command,
                     key_values=key_values,
                     flags=flags,
-                    int_flags=int_flags,
-                    token_flags=token_flags,
                     track_write_failures=failure_handling.track_write_failures,
                     raise_on_server_error=failure_handling.raise_on_server_error,
                 )

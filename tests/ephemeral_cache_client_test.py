@@ -1,5 +1,5 @@
 from unittest.mock import call
-from meta_memcache.protocol import NOOP, Flag, IntFlag
+from meta_memcache.protocol import NOOP, RequestFlags
 
 from pytest_mock import MockerFixture
 
@@ -29,10 +29,10 @@ def test_ephemeral_cache_client(mocker: MockerFixture) -> None:
 
     cache_client.meta_multiget(
         keys=[Key("bar"), Key("foo")],
-        flags={
-            Flag.NOREPLY,
-        },
-        int_flags={IntFlag.CACHE_TTL: 1000},
+        flags=RequestFlags(
+            no_reply=True,
+            cache_ttl=1000,
+        ),
     )
     c.sendall.assert_has_calls([call(b"mg bar q T60\r\n"), call(b"mg foo q T60\r\n")])
     c.sendall.reset_mock()

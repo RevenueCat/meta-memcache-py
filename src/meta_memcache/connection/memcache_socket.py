@@ -8,7 +8,6 @@ from meta_memcache.errors import MemcacheError
 from meta_memcache.protocol import (
     ENDL,
     ENDL_LEN,
-    EMPTY_RESPONSE_FLAGS,
     NOOP,
     Conflict,
     Miss,
@@ -135,13 +134,12 @@ class MemcacheSocket:
 
         while True:
             if self._read != self._pos:
-                # We have data in the buffer: find the header
+                # We have data in the buffer: Try to find the header
                 if header_data := meta_socket.parse_header(
                     self._buf_view, self._pos, self._read
                 ):
                     self._pos = header_data[0]
                     return header_data
-            # Missing data, but still space in buffer, so read more
             if self._recv_info_buffer() <= 0:
                 break
 
@@ -178,15 +176,13 @@ class MemcacheSocket:
         result: Union[Value, Success, NotStored, Conflict, Miss]
         try:
             if response_code == meta_socket.RESPONSE_VALUE:
-                if size is None:
-                    raise MemcacheError("Bad value response. Missing size")
                 # Value response
-                result = Value(
-                    size=size, flags=flags or EMPTY_RESPONSE_FLAGS, value=None
-                )
+                assert size is not None and flags is not None
+                result = Value(size=size, flags=flags, value=None)
             elif response_code == meta_socket.RESPONSE_SUCCESS:
                 # Stored or no value, return Success
-                result = Success(flags=flags or EMPTY_RESPONSE_FLAGS)
+                assert flags is not None
+                result = Success(flags=flags)
             elif response_code == meta_socket.RESPONSE_NOT_STORED:
                 # Value response, parse size and flags
                 result = NOT_STORED

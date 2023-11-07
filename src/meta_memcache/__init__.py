@@ -33,17 +33,15 @@ from meta_memcache.interfaces.router import (
 )
 from meta_memcache.protocol import (
     Conflict,
-    Flag,
-    IntFlag,
     Key,
     MetaCommand,
     Miss,
     NotStored,
     ServerVersion,
     ResponseFlags,
+    RequestFlags,
     SetMode,
     Success,
-    TokenFlag,
     Value,
 )
 from meta_memcache.routers.default import DefaultRouter

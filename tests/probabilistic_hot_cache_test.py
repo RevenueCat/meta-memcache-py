@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 from unittest.mock import Mock
 
 from prometheus_client import CollectorRegistry
@@ -6,23 +6,21 @@ from meta_memcache.interfaces.router import DEFAULT_FAILURE_HANDLING, FailureHan
 
 import pytest
 
-from meta_memcache import CacheClient, IntFlag, Key, Value
+from meta_memcache import CacheClient, Key, Value
 from meta_memcache.errors import MemcacheError
 from meta_memcache.extras.probabilistic_hot_cache import (
     CachedValue,
     ProbabilisticHotCache,
 )
 from meta_memcache.metrics.prometheus import PrometheusMetricsCollector
-from meta_memcache.protocol import Flag, Miss, ReadResponse, TokenFlag, ResponseFlags
+from meta_memcache.protocol import Miss, ReadResponse, ResponseFlags, RequestFlags
 
 
 @pytest.fixture
 def client() -> Mock:
     def meta_get(
         key: Key,
-        flags: Optional[Set[Flag]] = None,
-        int_flags: Optional[Dict[IntFlag, int]] = None,
-        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        flags: Optional[RequestFlags] = None,
         failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> ReadResponse:
         if key.key.endswith("hot"):
@@ -48,9 +46,7 @@ def client() -> Mock:
 
     def meta_multiget(
         keys: List[Key],
-        flags: Optional[Set[Flag]] = None,
-        int_flags: Optional[Dict[IntFlag, int]] = None,
-        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        flags: Optional[RequestFlags] = None,
         failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> Dict[Key, ReadResponse]:
         return {key: meta_get(key=key) for key in keys}
@@ -78,15 +74,13 @@ def random(monkeypatch) -> Mock:
 
 
 DEFAULT_FLAGS = {
-    "flags": {
-        Flag.RETURN_TTL,
-        Flag.RETURN_LAST_ACCESS,
-        Flag.RETURN_VALUE,
-        Flag.RETURN_FETCHED,
-        Flag.RETURN_CLIENT_FLAG,
-    },
-    "int_flags": None,
-    "token_flags": None,
+    "flags": RequestFlags(
+        return_ttl=True,
+        return_last_access=True,
+        return_value=True,
+        return_fetched=True,
+        return_client_flag=True,
+    ),
     "failure_handling": DEFAULT_FAILURE_HANDLING,
 }
 

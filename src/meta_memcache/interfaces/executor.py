@@ -1,15 +1,14 @@
-from typing import Dict, List, Optional, Protocol, Set, Tuple
+from typing import Dict, List, Optional, Protocol, Tuple
+
 from meta_memcache.connection.pool import ConnectionPool
 from meta_memcache.events.write_failure_event import WriteFailureEvent
 
 from meta_memcache.protocol import (
-    Flag,
-    IntFlag,
     Key,
     MaybeValue,
     MemcacheResponse,
     MetaCommand,
-    TokenFlag,
+    RequestFlags,
 )
 
 
@@ -20,9 +19,7 @@ class Executor(Protocol):
         command: MetaCommand,
         key: Key,
         value: MaybeValue,
-        flags: Optional[Set[Flag]],
-        int_flags: Optional[Dict[IntFlag, int]],
-        token_flags: Optional[Dict[TokenFlag, bytes]],
+        flags: Optional[RequestFlags],
         track_write_failures: bool,
         raise_on_server_error: Optional[bool] = None,
     ) -> MemcacheResponse:
@@ -38,9 +35,7 @@ class Executor(Protocol):
         pool: ConnectionPool,
         command: MetaCommand,
         key_values: List[Tuple[Key, MaybeValue]],
-        flags: Optional[Set[Flag]],
-        int_flags: Optional[Dict[IntFlag, int]],
-        token_flags: Optional[Dict[TokenFlag, bytes]],
+        flags: Optional[RequestFlags],
         track_write_failures: bool,
         raise_on_server_error: Optional[bool] = None,
     ) -> Dict[Key, MemcacheResponse]:
