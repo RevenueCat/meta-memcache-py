@@ -1,7 +1,8 @@
 from unittest.mock import Mock
+from meta_memcache.interfaces.router import DEFAULT_FAILURE_HANDLING
 
 import pytest
-from meta_memcache import CacheClient, IntFlag, Key, SetMode, Value, WriteFailureEvent
+from meta_memcache import CacheClient, IntFlag, Key, Value, WriteFailureEvent
 from meta_memcache.extras.migrating_cache_client import (
     MigratingCacheClient,
     MigrationMode,
@@ -162,6 +163,7 @@ def test_migration_mode_origin_only(
         flags=set(),
         int_flags={IntFlag.CACHE_TTL: 10},
         token_flags=None,
+        failure_handling=DEFAULT_FAILURE_HANDLING,
     )
     destination_client.meta_set.assert_not_called()
 
@@ -172,6 +174,7 @@ def test_migration_mode_origin_only(
         flags=set(),
         int_flags={},
         token_flags=None,
+        failure_handling=DEFAULT_FAILURE_HANDLING,
     )
     destination_client.meta_delete.assert_not_called()
 
@@ -182,6 +185,7 @@ def test_migration_mode_origin_only(
         flags=set(),
         int_flags={IntFlag.MA_DELTA_VALUE: 1},
         token_flags={},
+        failure_handling=DEFAULT_FAILURE_HANDLING,
     )
     destination_client.meta_arithmetic.assert_not_called()
 
@@ -222,6 +226,7 @@ def test_migration_mode_destination_only(
         flags=set(),
         int_flags={IntFlag.CACHE_TTL: 10},
         token_flags=None,
+        failure_handling=DEFAULT_FAILURE_HANDLING,
     )
 
     # Deletes
@@ -232,6 +237,7 @@ def test_migration_mode_destination_only(
         flags=set(),
         int_flags={},
         token_flags=None,
+        failure_handling=DEFAULT_FAILURE_HANDLING,
     )
 
     # Arithmetic
@@ -242,6 +248,7 @@ def test_migration_mode_destination_only(
         flags=set(),
         int_flags={IntFlag.MA_DELTA_VALUE: 1},
         token_flags={},
+        failure_handling=DEFAULT_FAILURE_HANDLING,
     )
 
     # Touch
@@ -284,6 +291,7 @@ def test_migration_mode_populate_writes(
         flags=set(),
         int_flags={IntFlag.CACHE_TTL: 10},
         token_flags=None,
+        failure_handling=DEFAULT_FAILURE_HANDLING,
     )
     destination_client.meta_set.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
@@ -292,6 +300,7 @@ def test_migration_mode_populate_writes(
         flags=set(),
         int_flags={IntFlag.CACHE_TTL: 10},
         token_flags=None,
+        failure_handling=DEFAULT_FAILURE_HANDLING,
     )
 
     # Deletes (both receive writes)
@@ -301,12 +310,14 @@ def test_migration_mode_populate_writes(
         flags=set(),
         int_flags={},
         token_flags=None,
+        failure_handling=DEFAULT_FAILURE_HANDLING,
     )
     destination_client.meta_delete.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
         flags=set(),
         int_flags={},
         token_flags=None,
+        failure_handling=DEFAULT_FAILURE_HANDLING,
     )
 
     # Arithmetic
@@ -316,6 +327,7 @@ def test_migration_mode_populate_writes(
         flags=set(),
         int_flags={IntFlag.MA_DELTA_VALUE: 1},
         token_flags={},
+        failure_handling=DEFAULT_FAILURE_HANDLING,
     )
     destination_client.meta_arithmetic.assert_not_called()
 
@@ -349,26 +361,24 @@ def test_migration_mode_populate_reads_handles_non_expiring_keys(
     origin_client.meta_get.assert_called_once()
     destination_client.meta_get.assert_not_called()
     origin_client.set.assert_not_called()
-    destination_client.set.assert_called_once_with(
+    destination_client.refill.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
         value="bar",
         ttl=0,
         no_reply=True,
-        set_mode=SetMode.ADD,
     )
-    destination_client.set.reset_mock()
+    destination_client.refill.reset_mock()
 
     # Multi-get
     migration_client.multi_get(keys=["foo"])
     origin_client.meta_multiget.assert_called_once()
     destination_client.meta_multiget.assert_not_called()
     origin_client.set.assert_not_called()
-    destination_client.set.assert_called_once_with(
+    destination_client.refill.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
         value="bar",
         ttl=0,
         no_reply=True,
-        set_mode=SetMode.ADD,
     )
 
 
@@ -394,15 +404,15 @@ def test_migration_mode_populate_writes_and_reads_1pct(
     migration_client.get(key="foo")
     origin_client.meta_get.assert_called_once()
     destination_client.meta_get.assert_not_called()
-    origin_client.set.assert_not_called()
-    destination_client.set.assert_not_called()
+    origin_client.refill.assert_not_called()
+    destination_client.refill.assert_not_called()
 
     # Multi-get
     migration_client.multi_get(keys=["foo"])
     origin_client.meta_multiget.assert_called_once()
     destination_client.meta_multiget.assert_not_called()
-    origin_client.set.assert_not_called()
-    destination_client.set.assert_not_called()
+    origin_client.refill.assert_not_called()
+    destination_client.refill.assert_not_called()
 
     origin_client.meta_get.reset_mock()
     origin_client.meta_multiget.reset_mock()
@@ -414,27 +424,25 @@ def test_migration_mode_populate_writes_and_reads_1pct(
     migration_client.get(key="foo")
     origin_client.meta_get.assert_called_once()
     destination_client.meta_get.assert_not_called()
-    origin_client.set.assert_not_called()
-    destination_client.set.assert_called_once_with(
+    origin_client.refill.assert_not_called()
+    destination_client.refill.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
         value="bar",
         ttl=10,
         no_reply=True,
-        set_mode=SetMode.ADD,
     )
-    destination_client.set.reset_mock()
+    destination_client.refill.reset_mock()
 
     # Multi-get
     migration_client.multi_get(keys=["foo"])
     origin_client.meta_multiget.assert_called_once()
     destination_client.meta_multiget.assert_not_called()
-    origin_client.set.assert_not_called()
-    destination_client.set.assert_called_once_with(
+    origin_client.refill.assert_not_called()
+    destination_client.refill.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
         value="bar",
         ttl=10,
         no_reply=True,
-        set_mode=SetMode.ADD,
     )
 
     # Sets (both receive writes)
@@ -446,6 +454,7 @@ def test_migration_mode_populate_writes_and_reads_1pct(
         flags=set(),
         int_flags={IntFlag.CACHE_TTL: 10},
         token_flags=None,
+        failure_handling=DEFAULT_FAILURE_HANDLING,
     )
     destination_client.meta_set.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
@@ -454,6 +463,7 @@ def test_migration_mode_populate_writes_and_reads_1pct(
         flags=set(),
         int_flags={IntFlag.CACHE_TTL: 10},
         token_flags=None,
+        failure_handling=DEFAULT_FAILURE_HANDLING,
     )
 
     # Deletes (both receive writes)
@@ -463,12 +473,14 @@ def test_migration_mode_populate_writes_and_reads_1pct(
         flags=set(),
         int_flags={},
         token_flags=None,
+        failure_handling=DEFAULT_FAILURE_HANDLING,
     )
     destination_client.meta_delete.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
         flags=set(),
         int_flags={},
         token_flags=None,
+        failure_handling=DEFAULT_FAILURE_HANDLING,
     )
 
     # Arithmetic
@@ -478,6 +490,7 @@ def test_migration_mode_populate_writes_and_reads_1pct(
         flags=set(),
         int_flags={IntFlag.MA_DELTA_VALUE: 1},
         token_flags={},
+        failure_handling=DEFAULT_FAILURE_HANDLING,
     )
     destination_client.meta_arithmetic.assert_not_called()
 
@@ -509,15 +522,15 @@ def test_migration_mode_populate_writes_and_reads_10pct(
     migration_client.get(key="foo")
     origin_client.meta_get.assert_called_once()
     destination_client.meta_get.assert_not_called()
-    origin_client.set.assert_not_called()
-    destination_client.set.assert_not_called()
+    origin_client.refill.assert_not_called()
+    destination_client.refill.assert_not_called()
 
     # Multi-get
     migration_client.multi_get(keys=["foo"])
     origin_client.meta_multiget.assert_called_once()
     destination_client.meta_multiget.assert_not_called()
-    origin_client.set.assert_not_called()
-    destination_client.set.assert_not_called()
+    origin_client.refill.assert_not_called()
+    destination_client.refill.assert_not_called()
 
     origin_client.meta_get.reset_mock()
     origin_client.meta_multiget.reset_mock()
@@ -529,27 +542,25 @@ def test_migration_mode_populate_writes_and_reads_10pct(
     migration_client.get(key="foo")
     origin_client.meta_get.assert_called_once()
     destination_client.meta_get.assert_not_called()
-    origin_client.set.assert_not_called()
-    destination_client.set.assert_called_once_with(
+    origin_client.refill.assert_not_called()
+    destination_client.refill.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
         value="bar",
         ttl=10,
         no_reply=True,
-        set_mode=SetMode.ADD,
     )
-    destination_client.set.reset_mock()
+    destination_client.refill.reset_mock()
 
     # Multi-get
     migration_client.multi_get(keys=["foo"])
     origin_client.meta_multiget.assert_called_once()
     destination_client.meta_multiget.assert_not_called()
-    origin_client.set.assert_not_called()
-    destination_client.set.assert_called_once_with(
+    origin_client.refill.assert_not_called()
+    destination_client.refill.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
         value="bar",
         ttl=10,
         no_reply=True,
-        set_mode=SetMode.ADD,
     )
 
     # Sets (both receive writes)
@@ -561,6 +572,7 @@ def test_migration_mode_populate_writes_and_reads_10pct(
         flags=set(),
         int_flags={IntFlag.CACHE_TTL: 10},
         token_flags=None,
+        failure_handling=DEFAULT_FAILURE_HANDLING,
     )
     destination_client.meta_set.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
@@ -569,6 +581,7 @@ def test_migration_mode_populate_writes_and_reads_10pct(
         flags=set(),
         int_flags={IntFlag.CACHE_TTL: 10},
         token_flags=None,
+        failure_handling=DEFAULT_FAILURE_HANDLING,
     )
 
     # Deletes (both receive writes)
@@ -578,12 +591,14 @@ def test_migration_mode_populate_writes_and_reads_10pct(
         flags=set(),
         int_flags={},
         token_flags=None,
+        failure_handling=DEFAULT_FAILURE_HANDLING,
     )
     destination_client.meta_delete.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
         flags=set(),
         int_flags={},
         token_flags=None,
+        failure_handling=DEFAULT_FAILURE_HANDLING,
     )
 
     # Arithmetic
@@ -593,6 +608,7 @@ def test_migration_mode_populate_writes_and_reads_10pct(
         flags=set(),
         int_flags={IntFlag.MA_DELTA_VALUE: 1},
         token_flags={},
+        failure_handling=DEFAULT_FAILURE_HANDLING,
     )
     destination_client.meta_arithmetic.assert_not_called()
 
@@ -639,6 +655,7 @@ def test_migration_mode_use_destination_update_origin(
         flags=set(),
         int_flags={IntFlag.CACHE_TTL: 10},
         token_flags=None,
+        failure_handling=DEFAULT_FAILURE_HANDLING,
     )
     destination_client.meta_set.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
@@ -647,6 +664,7 @@ def test_migration_mode_use_destination_update_origin(
         flags=set(),
         int_flags={IntFlag.CACHE_TTL: 10},
         token_flags=None,
+        failure_handling=DEFAULT_FAILURE_HANDLING,
     )
 
     # Deletes (both receive writes)
@@ -656,12 +674,14 @@ def test_migration_mode_use_destination_update_origin(
         flags=set(),
         int_flags={},
         token_flags=None,
+        failure_handling=DEFAULT_FAILURE_HANDLING,
     )
     destination_client.meta_delete.assert_called_once_with(
         key=Key(key="foo", routing_key=None, is_unicode=False),
         flags=set(),
         int_flags={},
         token_flags=None,
+        failure_handling=DEFAULT_FAILURE_HANDLING,
     )
 
     # Arithmetic
@@ -672,6 +692,7 @@ def test_migration_mode_use_destination_update_origin(
         flags=set(),
         int_flags={IntFlag.MA_DELTA_VALUE: 1},
         token_flags={},
+        failure_handling=DEFAULT_FAILURE_HANDLING,
     )
 
     # Touch
