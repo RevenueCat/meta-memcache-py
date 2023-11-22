@@ -91,6 +91,9 @@ class HighLevelCommandsMixin:
         stale_policy: Optional[StalePolicy] = None,
         set_mode: SetMode = SetMode.SET,
     ) -> bool:
+        """
+        Write a value using the specified `set_mode`
+        """
         key = key if isinstance(key, Key) else Key(key)
         flags = RequestFlags(cache_ttl=ttl)
         if no_reply:
@@ -209,6 +212,9 @@ class HighLevelCommandsMixin:
         ttl: int,
         no_reply: bool = False,
     ) -> bool:
+        """
+        Modify the TTL of a key without retrieving the value
+        """
         key = key if isinstance(key, Key) else Key(key)
         flags = RequestFlags(cache_ttl=ttl)
         if no_reply:
@@ -224,6 +230,13 @@ class HighLevelCommandsMixin:
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Optional[Any]:
+        """
+        Get a key. On miss try to get a lease.
+
+        Guarantees only one cache client will get the miss and
+        gets to repopulate cache, while the others are blocked
+        waiting (according to the settings in the LeasePolicy)
+        """
         value, _ = self.get_or_lease_cas(
             key=key,
             lease_policy=lease_policy,
@@ -239,6 +252,10 @@ class HighLevelCommandsMixin:
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Tuple[Optional[Any], Optional[int]]:
+        """
+        Same as get_or_lease(), but also return the CAS token so
+        it can be used during writes and detect races
+        """
         if lease_policy.miss_retries <= 0:
             raise ValueError(
                 "Wrong lease_policy: miss_retries needs to be greater than 0"
@@ -293,6 +310,9 @@ class HighLevelCommandsMixin:
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Optional[Any]:
+        """
+        Get a key
+        """
         result = self._get(
             key=key,
             touch_ttl=touch_ttl,
@@ -307,6 +327,9 @@ class HighLevelCommandsMixin:
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Dict[Key, Optional[Any]]:
+        """
+        Get multiple keys at once
+        """
         results = self._multi_get(
             keys=keys,
             touch_ttl=touch_ttl,
@@ -342,6 +365,10 @@ class HighLevelCommandsMixin:
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Tuple[Optional[Any], Optional[int]]:
+        """
+        Same as get(), but also return the CAS token so
+        it can be used during writes and detect races
+        """
         result = self._get(
             key=key,
             touch_ttl=touch_ttl,
@@ -402,6 +429,9 @@ class HighLevelCommandsMixin:
         recache_policy: Optional[RecachePolicy] = None,
         error_on_type_mismatch: bool = False,
     ) -> Optional[T]:
+        """
+        Same as get(), but ensure the type matched the provided cls
+        """
         value = self.get(
             key=key,
             touch_ttl=touch_ttl,
@@ -417,6 +447,10 @@ class HighLevelCommandsMixin:
         recache_policy: Optional[RecachePolicy] = None,
         error_on_type_mismatch: bool = False,
     ) -> Tuple[Optional[T], Optional[int]]:
+        """
+        Same as get_typed(), but also return the CAS token so
+        it can be used during writes and detect races
+        """
         value, cas_token = self.get_cas(
             key=key, touch_ttl=touch_ttl, recache_policy=recache_policy
         )
@@ -469,6 +503,9 @@ class HighLevelCommandsMixin:
         no_reply: bool = False,
         cas_token: Optional[int] = None,
     ) -> bool:
+        """
+        Increment/Decrement a key that contains a counter
+        """
         key = key if isinstance(key, Key) else Key(key)
         flags = self._get_delta_flags(
             delta=delta,
@@ -489,6 +526,11 @@ class HighLevelCommandsMixin:
         no_reply: bool = False,
         cas_token: Optional[int] = None,
     ) -> bool:
+        """
+        Increment/Decrement a key that contains a counter,
+        creating and setting it to the initial value if the
+        counter does not exist.
+        """
         key = key if isinstance(key, Key) else Key(key)
         flags = self._get_delta_flags(
             delta=delta,
@@ -508,6 +550,9 @@ class HighLevelCommandsMixin:
         refresh_ttl: Optional[int] = None,
         cas_token: Optional[int] = None,
     ) -> Optional[int]:
+        """
+        Same as delta(), but return the resulting value
+        """
         key = key if isinstance(key, Key) else Key(key)
         flags = self._get_delta_flags(
             return_value=True,
@@ -534,6 +579,9 @@ class HighLevelCommandsMixin:
         refresh_ttl: Optional[int] = None,
         cas_token: Optional[int] = None,
     ) -> Optional[int]:
+        """
+        Same as delta_initialize(), but return the resulting value
+        """
         key = key if isinstance(key, Key) else Key(key)
         flags = self._get_delta_flags(
             return_value=True,
