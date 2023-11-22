@@ -168,17 +168,15 @@ of flags, and features, but are very low level for general use.
     def meta_multiget(
         self,
         keys: List[Key],
-        flags: Optional[Set[Flag]] = None,
-        int_flags: Optional[Dict[IntFlag, int]] = None,
-        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        flags: Optional[RequestFlags] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> Dict[Key, ReadResponse]:
 
     def meta_get(
         self,
         key: Key,
-        flags: Optional[Set[Flag]] = None,
-        int_flags: Optional[Dict[IntFlag, int]] = None,
-        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        flags: Optional[RequestFlags] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> ReadResponse:
 
     def meta_set(
@@ -186,29 +184,98 @@ of flags, and features, but are very low level for general use.
         key: Key,
         value: Any,
         ttl: int,
-        flags: Optional[Set[Flag]] = None,
-        int_flags: Optional[Dict[IntFlag, int]] = None,
-        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        flags: Optional[RequestFlags] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> WriteResponse:
 
     def meta_delete(
         self,
         key: Key,
-        flags: Optional[Set[Flag]] = None,
-        int_flags: Optional[Dict[IntFlag, int]] = None,
-        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        flags: Optional[RequestFlags] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> WriteResponse:
 
     def meta_arithmetic(
         self,
         key: Key,
-        flags: Optional[Set[Flag]] = None,
-        int_flags: Optional[Dict[IntFlag, int]] = None,
-        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        flags: Optional[RequestFlags] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> WriteResponse:
 ```
+### Special arguments:
+`RequestFlags` has the following arguments:
+ * `no_reply`: Set to True if the server should not send a response
+ * `return_client_flag`: Set to True if the server should return the client flag
+ * `return_cas_token`: Set to True if the server should return the CAS token
+ * `return_value`: Set to True if the server should return the value (Default)
+ * `return_ttl`: Set to True if the server should return the TTL
+ * `return_size`: Set to True if the server should return the size (useful if when paired with return_value=False, to get the size of the value)
+ * `return_last_access`: Set to True if the server should return the last access time
+ * `return_fetched`: Set to True if the server should return the fetched flag
+ * `return_key`: Set to True if the server should return the key in the response
+ * `no_update_lru`: Set to True if the server should not update the LRU on this access
+ * `mark_stale`: Set to True if the server should mark the value as stale
+ * `cache_ttl`: The TTL to set on the key
+ * `recache_ttl`: The TTL to use for recache policy
+ * `vivify_on_miss_ttl`: The TTL to use when vivifying a value on a miss
+ * `client_flag`: The client flag to store along the value (Useful to store value type, compression, etc)
+ * `ma_initial_value`: For arithmetic operations, the initial value to use (if the key does not exist)
+ * `ma_delta_value`: For arithmetic operations, the delta value to use
+ * `cas_token`: The CAS token to use when storing the value in the cache
+ * `opaque`: The opaque flag (will be echoed back in the response)
+ * `mode`: The mode to use when storing the value in the cache. See SET_MODE_* and MA_MODE_* constants
 
-You won't use this api unless you are implementing some custom high-level
+`FailureHandling` controls how the failures are handled. Has the arguments:
+ * `raise_on_server_error`: (`Optional[bool]`) Wether to raise on error:
+   - `True`: Raises on server errors
+   - `False`: Returns miss for reads and false on writes
+   - `None` (DEFAULT): Use the raise on error setting configured in the Router
+ * `track_write_failures``: (`bool`) Wether to track failures:
+   - `True` (DEFAULT): Track write failures
+   - `False`: Do not notify write failures
+
+The default settings are usually good, but there are situations when you want control.
+For example, a refill (populating an entry that was missing on cache) doesn't need to
+track write failures. If fails to be written, the cache will still be empty, so no need
+to track that as a write failure. Similarly sometimes you need to know if a write failed
+due to CAS semantics, or because it was an add vs when it is due to server failure.
+
+### Responses:
+The responses are either:
+ * `ReadResponse`: `Union[Miss, Value, Success]`
+ * `WriteResponse`:  `Union[Success, NotStored, Conflict, Miss]`
+
+Which are:
+ * `Miss`: For key not found. No arguments
+ * `Success`: Successfull operation
+   - `flags`: `ResponseFlags` 
+ * `Value`: For value responses
+   - `flags`: `ResponseFlags` 
+   - `size`: `int` Size of the value
+   - `value`: `Any` The value
+ * `NotStored`: Not stored, for example "add" on exising key. No arguments.
+ * `Conflict`: Not stored, for example due to CAS mismatch. No arguments.
+
+The `ResponseFlags` contains the all the returned flags. This metadata gives a lot of
+control and posibilities, it is the strength of the meta protocol:
+ * `cas_token`: Compare-And-Swap token (integer value) or `None` if not returned
+ * `fetched`:
+     - `True` if fetched since being set
+     - `False` if not fetched since being set
+     - `None` if the server did not return this flag info
+ * `last_access`: time in seconds since last access (integer value) or `None` if not returned
+ * `ttl`: time in seconds until the value expires (integer value) or `None` if not returned
+     - The special value `-1` represents if the key will never expire
+ * `client_flag`: integer value or `None` if not returned
+ * `win`:
+     - `True` if the client won the right to repopulate
+     - `False` if the client lost the right to repopulate
+     - `None` if the server did not return a win/lose flag
+ * `stale`: `True` if the value is stale, `False` otherwise
+ * `real_size`: integer value or `None` if not returned
+ * `opaque flag`: bytes value or `None` if not returned
+
+NOTE: You shouldn't use this api directly, unless you are implementing some custom high-level
 command. See below for the usual memcache api.
 
 ## High level commands:
@@ -233,6 +300,33 @@ Invalidation...
         stale_policy: Optional[StalePolicy] = None,
         set_mode: SetMode = SetMode.SET,  # Other are ADD, REPLACE, APPEND...
     ) -> bool:
+        """
+        Write a value using the specified `set_mode`
+        """
+
+    def refill(
+        self: HighLevelCommandMixinWithMetaCommands,
+        key: Union[Key, str],
+        value: Any,
+        ttl: int,
+        no_reply: bool = False,
+    ) -> bool:
+        """
+        Try to refill a value.
+
+        Use this method when you got a cache miss, read from DB and
+        are trying to refill the value.
+
+        DO NOT USE to write new state.
+
+        It will:
+         * use "ADD" mode, so it will fail if the value is already
+           present in cache.
+         * It will also disable write failure tracking. The write
+           failure tracking is often used to invalidate keys that
+           fail to be written. Since this is not writting new state,
+           there is no need to track failures.
+        """
 
     def delete(
         self,
@@ -241,6 +335,12 @@ Invalidation...
         no_reply: bool = False,
         stale_policy: Optional[StalePolicy] = None,
     ) -> bool:
+        """
+        Returns True if the key existed and it was deleted.
+        If the key is not found in the cache it will return False. If
+        you just want to the key to be deleted not caring of whether
+        it exists or not, use invalidate() instead.
+        """
 
     def invalidate(
         self,
@@ -249,6 +349,9 @@ Invalidation...
         no_reply: bool = False,
         stale_policy: Optional[StalePolicy] = None,
     ) -> bool:
+        """
+        Returns true of the key deleted or it didn't exist anyway
+        """
 
     def touch(
         self,
@@ -256,6 +359,9 @@ Invalidation...
         ttl: int,
         no_reply: bool = False,
     ) -> bool:
+        """
+        Modify the TTL of a key without retrieving the value
+        """
 
     def get_or_lease(
         self,
@@ -264,6 +370,13 @@ Invalidation...
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Optional[Any]:
+        """
+        Get a key. On miss try to get a lease.
+
+        Guarantees only one cache client will get the miss and
+        gets to repopulate cache, while the others are blocked
+        waiting (according to the settings in the LeasePolicy)
+        """
 
     def get_or_lease_cas(
         self,
@@ -272,6 +385,10 @@ Invalidation...
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Tuple[Optional[Any], Optional[int]]:
+        """
+        Same as get_or_lease(), but also return the CAS token so
+        it can be used during writes and detect races
+        """
 
     def get(
         self,
@@ -279,6 +396,9 @@ Invalidation...
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Optional[Any]:
+        """
+        Get a key
+        """
 
     def multi_get(
         self,
@@ -286,6 +406,9 @@ Invalidation...
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Dict[Key, Optional[Any]]:
+        """
+        Get multiple keys at once
+        """
 
     def get_cas(
         self,
@@ -293,6 +416,10 @@ Invalidation...
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Tuple[Optional[Any], Optional[int]]:
+        """
+        Same as get(), but also return the CAS token so
+        it can be used during writes and detect races
+        """
 
     def get_typed(
         self,
@@ -302,6 +429,9 @@ Invalidation...
         recache_policy: Optional[RecachePolicy] = None,
         error_on_type_mismatch: bool = False,
     ) -> Optional[T]:
+        """
+        Same as get(), but ensure the type matched the provided cls
+        """
 
     def get_cas_typed(
         self,
@@ -311,6 +441,10 @@ Invalidation...
         recache_policy: Optional[RecachePolicy] = None,
         error_on_type_mismatch: bool = False,
     ) -> Tuple[Optional[T], Optional[int]]:
+        """
+        Same as get_typed(), but also return the CAS token so
+        it can be used during writes and detect races
+        """
 
     def delta(
         self,
@@ -320,6 +454,9 @@ Invalidation...
         no_reply: bool = False,
         cas_token: Optional[int] = None,
     ) -> bool:
+        """
+        Increment/Decrement a key that contains a counter
+        """
 
     def delta_initialize(
         self,
@@ -331,6 +468,11 @@ Invalidation...
         no_reply: bool = False,
         cas_token: Optional[int] = None,
     ) -> bool:
+        """
+        Increment/Decrement a key that contains a counter,
+        creating and setting it to the initial value if the
+        counter does not exist.
+        """
 
     def delta_and_get(
         self,
@@ -339,6 +481,9 @@ Invalidation...
         refresh_ttl: Optional[int] = None,
         cas_token: Optional[int] = None,
     ) -> Optional[int]:
+        """
+        Same as delta(), but return the resulting value
+        """
 
     def delta_initialize_and_get(
         self,
@@ -349,9 +494,19 @@ Invalidation...
         refresh_ttl: Optional[int] = None,
         cas_token: Optional[int] = None,
     ) -> Optional[int]:
+        """
+        Same as delta_initialize(), but return the resulting value
+        """
 ```
 
-# Anti-dogpiling techniques
+# Reliability, consistency and best practices
+We have published a deep-dive into some of the techniques to keep
+cache consistent and reliable under high load that RevenueCat uses,
+available thanks to this cache client.
+
+See: https://www.revenuecat.com/blog/engineering/data-caching-revenuecat/
+
+## Anti-dogpiling, preventing thundering herds:
 Some commands receive `RecachePolicy`, `StalePolicy` and `LeasePolicy` for the
 advanced anti-dogpiling control needed in high-qps environments:
 
