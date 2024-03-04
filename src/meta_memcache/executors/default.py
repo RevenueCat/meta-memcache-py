@@ -68,10 +68,11 @@ class DefaultExecutor:
 
     def _prepare_serialized_value_and_flags(
         self,
+        key: Key,
         value: ValueContainer,
         flags: Optional[RequestFlags],
     ) -> Tuple[Optional[bytes], RequestFlags]:
-        encoded_value = self._serializer.serialize(value.value)
+        encoded_value = self._serializer.serialize(key, value.value)
         flags = flags if flags is not None else RequestFlags()
         flags.client_flag = encoded_value.encoding_id
         return encoded_value.data, flags
@@ -106,7 +107,7 @@ class DefaultExecutor:
         cmd_value, flags = (
             (None, flags)
             if value is None
-            else self._prepare_serialized_value_and_flags(value, flags)
+            else self._prepare_serialized_value_and_flags(key, value, flags)
         )
         try:
             conn = pool.pop_connection()
@@ -159,7 +160,7 @@ class DefaultExecutor:
                     cmd_value, flags = (
                         (None, flags)
                         if value is None
-                        else self._prepare_serialized_value_and_flags(value, flags)
+                        else self._prepare_serialized_value_and_flags(key, value, flags)
                     )
 
                     self._conn_send_cmd(

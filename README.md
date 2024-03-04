@@ -97,14 +97,26 @@ will be gone or present, since they are stored in the same server). Note this is
 also risky, if you place all keys of a user in the same server, and the server
 goes down, the user life will be miserable.
 
-### Unicode keys:
-Unicode keys are supported, the keys will be hashed according to Meta commands
+### Custom domains:
+You can add a domain to keys. This domain can be used for custom per-domain
+metrics like hit ratios or to control serialization of the values.
+```python:
+Key("key:1:2", domain="example")
+```
+For example the ZstdSerializer allows to configure different dictionaries by
+domain, so you can compress more efficiently data of different domains.
+
+### Unicode/binary keys:
+Both unicode and binary keys are supported, the keys will be hashed/encoded according to Meta commands
 [binary encoded keys](https://github.com/memcached/memcached/wiki/MetaCommands#binary-encoded-keys)
 specification.
 
-To use this, mark the key as unicode:
+Using binary keys can have benefits, saving space in memory. While over the wire the key
+is transmited b64 encoded, the memcache server will use the byte representation, so it will
+not have the 1/4 overhead of b64 encoding.
+
 ```python:
-Key("🍺", unicode=True)
+Key("🍺")
 ```
 
 ### Large keys:
