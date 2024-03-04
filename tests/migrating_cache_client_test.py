@@ -87,7 +87,7 @@ def _set_cache_client_mock_get_return_values(client: Mock, ttl: int = 10) -> Non
         ),
     )
     client.meta_multiget.return_value = {
-        Key(key="foo", routing_key=None, is_unicode=False): Value(
+        Key(key="foo", routing_key=None): Value(
             size=3,
             value="bar",
             flags=ResponseFlags(
@@ -164,7 +164,7 @@ def test_migration_mode_origin_only(
     # Sets
     migration_client_origin_only.set(key="foo", value="bar", ttl=10)
     origin_client.meta_set.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         value="bar",
         ttl=10,
         flags=RequestFlags(cache_ttl=10),
@@ -175,7 +175,7 @@ def test_migration_mode_origin_only(
     # Deletes
     migration_client_origin_only.delete(key="foo")
     origin_client.meta_delete.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         flags=RequestFlags(),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
@@ -184,7 +184,7 @@ def test_migration_mode_origin_only(
     # Arithmetic
     migration_client_origin_only.delta(key="foo", delta=1)
     origin_client.meta_arithmetic.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         flags=RequestFlags(ma_delta_value=1),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
@@ -221,7 +221,7 @@ def test_migration_mode_destination_only(
     migration_client_destination_only.set(key="foo", value="bar", ttl=10)
     origin_client.meta_set.assert_not_called()
     destination_client.meta_set.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         value="bar",
         ttl=10,
         flags=RequestFlags(cache_ttl=10),
@@ -232,7 +232,7 @@ def test_migration_mode_destination_only(
     migration_client_destination_only.delete(key="foo")
     origin_client.meta_delete.assert_not_called()
     destination_client.meta_delete.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         flags=RequestFlags(),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
@@ -241,7 +241,7 @@ def test_migration_mode_destination_only(
     migration_client_destination_only.delta(key="foo", delta=1)
     origin_client.meta_arithmetic.assert_not_called()
     destination_client.meta_arithmetic.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         flags=RequestFlags(ma_delta_value=1),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
@@ -280,14 +280,14 @@ def test_migration_mode_populate_writes(
     # Sets (both receive writes)
     migration_client.set(key="foo", value="bar", ttl=10)
     origin_client.meta_set.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         value="bar",
         ttl=10,
         flags=RequestFlags(cache_ttl=10),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
     destination_client.meta_set.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         value="bar",
         ttl=10,
         flags=RequestFlags(cache_ttl=10),
@@ -297,12 +297,12 @@ def test_migration_mode_populate_writes(
     # Deletes (both receive writes)
     migration_client.delete(key="foo")
     origin_client.meta_delete.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         flags=RequestFlags(),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
     destination_client.meta_delete.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         flags=RequestFlags(),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
@@ -310,7 +310,7 @@ def test_migration_mode_populate_writes(
     # Arithmetic
     migration_client.delta(key="foo", delta=1)
     origin_client.meta_arithmetic.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         flags=RequestFlags(ma_delta_value=1),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
@@ -347,7 +347,7 @@ def test_migration_mode_populate_reads_handles_non_expiring_keys(
     destination_client.meta_get.assert_not_called()
     origin_client.set.assert_not_called()
     destination_client.refill.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         value="bar",
         ttl=0,
         no_reply=True,
@@ -360,7 +360,7 @@ def test_migration_mode_populate_reads_handles_non_expiring_keys(
     destination_client.meta_multiget.assert_not_called()
     origin_client.set.assert_not_called()
     destination_client.refill.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         value="bar",
         ttl=0,
         no_reply=True,
@@ -411,7 +411,7 @@ def test_migration_mode_populate_writes_and_reads_1pct(
     destination_client.meta_get.assert_not_called()
     origin_client.refill.assert_not_called()
     destination_client.refill.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         value="bar",
         ttl=10,
         no_reply=True,
@@ -424,7 +424,7 @@ def test_migration_mode_populate_writes_and_reads_1pct(
     destination_client.meta_multiget.assert_not_called()
     origin_client.refill.assert_not_called()
     destination_client.refill.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         value="bar",
         ttl=10,
         no_reply=True,
@@ -433,14 +433,14 @@ def test_migration_mode_populate_writes_and_reads_1pct(
     # Sets (both receive writes)
     migration_client.set(key="foo", value="bar", ttl=10)
     origin_client.meta_set.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         value="bar",
         ttl=10,
         flags=RequestFlags(cache_ttl=10),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
     destination_client.meta_set.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         value="bar",
         ttl=10,
         flags=RequestFlags(cache_ttl=10),
@@ -450,12 +450,12 @@ def test_migration_mode_populate_writes_and_reads_1pct(
     # Deletes (both receive writes)
     migration_client.delete(key="foo")
     origin_client.meta_delete.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         flags=RequestFlags(),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
     destination_client.meta_delete.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         flags=RequestFlags(),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
@@ -463,7 +463,7 @@ def test_migration_mode_populate_writes_and_reads_1pct(
     # Arithmetic
     migration_client.delta(key="foo", delta=1)
     origin_client.meta_arithmetic.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         flags=RequestFlags(ma_delta_value=1),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
@@ -519,7 +519,7 @@ def test_migration_mode_populate_writes_and_reads_10pct(
     destination_client.meta_get.assert_not_called()
     origin_client.refill.assert_not_called()
     destination_client.refill.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         value="bar",
         ttl=10,
         no_reply=True,
@@ -532,7 +532,7 @@ def test_migration_mode_populate_writes_and_reads_10pct(
     destination_client.meta_multiget.assert_not_called()
     origin_client.refill.assert_not_called()
     destination_client.refill.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         value="bar",
         ttl=10,
         no_reply=True,
@@ -541,14 +541,14 @@ def test_migration_mode_populate_writes_and_reads_10pct(
     # Sets (both receive writes)
     migration_client.set(key="foo", value="bar", ttl=10)
     origin_client.meta_set.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         value="bar",
         ttl=10,
         flags=RequestFlags(cache_ttl=10),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
     destination_client.meta_set.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         value="bar",
         ttl=10,
         flags=RequestFlags(cache_ttl=10),
@@ -558,12 +558,12 @@ def test_migration_mode_populate_writes_and_reads_10pct(
     # Deletes (both receive writes)
     migration_client.delete(key="foo")
     origin_client.meta_delete.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         flags=RequestFlags(),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
     destination_client.meta_delete.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         flags=RequestFlags(),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
@@ -571,7 +571,7 @@ def test_migration_mode_populate_writes_and_reads_10pct(
     # Arithmetic
     migration_client.delta(key="foo", delta=1)
     origin_client.meta_arithmetic.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         flags=RequestFlags(ma_delta_value=1),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
@@ -614,14 +614,14 @@ def test_migration_mode_use_destination_update_origin(
     # Sets (both receive writes)
     migration_client.set(key="foo", value="bar", ttl=10)
     origin_client.meta_set.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         value="bar",
         ttl=10,
         flags=RequestFlags(cache_ttl=10),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
     destination_client.meta_set.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         value="bar",
         ttl=10,
         flags=RequestFlags(cache_ttl=10),
@@ -631,12 +631,12 @@ def test_migration_mode_use_destination_update_origin(
     # Deletes (both receive writes)
     migration_client.delete(key="foo")
     origin_client.meta_delete.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         flags=RequestFlags(),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
     destination_client.meta_delete.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         flags=RequestFlags(),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
@@ -645,7 +645,7 @@ def test_migration_mode_use_destination_update_origin(
     migration_client.delta(key="foo", delta=1)
     origin_client.meta_arithmetic.assert_not_called()
     destination_client.meta_arithmetic.assert_called_once_with(
-        key=Key(key="foo", routing_key=None, is_unicode=False),
+        key=Key(key="foo", routing_key=None),
         flags=RequestFlags(ma_delta_value=1),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
