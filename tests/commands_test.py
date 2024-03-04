@@ -551,7 +551,7 @@ def test_get_cmd(memcache_socket: MemcacheSocket, cache_client: CacheClient) -> 
     memcache_socket.sendall.reset_mock()
 
     cache_client.get(
-        key=Key("úníçod⍷", is_unicode=True),
+        key=Key("úníçod⍷"),
         touch_ttl=300,
         recache_policy=RecachePolicy(),
     )
@@ -614,7 +614,7 @@ def test_get_miss(memcache_socket: MemcacheSocket, cache_client: CacheClient) ->
 def test_get_value(memcache_socket: MemcacheSocket, cache_client: CacheClient) -> None:
     expected_cas_token = 123
     expected_value = Foo("hello world")
-    encoded_value = MixedSerializer().serialize(expected_value)
+    encoded_value = MixedSerializer().serialize(Key("foo"), expected_value)
     memcache_socket.get_response.return_value = Value(
         size=len(encoded_value.data),
         value=None,
@@ -659,7 +659,7 @@ def test_value_wrong_type(
 ) -> None:
     expected_cas_token = 123
     expected_value = Foo("hello world")
-    encoded_value = MixedSerializer().serialize(expected_value)
+    encoded_value = MixedSerializer().serialize(Key("foo"), expected_value)
     memcache_socket.get_response.return_value = Value(
         size=len(encoded_value.data),
         value=None,
@@ -722,7 +722,7 @@ def test_recache_win_returns_miss(
 ) -> None:
     expected_cas_token = 123
     expected_value = Foo("hello world")
-    encoded_value = MixedSerializer().serialize(expected_value)
+    encoded_value = MixedSerializer().serialize(Key("foo"), expected_value)
     memcache_socket.get_response.return_value = Value(
         size=len(encoded_value.data),
         value=None,
@@ -745,7 +745,7 @@ def test_recache_lost_returns_stale_value(
 ) -> None:
     expected_cas_token = 123
     expected_value = Foo("hello world")
-    encoded_value = MixedSerializer().serialize(expected_value)
+    encoded_value = MixedSerializer().serialize(Key("foo"), expected_value)
     memcache_socket.get_response.return_value = Value(
         size=len(encoded_value.data),
         value=None,
@@ -768,7 +768,7 @@ def test_get_or_lease_hit(
 ) -> None:
     expected_cas_token = 123
     expected_value = Foo("hello world")
-    encoded_value = MixedSerializer().serialize(expected_value)
+    encoded_value = MixedSerializer().serialize(Key("foo"), expected_value)
     memcache_socket.get_response.return_value = Value(
         size=len(encoded_value.data),
         value=None,
@@ -822,7 +822,7 @@ def test_get_or_lease_miss_lost_then_data(
 ) -> None:
     expected_cas_token = 123
     expected_value = Foo("hello world")
-    encoded_value = MixedSerializer().serialize(expected_value)
+    encoded_value = MixedSerializer().serialize(Key("foo"), expected_value)
     memcache_socket.get_response.side_effect = [
         Value(
             size=0,

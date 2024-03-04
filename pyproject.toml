@@ -14,7 +14,8 @@ packages = [{include = "meta_memcache", from="src"}]
 python = "^3.8"
 uhashring = "^2.1"
 marisa-trie = "^1.0.0"
-meta-memcache-socket = "0.1.1"
+meta-memcache-socket = "0.1.3"
+zstandard = "^0.22.0"
 
 [tool.poetry.group.extras.dependencies]
 prometheus-client = "^0.17.1"
@@ -27,7 +28,7 @@ testpaths = [
 
 [tool.isort]
 profile = "black"
-known_third_party = ["uhashring", "pytest", "pytest_mock", "marisa-trie"]
+known_third_party = ["uhashring", "pytest", "pytest_mock", "marisa-trie", "zstandard"]
 
 [tool.coverage.paths]
 source = ["src", "*/site-packages"]

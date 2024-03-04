@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, NamedTuple
 
-from meta_memcache.protocol import Blob
+from meta_memcache.protocol import Blob, Key
 
 
 class EncodedValue(NamedTuple):
@@ -13,6 +13,7 @@ class BaseSerializer(ABC):
     @abstractmethod
     def serialize(
         self,
+        key: Key,
         value: Any,
     ) -> EncodedValue: ...
 
