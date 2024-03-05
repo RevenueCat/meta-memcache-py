@@ -10,7 +10,7 @@ from meta_memcache.configuration import RecachePolicy
 from meta_memcache.extras.client_wrapper import ClientWrapper
 from meta_memcache.interfaces.cache_api import CacheApi
 from meta_memcache.metrics.base import BaseMetricsCollector, MetricDefinition
-from meta_memcache.protocol import IntFlag, Key, Value
+from meta_memcache.protocol import Key, Value
 
 
 @dataclass
@@ -124,8 +124,8 @@ class ProbabilisticHotCache(ClientWrapper):
         allowed: bool,
     ) -> None:
         if not is_hot:
-            hit_after_write = value.int_flags.get(IntFlag.HIT_AFTER_WRITE, 0)
-            last_read_age = value.int_flags.get(IntFlag.LAST_READ_AGE, 9999)
+            hit_after_write = value.fetched or 0
+            last_read_age = value.last_access if value.last_access is not None else 9999
             if (
                 hit_after_write > 0
                 and last_read_age <= self._max_last_access_age_seconds

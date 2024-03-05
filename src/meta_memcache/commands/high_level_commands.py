@@ -287,12 +287,11 @@ class HighLevelCommandsMixin:
 
             if isinstance(result, Value):
                 # It is a hit.
-                cas_token = result.int_flags.get(IntFlag.RETURNED_CAS_TOKEN)
-                if Flag.WIN in result.flags:
+                if result.win:
                     # Win flag present, meaning we got the lease to
                     # recache/cache the item. We need to mimic a miss.
-                    return None, cas_token
-                if result.size == 0 and Flag.LOST in result.flags:
+                    return None, result.cas_token
+                if result.size == 0 and result.win is False:
                     # The value is empty, this is a miss lease,
                     # and we lost, so we must keep retrying and
                     # wait for the winner to populate the value.
@@ -300,11 +299,11 @@ class HighLevelCommandsMixin:
                         continue
                     else:
                         # We run out of retries, behave as a miss
-                        return None, cas_token
+                        return None, result.cas_token
                 else:
                     # There is data, either the is no lease or
                     # we lost and should use the stale value.
-                    return result.value, cas_token
+                    return result.value, result.cas_token
             else:
                 # With MISS_LEASE_TTL we should always get a value
                 # because on miss a lease empty value is generated
@@ -379,8 +378,7 @@ class HighLevelCommandsMixin:
         if result is None:
             return None, None
         else:
-            cas_token = result.int_flags.get(IntFlag.RETURNED_CAS_TOKEN)
-            return result.value, cas_token
+            return result.value, result.cas_token
 
     def _get(
         self: HighLevelCommandMixinWithMetaCommands,
@@ -416,7 +414,7 @@ class HighLevelCommandsMixin:
     ) -> Optional[Value]:
         if isinstance(result, Value):
             # It is a hit
-            if Flag.WIN in result.flags:
+            if result.win:
                 # Win flag present, meaning we got the lease to
                 # recache the item. We need to mimic a miss, so
                 # we set the value to None.
