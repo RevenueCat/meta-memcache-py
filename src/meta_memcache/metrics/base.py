@@ -41,8 +41,7 @@ class BaseMetricsCollector(ABC):
         metrics: List[MetricDefinition],
         gauges: List[MetricDefinition],
         namespace: str = "",
-    ) -> None:
-        ...  # pragma: no cover
+    ) -> None: ...  # pragma: no cover
 
     @abstractmethod
     def metric_inc(
@@ -50,8 +49,7 @@ class BaseMetricsCollector(ABC):
         key: str,
         value: Union[float, int] = 1,
         labels: Optional[Dict[str, str]] = None,
-    ) -> None:
-        ...  # pragma: no cover
+    ) -> None: ...  # pragma: no cover
 
     @abstractmethod
     def gauge_set(
@@ -59,9 +57,7 @@ class BaseMetricsCollector(ABC):
         key: str,
         value: float,
         labels: Optional[Dict[str, str]] = None,
-    ) -> None:
-        ...  # pragma: no cover
+    ) -> None: ...  # pragma: no cover
 
     @abstractmethod
-    def get_counters(self) -> Dict[str, float]:
-        ...  # pragma: no cover
+    def get_counters(self) -> Dict[str, float]: ...  # pragma: no cover

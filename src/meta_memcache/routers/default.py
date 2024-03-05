@@ -94,9 +94,9 @@ class DefaultRouter:
     ) -> Dict[ConnectionPool, List[Tuple[Key, MaybeValue]]]:
         if values is not None and len(values) != len(keys):
             raise ValueError("Values, if provided, needs to match the number of keys")
-        pool_map: DefaultDict[
-            ConnectionPool, List[Tuple[Key, MaybeValue]]
-        ] = defaultdict(list)
+        pool_map: DefaultDict[ConnectionPool, List[Tuple[Key, MaybeValue]]] = (
+            defaultdict(list)
+        )
         for i, key in enumerate(keys):
             pool_map[pool_getter(key)].append((key, values[i] if values else None))
         return pool_map

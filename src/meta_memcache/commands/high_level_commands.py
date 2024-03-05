@@ -43,13 +43,11 @@ class HighLevelCommandMixinWithMetaCommands(
         lease_policy: Optional[LeasePolicy] = None,
         recache_policy: Optional[RecachePolicy] = None,
         return_cas_token: bool = False,
-    ) -> Optional[Value]:
-        ...  # pragma: no cover
+    ) -> Optional[Value]: ...  # pragma: no cover
 
     def _process_get_result(
         self, key: Union[Key, str], result: ReadResponse
-    ) -> Optional[Value]:
-        ...  # pragma: no cover
+    ) -> Optional[Value]: ...  # pragma: no cover
 
     def _get_typed_value(
         self,
@@ -57,8 +55,7 @@ class HighLevelCommandMixinWithMetaCommands(
         value: Any,
         cls: Type[T],
         error_on_type_mismatch: bool = False,
-    ) -> Optional[T]:
-        ...  # pragma: no cover
+    ) -> Optional[T]: ...  # pragma: no cover
 
     def _get_delta_flags(
         self,
@@ -67,8 +64,9 @@ class HighLevelCommandMixinWithMetaCommands(
         no_reply: bool = False,
         cas_token: Optional[int] = None,
         return_value: bool = False,
-    ) -> Tuple[Set[Flag], Dict[IntFlag, int], Dict[TokenFlag, bytes]]:
-        ...  # pragma: no cover
+    ) -> Tuple[
+        Set[Flag], Dict[IntFlag, int], Dict[TokenFlag, bytes]
+    ]: ...  # pragma: no cover
 
 
 class HighLevelCommandsMixin:

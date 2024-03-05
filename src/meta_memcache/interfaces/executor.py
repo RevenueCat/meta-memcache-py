@@ -52,9 +52,9 @@ class Executor(Protocol):
         ...  # pragma: no cover
 
     @property
-    def on_write_failure(self) -> WriteFailureEvent:
-        ...  # pragma: no cover
+    def on_write_failure(self) -> WriteFailureEvent: ...  # pragma: no cover
 
     @on_write_failure.setter
-    def on_write_failure(self, value: WriteFailureEvent) -> None:
-        ...  # pragma: no cover
+    def on_write_failure(
+        self, value: WriteFailureEvent
+    ) -> None: ...  # pragma: no cover
