@@ -32,6 +32,22 @@ from meta_memcache.protocol import (
 T = TypeVar("T")
 _REFILL_FAILURE_HANDLING = FailureHandling(track_write_failures=False)
 
+DEFAULT_FLAGS: Set[Flag] = {
+    Flag.RETURN_VALUE,
+    Flag.RETURN_TTL,
+    Flag.RETURN_CLIENT_FLAG,
+    Flag.RETURN_LAST_ACCESS,
+    Flag.RETURN_FETCHED,
+}
+DEFAULT_CAS_FLAGS: Set[Flag] = {
+    Flag.RETURN_VALUE,
+    Flag.RETURN_TTL,
+    Flag.RETURN_CLIENT_FLAG,
+    Flag.RETURN_LAST_ACCESS,
+    Flag.RETURN_FETCHED,
+    Flag.RETURN_CAS_TOKEN,
+}
+
 
 class HighLevelCommandMixinWithMetaCommands(
     HighLevelCommandsProtocol, MetaCommandsProtocol, Protocol
@@ -328,20 +344,18 @@ class HighLevelCommandsMixin:
         recache_policy: Optional[RecachePolicy] = None,
         return_cas_token: bool = False,
     ) -> Dict[Key, Optional[Value]]:
-        flags = {
-            Flag.RETURN_VALUE,
-            Flag.RETURN_TTL,
-            Flag.RETURN_CLIENT_FLAG,
-            Flag.RETURN_LAST_ACCESS,
-            Flag.RETURN_FETCHED,
-        }
         if return_cas_token:
-            flags.add(Flag.RETURN_CAS_TOKEN)
-        int_flags = {}
-        if recache_policy:
-            int_flags[IntFlag.RECACHE_TTL] = recache_policy.ttl
-        if touch_ttl is not None and touch_ttl >= 0:
-            int_flags[IntFlag.CACHE_TTL] = touch_ttl
+            flags = DEFAULT_CAS_FLAGS.copy()
+        else:
+            flags = DEFAULT_FLAGS.copy()
+        if recache_policy is None and touch_ttl is None:
+            int_flags = None
+        else:
+            int_flags = {}
+            if recache_policy:
+                int_flags[IntFlag.RECACHE_TTL] = recache_policy.ttl
+            if touch_ttl is not None and touch_ttl >= 0:
+                int_flags[IntFlag.CACHE_TTL] = touch_ttl
 
         results = self.meta_multiget(
             keys=[key if isinstance(key, Key) else Key(key) for key in keys],
@@ -377,22 +391,20 @@ class HighLevelCommandsMixin:
         return_cas_token: bool = False,
     ) -> Optional[Value]:
         key = key if isinstance(key, Key) else Key(key)
-        flags = {
-            Flag.RETURN_VALUE,
-            Flag.RETURN_TTL,
-            Flag.RETURN_CLIENT_FLAG,
-            Flag.RETURN_LAST_ACCESS,
-            Flag.RETURN_FETCHED,
-        }
         if return_cas_token:
-            flags.add(Flag.RETURN_CAS_TOKEN)
-        int_flags = {}
-        if lease_policy:
-            int_flags[IntFlag.MISS_LEASE_TTL] = lease_policy.ttl
-        if recache_policy:
-            int_flags[IntFlag.RECACHE_TTL] = recache_policy.ttl
-        if touch_ttl is not None and touch_ttl >= 0:
-            int_flags[IntFlag.CACHE_TTL] = touch_ttl
+            flags = DEFAULT_CAS_FLAGS.copy()
+        else:
+            flags = DEFAULT_FLAGS.copy()
+        if lease_policy is None and recache_policy is None and touch_ttl is None:
+            int_flags = None
+        else:
+            int_flags = {}
+            if lease_policy:
+                int_flags[IntFlag.MISS_LEASE_TTL] = lease_policy.ttl
+            if recache_policy:
+                int_flags[IntFlag.RECACHE_TTL] = recache_policy.ttl
+            if touch_ttl is not None and touch_ttl >= 0:
+                int_flags[IntFlag.CACHE_TTL] = touch_ttl
 
         result = self.meta_get(key, flags=flags, int_flags=int_flags)
         return self._process_get_result(key, result)
