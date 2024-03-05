@@ -40,6 +40,7 @@ from meta_memcache.protocol import (
     Miss,
     NotStored,
     ServerVersion,
+    ResponseFlags,
     SetMode,
     Success,
     TokenFlag,

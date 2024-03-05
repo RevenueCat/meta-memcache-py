@@ -13,7 +13,7 @@ from meta_memcache.extras.probabilistic_hot_cache import (
     ProbabilisticHotCache,
 )
 from meta_memcache.metrics.prometheus import PrometheusMetricsCollector
-from meta_memcache.protocol import Flag, Miss, ReadResponse, TokenFlag
+from meta_memcache.protocol import Flag, Miss, ReadResponse, TokenFlag, ResponseFlags
 
 
 @pytest.fixture
@@ -29,8 +29,10 @@ def client() -> Mock:
             return Value(
                 size=1,
                 value=1,
-                fetched=1,
-                last_access=1,
+                flags=ResponseFlags(
+                    fetched=True,
+                    last_access=1,
+                ),
             )
         elif key.key.endswith("miss"):
             return Miss()
@@ -38,8 +40,10 @@ def client() -> Mock:
             return Value(
                 size=1,
                 value=1,
-                fetched=1,
-                last_access=9999,
+                flags=ResponseFlags(
+                    fetched=True,
+                    last_access=9999,
+                ),
             )
 
     def meta_multiget(
@@ -639,8 +643,10 @@ def test_stale_expires(
     client.meta_get.side_effect = lambda *args, **kwargs: Value(
         size=1,
         value=1,
-        fetched=1,
-        last_access=9999,
+        flags=ResponseFlags(
+            fetched=True,
+            last_access=9999,
+        ),
     )
 
     # The item will no longer be in the hot cache

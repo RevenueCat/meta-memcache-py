@@ -67,11 +67,11 @@ def test_get_response(
     ms = MemcacheSocket(fake_socket)
     result = ms.get_response()
     assert isinstance(result, Success)
-    assert result.cas_token == 1
+    assert result.flags.cas_token == 1
 
     result = ms.get_response()
     assert isinstance(result, Value)
-    assert result.cas_token == 1
+    assert result.flags.cas_token == 1
     assert result.size == 2
 
 
@@ -84,11 +84,11 @@ def test_get_response_1_6_6(
     ms = MemcacheSocket(fake_socket, version=ServerVersion.AWS_1_6_6)
     result = ms.get_response()
     assert isinstance(result, Success)
-    assert result.cas_token == 1
+    assert result.flags.cas_token == 1
 
     result = ms.get_response()
     assert isinstance(result, Value)
-    assert result.cas_token == 1
+    assert result.flags.cas_token == 1
     assert result.size == 2
 
 
@@ -121,7 +121,7 @@ def test_get_value(
     ms = MemcacheSocket(fake_socket)
     result = ms.get_response()
     assert isinstance(result, Value)
-    assert result.cas_token == 1
+    assert result.flags.cas_token == 1
     assert result.size == 2
     ms.get_value(2)
 
@@ -135,9 +135,9 @@ def test_get_value_large(
     ms = MemcacheSocket(fake_socket, buffer_size=100)
     result = ms.get_response()
     assert isinstance(result, Value)
-    assert result.cas_token == 1
-    assert result.win is True
-    assert result.opaque == b"xxx"
+    assert result.flags.cas_token == 1
+    assert result.flags.win is True
+    assert bytes(result.flags.opaque) == b"xxx"
     assert result.size == 200
     value = ms.get_value(result.size)
     assert len(value) == result.size
