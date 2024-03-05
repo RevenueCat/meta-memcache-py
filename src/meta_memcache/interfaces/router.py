@@ -1,17 +1,16 @@
-from typing import Dict, List, NamedTuple, Optional, Protocol, Set
+from typing import Dict, List, NamedTuple, Optional, Protocol
+
 
 from meta_memcache.configuration import ServerAddress
 from meta_memcache.connection.pool import PoolCounters
 from meta_memcache.interfaces.executor import Executor
 from meta_memcache.protocol import (
-    Flag,
-    IntFlag,
     Key,
     MaybeValue,
     MaybeValues,
     MemcacheResponse,
     MetaCommand,
-    TokenFlag,
+    RequestFlags,
 )
 
 
@@ -34,9 +33,7 @@ class Router(Protocol):
         command: MetaCommand,
         key: Key,
         value: MaybeValue = None,
-        flags: Optional[Set[Flag]] = None,
-        int_flags: Optional[Dict[IntFlag, int]] = None,
-        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        flags: Optional[RequestFlags] = None,
         failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> MemcacheResponse:
         """
@@ -52,9 +49,7 @@ class Router(Protocol):
         command: MetaCommand,
         keys: List[Key],
         values: MaybeValues = None,
-        flags: Optional[Set[Flag]] = None,
-        int_flags: Optional[Dict[IntFlag, int]] = None,
-        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        flags: Optional[RequestFlags] = None,
         failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> Dict[Key, MemcacheResponse]:
         """

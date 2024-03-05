@@ -12,7 +12,7 @@ from meta_memcache import (
 )
 from meta_memcache.connection.pool import ConnectionPool, PoolCounters
 from meta_memcache.errors import MemcacheServerError
-from meta_memcache.protocol import NOOP, Flag, IntFlag
+from meta_memcache.protocol import NOOP, RequestFlags
 from meta_memcache.settings import DEFAULT_MARK_DOWN_PERIOD_S
 
 
@@ -167,10 +167,10 @@ def test_sharded_with_gutter_cache_client(mocker: MockerFixture) -> None:
 
     cache_client.meta_multiget(
         keys=[Key("bar"), Key("foo")],
-        flags={
-            Flag.NOREPLY,
-        },
-        int_flags={IntFlag.CACHE_TTL: 1000},
+        flags=RequestFlags(
+            no_reply=True,
+            cache_ttl=1000,
+        ),
     )
     get_pool.assert_has_calls([call(Key(key="bar")), call(Key(key="foo"))])
     get_gutter_pool.assert_called_once_with(Key("foo"))
@@ -194,10 +194,10 @@ def test_sharded_with_gutter_cache_client(mocker: MockerFixture) -> None:
 
     cache_client.meta_multiget(
         keys=[Key("bar"), Key("foo")],
-        flags={
-            Flag.NOREPLY,
-        },
-        int_flags={IntFlag.CACHE_TTL: 1000},
+        flags=RequestFlags(
+            no_reply=True,
+            cache_ttl=1000,
+        ),
     )
     get_pool.assert_has_calls([call(Key(key="bar")), call(Key(key="foo"))])
     get_gutter_pool.assert_called_once_with(Key("foo"))
@@ -220,10 +220,10 @@ def test_sharded_with_gutter_cache_client(mocker: MockerFixture) -> None:
 
     cache_client.meta_multiget(
         keys=[Key("bar"), Key("foo")],
-        flags={
-            Flag.NOREPLY,
-        },
-        int_flags={IntFlag.CACHE_TTL: 1000},
+        flags=RequestFlags(
+            no_reply=True,
+            cache_ttl=1000,
+        ),
     )
     get_pool.assert_has_calls([call(Key(key="bar")), call(Key(key="foo"))])
     get_gutter_pool.assert_not_called()

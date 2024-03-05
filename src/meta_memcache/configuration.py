@@ -1,8 +1,7 @@
-import base64
 import hashlib
 import socket
 from enum import IntEnum
-from typing import Callable, Dict, Iterable, NamedTuple, Optional, Tuple
+from typing import Callable, Dict, Iterable, NamedTuple, Optional
 
 from meta_memcache.connection.pool import ConnectionPool
 from meta_memcache.protocol import Key, ServerVersion
@@ -157,17 +156,18 @@ class StalePolicy(NamedTuple):
     mark_stale_on_cas_mismatch: bool = False
 
 
-def default_key_encoder(key: Key) -> Tuple[bytes, bool]:
+def default_key_encoder(key: Key) -> bytes:
     """
     Generate valid memcache key as bytes for given Key.
     """
-    if key.is_unicode or len(key.key) > MAX_KEY_SIZE:
-        key_hash = hashlib.blake2b(key.key.encode(), digest_size=18).digest()
-        return base64.b64encode(key_hash), True
-    elif " " in key.key:
-        raise ValueError(f"Invalid key {key}")
-    else:
-        return key.key.encode("ascii"), False
+    # TODO: Support
+    # if isinstance(key.key, bytes):
+    #     data = key.key
+    # else:
+    data = key.key.encode()
+    if len(data) >= MAX_KEY_SIZE:
+        data = hashlib.blake2b(data, digest_size=18).digest()
+    return data
 
 
 class MigrationMode(IntEnum):

@@ -1,21 +1,19 @@
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 
 from meta_memcache.connection.providers import ConnectionPoolProvider
 from meta_memcache.errors import MemcacheServerError
 from meta_memcache.interfaces.executor import Executor
 from meta_memcache.interfaces.router import DEFAULT_FAILURE_HANDLING, FailureHandling
 from meta_memcache.protocol import (
-    Flag,
-    IntFlag,
     Key,
     MaybeValue,
     MaybeValues,
     MemcacheResponse,
     MetaCommand,
-    TokenFlag,
+    RequestFlags,
 )
 from meta_memcache.routers.default import DefaultRouter
-from meta_memcache.routers.helpers import adjust_int_flags_for_max_ttl
+from meta_memcache.routers.helpers import adjust_flags_for_max_ttl
 
 
 class GutterRouter(DefaultRouter):
@@ -38,9 +36,7 @@ class GutterRouter(DefaultRouter):
         command: MetaCommand,
         key: Key,
         value: MaybeValue = None,
-        flags: Optional[Set[Flag]] = None,
-        int_flags: Optional[Dict[IntFlag, int]] = None,
-        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        flags: Optional[RequestFlags] = None,
         failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> MemcacheResponse:
         """
@@ -57,8 +53,6 @@ class GutterRouter(DefaultRouter):
                 key=key,
                 value=value,
                 flags=flags,
-                int_flags=int_flags,
-                token_flags=token_flags,
                 # We always want to raise on server errors so we can
                 # try the gutter pool
                 raise_on_server_error=True,
@@ -67,15 +61,13 @@ class GutterRouter(DefaultRouter):
             )
         except MemcacheServerError:
             # Override TTLs > than gutter TTL
-            int_flags = adjust_int_flags_for_max_ttl(int_flags, self._gutter_ttl)
+            flags = adjust_flags_for_max_ttl(flags, self._gutter_ttl)
             return self.executor.exec_on_pool(
                 pool=self.gutter_pool_provider.get_pool(key),
                 command=command,
                 key=key,
                 value=value,
                 flags=flags,
-                int_flags=int_flags,
-                token_flags=token_flags,
                 # Respect the raise_on_server_error flag if the gutter pool also
                 # fails
                 raise_on_server_error=failure_handling.raise_on_server_error,
@@ -89,9 +81,7 @@ class GutterRouter(DefaultRouter):
         command: MetaCommand,
         keys: List[Key],
         values: MaybeValues = None,
-        flags: Optional[Set[Flag]] = None,
-        int_flags: Optional[Dict[IntFlag, int]] = None,
-        token_flags: Optional[Dict[TokenFlag, bytes]] = None,
+        flags: Optional[RequestFlags] = None,
         failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> Dict[Key, MemcacheResponse]:
         """
@@ -110,8 +100,6 @@ class GutterRouter(DefaultRouter):
                         command=command,
                         key_values=key_values,
                         flags=flags,
-                        int_flags=int_flags,
-                        token_flags=token_flags,
                         # We always want to raise on server errors so we can
                         # try the gutter pool
                         raise_on_server_error=True,
@@ -126,7 +114,7 @@ class GutterRouter(DefaultRouter):
                         gutter_values.append(value)
         if gutter_keys:
             # Override TTLs > than gutter TTL
-            int_flags = adjust_int_flags_for_max_ttl(int_flags, self._gutter_ttl)
+            flags = adjust_flags_for_max_ttl(flags, self._gutter_ttl)
             for pool, key_values in self._exec_multi_prepare_pool_map(
                 self.gutter_pool_provider.get_pool, gutter_keys, gutter_values
             ).items():
@@ -136,8 +124,6 @@ class GutterRouter(DefaultRouter):
                         command=command,
                         key_values=key_values,
                         flags=flags,
-                        int_flags=int_flags,
-                        token_flags=token_flags,
                         # Respect the raise_on_server_error flag if the gutter pool also
                         # fails
                         raise_on_server_error=failure_handling.raise_on_server_error,

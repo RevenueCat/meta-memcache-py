@@ -5,7 +5,6 @@ from typing import (
     Iterable,
     Optional,
     Protocol,
-    Set,
     Tuple,
     Type,
     TypeVar,
@@ -18,35 +17,33 @@ from meta_memcache.interfaces.high_level_commands import HighLevelCommandsProtoc
 from meta_memcache.interfaces.meta_commands import MetaCommandsProtocol
 from meta_memcache.interfaces.router import FailureHandling
 from meta_memcache.protocol import (
-    Flag,
-    IntFlag,
     Key,
     Miss,
     ReadResponse,
+    RequestFlags,
     SetMode,
     Success,
-    TokenFlag,
     Value,
+    MA_MODE_DEC,
 )
 
 T = TypeVar("T")
 _REFILL_FAILURE_HANDLING = FailureHandling(track_write_failures=False)
-
-DEFAULT_FLAGS: Set[Flag] = {
-    Flag.RETURN_VALUE,
-    Flag.RETURN_TTL,
-    Flag.RETURN_CLIENT_FLAG,
-    Flag.RETURN_LAST_ACCESS,
-    Flag.RETURN_FETCHED,
-}
-DEFAULT_CAS_FLAGS: Set[Flag] = {
-    Flag.RETURN_VALUE,
-    Flag.RETURN_TTL,
-    Flag.RETURN_CLIENT_FLAG,
-    Flag.RETURN_LAST_ACCESS,
-    Flag.RETURN_FETCHED,
-    Flag.RETURN_CAS_TOKEN,
-}
+DEFAULT_GET_FLAGS = RequestFlags(
+    return_value=True,
+    return_ttl=True,
+    return_client_flag=True,
+    return_last_access=True,
+    return_fetched=True,
+)
+DEFAULT_GET_CAS_FLAGS = RequestFlags(
+    return_value=True,
+    return_ttl=True,
+    return_client_flag=True,
+    return_last_access=True,
+    return_fetched=True,
+    return_cas_token=True,
+)
 
 
 class HighLevelCommandMixinWithMetaCommands(
@@ -80,9 +77,7 @@ class HighLevelCommandMixinWithMetaCommands(
         no_reply: bool = False,
         cas_token: Optional[int] = None,
         return_value: bool = False,
-    ) -> Tuple[
-        Set[Flag], Dict[IntFlag, int], Dict[TokenFlag, bytes]
-    ]: ...  # pragma: no cover
+    ) -> RequestFlags: ...  # pragma: no cover
 
 
 class HighLevelCommandsMixin:
@@ -97,28 +92,21 @@ class HighLevelCommandsMixin:
         set_mode: SetMode = SetMode.SET,
     ) -> bool:
         key = key if isinstance(key, Key) else Key(key)
-        flags: Set[Flag] = set()
+        flags = RequestFlags(cache_ttl=ttl)
         if no_reply:
-            flags.add(Flag.NOREPLY)
-        int_flags: Dict[IntFlag, int] = {
-            IntFlag.CACHE_TTL: ttl,
-        }
+            flags.no_reply = True
         if cas_token is not None:
-            int_flags[IntFlag.CAS_TOKEN] = cas_token
+            flags.cas_token = cas_token
             if stale_policy and stale_policy.mark_stale_on_cas_mismatch:
-                flags.add(Flag.MARK_STALE)
-        if set_mode == SetMode.SET:
-            token_flags = None
-        else:
-            token_flags = {TokenFlag.MODE: set_mode.value}
+                flags.mark_stale = True
+        if set_mode != SetMode.SET:
+            flags.mode = set_mode.value
 
         result = self.meta_set(
             key=key,
             value=value,
             ttl=ttl,
             flags=flags,
-            int_flags=int_flags,
-            token_flags=token_flags,
         )
 
         return isinstance(result, Success)
@@ -147,17 +135,18 @@ class HighLevelCommandsMixin:
            there is no need to track failures.
         """
         key = key if isinstance(key, Key) else Key(key)
-        flags: Set[Flag] = set()
+        flags = RequestFlags(
+            cache_ttl=ttl,
+            mode=SetMode.ADD.value,
+        )
         if no_reply:
-            flags.add(Flag.NOREPLY)
+            flags.no_reply = True
 
         result = self.meta_set(
             key=key,
             value=value,
             ttl=ttl,
             flags=flags,
-            int_flags={IntFlag.CACHE_TTL: ttl},
-            token_flags={TokenFlag.MODE: SetMode.ADD.value},
             failure_handling=_REFILL_FAILURE_HANDLING,
         )
 
@@ -177,21 +166,16 @@ class HighLevelCommandsMixin:
         it exists or not, use invalidate() instead.
         """
         key = key if isinstance(key, Key) else Key(key)
-        flags: Set[Flag] = set()
-        int_flags: Dict[IntFlag, int] = {}
+        flags = RequestFlags()
         if no_reply:
-            flags.add(Flag.NOREPLY)
+            flags.no_reply = True
         if cas_token is not None:
-            int_flags[IntFlag.CAS_TOKEN] = cas_token
+            flags.cas_token = cas_token
         if stale_policy and stale_policy.mark_stale_on_deletion_ttl > 0:
-            flags.add(Flag.MARK_STALE)
-            int_flags[IntFlag.CACHE_TTL] = stale_policy.mark_stale_on_deletion_ttl
+            flags.mark_stale = True
+            flags.cache_ttl = stale_policy.mark_stale_on_deletion_ttl
 
-        result = self.meta_delete(
-            key=key,
-            flags=flags,
-            int_flags=int_flags,
-        )
+        result = self.meta_delete(key=key, flags=flags)
 
         return isinstance(result, Success)
 
@@ -206,21 +190,16 @@ class HighLevelCommandsMixin:
         Returns true of the key deleted or it didn't exist anyway
         """
         key = key if isinstance(key, Key) else Key(key)
-        flags: Set[Flag] = set()
-        int_flags: Dict[IntFlag, int] = {}
+        flags = RequestFlags()
         if no_reply:
-            flags.add(Flag.NOREPLY)
+            flags.no_reply = True
         if cas_token is not None:
-            int_flags[IntFlag.CAS_TOKEN] = cas_token
+            flags.cas_token = cas_token
         if stale_policy and stale_policy.mark_stale_on_deletion_ttl > 0:
-            flags.add(Flag.MARK_STALE)
-            int_flags[IntFlag.CACHE_TTL] = stale_policy.mark_stale_on_deletion_ttl
+            flags.mark_stale = True
+            flags.cache_ttl = stale_policy.mark_stale_on_deletion_ttl
 
-        result = self.meta_delete(
-            key=key,
-            flags=flags,
-            int_flags=int_flags,
-        )
+        result = self.meta_delete(key=key, flags=flags)
 
         return isinstance(result, (Success, Miss))
 
@@ -231,11 +210,10 @@ class HighLevelCommandsMixin:
         no_reply: bool = False,
     ) -> bool:
         key = key if isinstance(key, Key) else Key(key)
-        flags: Set[Flag] = set()
-        int_flags = {IntFlag.CACHE_TTL: ttl}
+        flags = RequestFlags(cache_ttl=ttl)
         if no_reply:
-            flags.add(Flag.NOREPLY)
-        result = self.meta_get(key, flags=flags, int_flags=int_flags)
+            flags.no_reply = True
+        result = self.meta_get(key, flags=flags)
 
         return isinstance(result, Success)
 
@@ -344,22 +322,17 @@ class HighLevelCommandsMixin:
         return_cas_token: bool = False,
     ) -> Dict[Key, Optional[Value]]:
         if return_cas_token:
-            flags = DEFAULT_CAS_FLAGS.copy()
+            flags = DEFAULT_GET_CAS_FLAGS.copy()
         else:
-            flags = DEFAULT_FLAGS.copy()
-        if recache_policy is None and touch_ttl is None:
-            int_flags = None
-        else:
-            int_flags = {}
-            if recache_policy:
-                int_flags[IntFlag.RECACHE_TTL] = recache_policy.ttl
-            if touch_ttl is not None and touch_ttl >= 0:
-                int_flags[IntFlag.CACHE_TTL] = touch_ttl
+            flags = DEFAULT_GET_FLAGS.copy()
+        if recache_policy:
+            flags.recache_ttl = recache_policy.ttl
+        if touch_ttl is not None and touch_ttl >= 0:
+            flags.cache_ttl = touch_ttl
 
         results = self.meta_multiget(
             keys=[key if isinstance(key, Key) else Key(key) for key in keys],
             flags=flags,
-            int_flags=int_flags,
         )
         return {k: self._process_get_result(k, v) for k, v in results.items()}
 
@@ -390,21 +363,17 @@ class HighLevelCommandsMixin:
     ) -> Optional[Value]:
         key = key if isinstance(key, Key) else Key(key)
         if return_cas_token:
-            flags = DEFAULT_CAS_FLAGS.copy()
+            flags = DEFAULT_GET_CAS_FLAGS.copy()
         else:
-            flags = DEFAULT_FLAGS.copy()
-        if lease_policy is None and recache_policy is None and touch_ttl is None:
-            int_flags = None
-        else:
-            int_flags = {}
-            if lease_policy:
-                int_flags[IntFlag.MISS_LEASE_TTL] = lease_policy.ttl
-            if recache_policy:
-                int_flags[IntFlag.RECACHE_TTL] = recache_policy.ttl
-            if touch_ttl is not None and touch_ttl >= 0:
-                int_flags[IntFlag.CACHE_TTL] = touch_ttl
+            flags = DEFAULT_GET_FLAGS.copy()
+        if lease_policy:
+            flags.vivify_on_miss_ttl = lease_policy.ttl
+        if recache_policy:
+            flags.recache_ttl = recache_policy.ttl
+        if touch_ttl is not None and touch_ttl >= 0:
+            flags.cache_ttl = touch_ttl
 
-        result = self.meta_get(key, flags=flags, int_flags=int_flags)
+        result = self.meta_get(key, flags=flags)
         return self._process_get_result(key, result)
 
     def _process_get_result(
@@ -475,25 +444,22 @@ class HighLevelCommandsMixin:
         no_reply: bool = False,
         cas_token: Optional[int] = None,
         return_value: bool = False,
-    ) -> Tuple[Set[Flag], Dict[IntFlag, int], Dict[TokenFlag, bytes]]:
-        flags: Set[Flag] = set()
-        int_flags: Dict[IntFlag, int] = {
-            IntFlag.MA_DELTA_VALUE: abs(delta),
-        }
-        token_flags: Dict[TokenFlag, bytes] = {}
-
+    ) -> RequestFlags:
+        flags = RequestFlags(
+            ma_delta_value=abs(delta),
+        )
         if return_value:
-            flags.add(Flag.RETURN_VALUE)
+            flags.return_value = True
         if no_reply:
-            flags.add(Flag.NOREPLY)
+            flags.no_reply = True
         if refresh_ttl is not None:
-            int_flags[IntFlag.CACHE_TTL] = refresh_ttl
+            flags.cache_ttl = refresh_ttl
         if cas_token is not None:
-            int_flags[IntFlag.CAS_TOKEN] = cas_token
+            flags.cas_token = cas_token
         if delta < 0:
-            token_flags[TokenFlag.MODE] = b"-"
+            flags.mode = MA_MODE_DEC
 
-        return flags, int_flags, token_flags
+        return flags
 
     def delta(
         self: HighLevelCommandMixinWithMetaCommands,
@@ -504,15 +470,13 @@ class HighLevelCommandsMixin:
         cas_token: Optional[int] = None,
     ) -> bool:
         key = key if isinstance(key, Key) else Key(key)
-        flags, int_flags, token_flags = self._get_delta_flags(
+        flags = self._get_delta_flags(
             delta=delta,
             refresh_ttl=refresh_ttl,
             no_reply=no_reply,
             cas_token=cas_token,
         )
-        result = self.meta_arithmetic(
-            key=key, flags=flags, int_flags=int_flags, token_flags=token_flags
-        )
+        result = self.meta_arithmetic(key=key, flags=flags)
         return isinstance(result, Success)
 
     def delta_initialize(
@@ -526,17 +490,15 @@ class HighLevelCommandsMixin:
         cas_token: Optional[int] = None,
     ) -> bool:
         key = key if isinstance(key, Key) else Key(key)
-        flags, int_flags, token_flags = self._get_delta_flags(
+        flags = self._get_delta_flags(
             delta=delta,
             refresh_ttl=refresh_ttl,
             no_reply=no_reply,
             cas_token=cas_token,
         )
-        int_flags[IntFlag.MA_INITIAL_VALUE] = abs(initial_value)
-        int_flags[IntFlag.MISS_LEASE_TTL] = initial_ttl
-        result = self.meta_arithmetic(
-            key=key, flags=flags, int_flags=int_flags, token_flags=token_flags
-        )
+        flags.ma_initial_value = abs(initial_value)
+        flags.vivify_on_miss_ttl = initial_ttl
+        result = self.meta_arithmetic(key=key, flags=flags)
         return isinstance(result, Success)
 
     def delta_and_get(
@@ -547,15 +509,13 @@ class HighLevelCommandsMixin:
         cas_token: Optional[int] = None,
     ) -> Optional[int]:
         key = key if isinstance(key, Key) else Key(key)
-        flags, int_flags, token_flags = self._get_delta_flags(
+        flags = self._get_delta_flags(
             return_value=True,
             delta=delta,
             refresh_ttl=refresh_ttl,
             cas_token=cas_token,
         )
-        result = self.meta_arithmetic(
-            key=key, flags=flags, int_flags=int_flags, token_flags=token_flags
-        )
+        result = self.meta_arithmetic(key=key, flags=flags)
         if isinstance(result, Value):
             if isinstance(result.value, str) and result.value.isnumeric():
                 return int(result.value)
@@ -575,17 +535,15 @@ class HighLevelCommandsMixin:
         cas_token: Optional[int] = None,
     ) -> Optional[int]:
         key = key if isinstance(key, Key) else Key(key)
-        flags, int_flags, token_flags = self._get_delta_flags(
+        flags = self._get_delta_flags(
             return_value=True,
             delta=delta,
             refresh_ttl=refresh_ttl,
             cas_token=cas_token,
         )
-        int_flags[IntFlag.MA_INITIAL_VALUE] = abs(initial_value)
-        int_flags[IntFlag.MISS_LEASE_TTL] = initial_ttl
-        result = self.meta_arithmetic(
-            key=key, flags=flags, int_flags=int_flags, token_flags=token_flags
-        )
+        flags.ma_initial_value = abs(initial_value)
+        flags.vivify_on_miss_ttl = initial_ttl
+        result = self.meta_arithmetic(key=key, flags=flags)
         if isinstance(result, Value):
             if isinstance(result.value, str) and result.value.isnumeric():
                 return int(result.value)
