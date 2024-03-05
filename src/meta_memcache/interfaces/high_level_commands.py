@@ -16,8 +16,7 @@ class HighLevelCommandsProtocol(Protocol):
         cas_token: Optional[int] = None,
         stale_policy: Optional[StalePolicy] = None,
         set_mode: SetMode = SetMode.SET,
-    ) -> bool:
-        ...  # pragma: no cover
+    ) -> bool: ...  # pragma: no cover
 
     def refill(
         self,
@@ -76,8 +75,7 @@ class HighLevelCommandsProtocol(Protocol):
         key: Union[Key, str],
         ttl: int,
         no_reply: bool = False,
-    ) -> bool:
-        ...  # pragma: no cover
+    ) -> bool: ...  # pragma: no cover
 
     def get_or_lease(
         self,
@@ -85,8 +83,7 @@ class HighLevelCommandsProtocol(Protocol):
         lease_policy: LeasePolicy,
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
-    ) -> Optional[Any]:
-        ...  # pragma: no cover
+    ) -> Optional[Any]: ...  # pragma: no cover
 
     def get_or_lease_cas(
         self,
@@ -94,24 +91,21 @@ class HighLevelCommandsProtocol(Protocol):
         lease_policy: LeasePolicy,
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
-    ) -> Tuple[Optional[Any], Optional[int]]:
-        ...  # pragma: no cover
+    ) -> Tuple[Optional[Any], Optional[int]]: ...  # pragma: no cover
 
     def get(
         self,
         key: Union[Key, str],
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
-    ) -> Optional[Any]:
-        ...  # pragma: no cover
+    ) -> Optional[Any]: ...  # pragma: no cover
 
     def multi_get(
         self,
         keys: Iterable[Union[Key, str]],
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
-    ) -> Dict[Key, Optional[Any]]:
-        ...  # pragma: no cover
+    ) -> Dict[Key, Optional[Any]]: ...  # pragma: no cover
 
     def _multi_get(
         self,
@@ -119,16 +113,14 @@ class HighLevelCommandsProtocol(Protocol):
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
         return_cas_token: bool = False,
-    ) -> Dict[Key, Optional[Value]]:
-        ...  # pragma: no cover
+    ) -> Dict[Key, Optional[Value]]: ...  # pragma: no cover
 
     def get_cas(
         self,
         key: Union[Key, str],
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
-    ) -> Tuple[Optional[Any], Optional[int]]:
-        ...  # pragma: no cover
+    ) -> Tuple[Optional[Any], Optional[int]]: ...  # pragma: no cover
 
     def _get(
         self,
@@ -137,8 +129,7 @@ class HighLevelCommandsProtocol(Protocol):
         lease_policy: Optional[LeasePolicy] = None,
         recache_policy: Optional[RecachePolicy] = None,
         return_cas_token: bool = False,
-    ) -> Optional[Value]:
-        ...  # pragma: no cover
+    ) -> Optional[Value]: ...  # pragma: no cover
 
     def get_typed(
         self,
@@ -147,8 +138,7 @@ class HighLevelCommandsProtocol(Protocol):
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
         error_on_type_mismatch: bool = False,
-    ) -> Optional[T]:
-        ...  # pragma: no cover
+    ) -> Optional[T]: ...  # pragma: no cover
 
     def get_cas_typed(
         self,
@@ -157,8 +147,7 @@ class HighLevelCommandsProtocol(Protocol):
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
         error_on_type_mismatch: bool = False,
-    ) -> Tuple[Optional[T], Optional[int]]:
-        ...  # pragma: no cover
+    ) -> Tuple[Optional[T], Optional[int]]: ...  # pragma: no cover
 
     def delta(
         self,
@@ -167,8 +156,7 @@ class HighLevelCommandsProtocol(Protocol):
         refresh_ttl: Optional[int] = None,
         no_reply: bool = False,
         cas_token: Optional[int] = None,
-    ) -> bool:
-        ...  # pragma: no cover
+    ) -> bool: ...  # pragma: no cover
 
     def delta_initialize(
         self,
@@ -179,8 +167,7 @@ class HighLevelCommandsProtocol(Protocol):
         refresh_ttl: Optional[int] = None,
         no_reply: bool = False,
         cas_token: Optional[int] = None,
-    ) -> bool:
-        ...  # pragma: no cover
+    ) -> bool: ...  # pragma: no cover
 
     def delta_and_get(
         self,
@@ -188,8 +175,7 @@ class HighLevelCommandsProtocol(Protocol):
         delta: int,
         refresh_ttl: Optional[int] = None,
         cas_token: Optional[int] = None,
-    ) -> Optional[int]:
-        ...  # pragma: no cover
+    ) -> Optional[int]: ...  # pragma: no cover
 
     def delta_initialize_and_get(
         self,
@@ -199,5 +185,4 @@ class HighLevelCommandsProtocol(Protocol):
         initial_ttl: int,
         refresh_ttl: Optional[int] = None,
         cas_token: Optional[int] = None,
-    ) -> Optional[int]:
-        ...  # pragma: no cover
+    ) -> Optional[int]: ...  # pragma: no cover

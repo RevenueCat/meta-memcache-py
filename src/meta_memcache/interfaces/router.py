@@ -63,14 +63,11 @@ class Router(Protocol):
         ...  # pragma: no cover
 
     @property
-    def executor(self) -> Executor:
-        ...  # pragma: no cover
+    def executor(self) -> Executor: ...  # pragma: no cover
 
-    def get_counters(self) -> Dict[ServerAddress, PoolCounters]:
-        ...  # pragma: no cover
+    def get_counters(self) -> Dict[ServerAddress, PoolCounters]: ...  # pragma: no cover
 
 
 class HasRouter(Protocol):
     @property
-    def router(self) -> Router:
-        ...  # pragma: no cover
+    def router(self) -> Router: ...  # pragma: no cover

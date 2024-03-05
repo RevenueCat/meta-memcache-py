@@ -8,11 +8,9 @@ from meta_memcache.protocol import Key
 
 
 class ConnectionPoolProvider(Protocol):
-    def get_pool(self, key: Key) -> ConnectionPool:
-        ...  # pragma: no cover
+    def get_pool(self, key: Key) -> ConnectionPool: ...  # pragma: no cover
 
-    def get_counters(self) -> Dict[ServerAddress, PoolCounters]:
-        ...  # pragma: no cover
+    def get_counters(self) -> Dict[ServerAddress, PoolCounters]: ...  # pragma: no cover
 
 
 class HostConnectionPoolProvider:

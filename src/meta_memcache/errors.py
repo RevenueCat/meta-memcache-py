@@ -8,5 +8,4 @@ class MemcacheServerError(MemcacheError):
         super().__init__(message)
 
 
-class ServerMarkedDownError(MemcacheServerError):
-    ...
+class ServerMarkedDownError(MemcacheServerError): ...
