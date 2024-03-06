@@ -11,8 +11,8 @@ jobs:
         python-version: ['3.8', '3.11']
     name: Python ${{ matrix.python-version }}
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-python@v4
+    - uses: actions/checkout@main
+    - uses: actions/setup-python@main
       with:
         python-version: ${{ matrix.python-version }}
         architecture: x64
@@ -28,9 +28,9 @@ jobs:
       NODE_ENV: production
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@main
       - name: Set up Python 3.11
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@main
         with:
           python-version: '3.11'
           architecture: x64
@@ -79,9 +79,9 @@ jobs:
       NODE_ENV: production
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@main
       - name: Set up Python 3.11
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@main
         with:
           python-version: '3.11'
           architecture: x64
