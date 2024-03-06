@@ -22,20 +22,23 @@ SPACE: int = ord(" ")
 
 @dataclass
 class Key:
-    __slots__ = ("key", "routing_key", "is_unicode")
+    __slots__ = ("key", "routing_key", "domain", "disable_compression")
     key: str
     routing_key: Optional[str]
-    is_unicode: bool
+    domain: Optional[str]
+    disable_compression: bool
 
     def __init__(
         self,
         key: str,
         routing_key: Optional[str] = None,
-        is_unicode: bool = False,
+        domain: Optional[str] = None,
+        disabled_compression: bool = False,
     ) -> None:
         self.key = key
         self.routing_key = routing_key
-        self.is_unicode = is_unicode
+        self.domain = domain
+        self.disable_compression = disabled_compression
 
     def __hash__(self) -> int:
         return hash((self.key, self.routing_key))
