@@ -141,7 +141,7 @@ class ZstdSerializer(BaseSerializer):
         else:
             self._default_zstd_compressor = None
 
-        self._zstd_decompressors[0] = zstd.ZstdDecompressor()
+        self._zstd_decompressors[0] = zstd.ZstdDecompressor(format=zstd.FORMAT_ZSTD1_MAGICLESS)
 
     def _build_dict(self, dictionary: bytes) -> Tuple[int, zstd.ZstdCompressionDict]:
         zstd_dict = zstd.ZstdCompressionDict(dictionary)
@@ -151,7 +151,7 @@ class ZstdSerializer(BaseSerializer):
     def _add_dict_decompressor(
         self, dict_id: int, zstd_dict: zstd.ZstdCompressionDict
     ) -> zstd.ZstdDecompressor:
-        self._zstd_decompressors[dict_id] = zstd.ZstdDecompressor(dict_data=zstd_dict)
+        self._zstd_decompressors[dict_id] = zstd.ZstdDecompressor(dict_data=zstd_dict, format=zstd.FORMAT_ZSTD1_MAGICLESS)
         return self._zstd_decompressors[dict_id]
 
     def _add_dict_compressor(
@@ -174,8 +174,7 @@ class ZstdSerializer(BaseSerializer):
             return zlib.compress(data), self.ZLIB_COMPRESSED
 
     def _decompress(self, data: bytes) -> bytes:
-        data = self.ZSTD_MAGIC + data
-        dict_id = zstd.get_frame_parameters(data).dict_id
+        dict_id = zstd.get_frame_parameters(self.ZSTD_MAGIC + data).dict_id
         if decompressor := self._zstd_decompressors.get(dict_id):
             return decompressor.decompress(data)
         raise ValueError(f"Unknown dictionary id: {dict_id}")
