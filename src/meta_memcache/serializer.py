@@ -72,7 +72,6 @@ class ZstdSerializer(BaseSerializer):
     BINARY = 16
     ZSTD_COMPRESSED = 32
 
-    ZSTD_MAGIC = b"(\xb5/\xfd"
     DEFAULT_PICKLE_PROTOCOL = 5
     DEFAULT_COMPRESSION_LEVEL = 9
     DEFAULT_COMPRESSION_THRESHOLD = 128
@@ -174,10 +173,10 @@ class ZstdSerializer(BaseSerializer):
             return zlib.compress(data), self.ZLIB_COMPRESSED
 
     def _decompress(self, data: bytes) -> bytes:
-        dict_id = zstd.get_frame_parameters(self.ZSTD_MAGIC + data).dict_id
-        if decompressor := self._zstd_decompressors.get(dict_id):
+        params = zstd.get_frame_parameters(data, format=zstd.FORMAT_ZSTD1_MAGICLESS)
+        if decompressor := self._zstd_decompressors.get(params.dict_id):
             return decompressor.decompress(data)
-        raise ValueError(f"Unknown dictionary id: {dict_id}")
+        raise ValueError(f"Unknown dictionary id: {params.dict_id}")
 
     def _should_compress(self, key: Key, data: bytes) -> bool:
         data_len = len(data)
