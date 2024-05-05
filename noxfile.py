@@ -5,9 +5,9 @@ from nox import session, Session
 package = "meta_memcache"
 nox.options.sessions = "lint", "types", "tests"
 locations = "src", "tests", "noxfile.py"
-DEFAULT_VERSION = "3.8"
-DEFAULT_BENCHMARK_VERSIONS = ["3.11"]
-VERSIONS = ["3.8", "3.11"]
+DEFAULT_VERSION = "3.12"
+DEFAULT_BENCHMARK_VERSIONS = ["3.12"]
+VERSIONS = ["3.8", "3.9", "3.10", "3.11", "3.12"]
 
 
 @session(python=DEFAULT_VERSION)
