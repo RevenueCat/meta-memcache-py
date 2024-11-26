@@ -1,7 +1,6 @@
 import gc
 import threading
 import time
-import timeit
 from typing import Any, Callable, Optional
 
 import click
@@ -19,7 +18,6 @@ from meta_memcache.connection.providers import (
 )
 from meta_memcache.executors.default import DefaultExecutor
 from meta_memcache.interfaces.cache_api import CacheApi
-from meta_memcache.protocol import Success
 from meta_memcache.routers.default import DefaultRouter
 from meta_memcache.serializer import MixedSerializer
 from meta_memcache.settings import DEFAULT_MARK_DOWN_PERIOD_S
@@ -141,12 +139,12 @@ class Benchmark:
     def getter(self) -> None:
         count = 0
         for _ in range(self.runs):
-            start_time = time.time()
+            start_time = time.perf_counter()
             while True:
                 self.client.get(f"key{count%200}")
                 count += 1
                 if count % self.ops_per_run == 0:
-                    elapsed_time = time.time() - start_time
+                    elapsed_time = time.perf_counter() - start_time
                     ops_per_sec = self.ops_per_run / elapsed_time
                     us = elapsed_time / self.ops_per_run * 1_000_000
                     print(f"Gets: {ops_per_sec:.2f} RPS / {us:.2f} us/req")

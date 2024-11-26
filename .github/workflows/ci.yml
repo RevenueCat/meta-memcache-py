@@ -1,113 +1,33 @@
 name: Continuous Integration
 
-on: 
+on:
+  pull_request:
   push:
+    branches:
+      - main
 
 jobs:
-  tests:
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: Lint
+        run: uv run --with nox -m nox -s lint
+      - name: Format check
+        run: uv run --with nox -m nox -s format
+      - name: Typing check
+        run: uv run --with nox -m nox -s types
+
+  tests:
+    name: Run tests
     strategy:
       matrix:
-        python-version: ['3.8', '3.11']
-    name: Python ${{ matrix.python-version }}
+        os: [ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
-    - uses: actions/checkout@main
-    - uses: actions/setup-python@main
-      with:
-        python-version: ${{ matrix.python-version }}
-        architecture: x64
-    - run: pip install -r dev-requirements.txt
-    - run: nox -p ${{ matrix.python-version }}
-
-  deploy-vnext:
-    runs-on: ubuntu-latest
-    needs: tests
-    if: github.ref == 'refs/heads/main'
-
-    env:
-      NODE_ENV: production
-
-    steps:
-      - uses: actions/checkout@main
-      - name: Set up Python 3.11
-        uses: actions/setup-python@main
-        with:
-          python-version: '3.11'
-          architecture: x64
-      - name: Install dependencies
-        run: |
-          pip install -r dev-requirements.txt
-          poetry install
-
-      - name: Generate version
-        id: pkg-info
-        run: |
-          git clone --bare ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY} ../metadata
-          pushd ../metadata
-
-          latestTag=$(git rev-list --tags --max-count=1)
-          firstCommit=$(git rev-list --max-parents=0 HEAD)
-          build="$(git rev-list --count ${latestTag:=${firstCommit}}..HEAD)"
-
-          popd
-          setupVer=$(grep "version = " pyproject.toml | cut -d' ' -f3 | sed "s/\"//g")
-          version="${setupVer}-dev${build}"
-
-          echo ::set-output name=setup_version::${setupVer}
-          echo ::set-output name=version::${version}
-      - name: Prep pyproject.toml for release
-        env:
-          SETUP_VERSION: ${{ steps.pkg-info.outputs.setup_version }}
-          PKG_VERSION: ${{ steps.pkg-info.outputs.version }}
-        run: |
-          sed -i "s/version = \"${SETUP_VERSION}\"/version = \"${PKG_VERSION}\"/" ./pyproject.toml
-      - name: Build library package
-        run: poetry build
-
-      - name: Deploy to pypi
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          user: __token__
-          password: ${{ secrets.PYPI_PASSWORD }}
-
-  deploy-latest:
-    runs-on: ubuntu-latest
-    needs: tests
-    if: startsWith(github.ref, 'refs/tags/v')
-
-    env:
-      NODE_ENV: production
-
-    steps:
-      - uses: actions/checkout@main
-      - name: Set up Python 3.11
-        uses: actions/setup-python@main
-        with:
-          python-version: '3.11'
-          architecture: x64
-      - name: Install dependencies
-        run: |
-          pip install -r dev-requirements.txt
-          poetry install
-      - name: Generate version
-        id: pkg-info
-        run: |
-          setupVer=$(grep "version = " pyproject.toml | cut -d' ' -f3 | sed "s/\"//g")
-
-          echo ::set-output name=setup_version::${setupVer}
-          echo ::set-output name=version::${GITHUB_REF#refs/tags/v}
-
-      - name: Prep pyproject.toml for release
-        env:
-          SETUP_VERSION: ${{ steps.pkg-info.outputs.setup_version }}
-          PKG_VERSION: ${{ steps.pkg-info.outputs.version }}
-        run: |
-          sed -i "s/version = \"${SETUP_VERSION}\"/version = \"${PKG_VERSION}\"/" ./pyproject.toml
-      - name: Build library package
-        run: poetry build
-
-      - name: Deploy to pypi
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          user: __token__
-          password: ${{ secrets.PYPI_PASSWORD }}
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: Tests
+        run: uv run --with nox -m nox -s tests

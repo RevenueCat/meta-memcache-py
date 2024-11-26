@@ -1,33 +1,27 @@
-[tool.poetry]
+[project]
+dependencies = [
+    "uhashring >= 2.3, < 3",
+    "marisa-trie >= 1.2.1, < 1.3",
+    "zstandard >= 0.23.0, < 0.24",
+    "meta-memcache-socket >= 0.1.3, < 0.2",
+]
+authors = [{ name = "Guillermo Perez", email = "bisho@revenuecat.com" }]
+license = { text = "MIT License" }
 name = "meta-memcache"
 version = "2.0.0"
 description = "Modern, pure python, memcache client with support for new meta commands."
-license = "MIT"
 readme = "README.md"
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+metrics = ["prometheus-client >= 0.17.1"]
+
+[project.urls]
 homepage = "https://github.com/RevenueCat/meta-memcache-py"
-repository = "https://github.com/RevenueCat/meta-memcache-py"
-authors = ["Guillermo Perez <bisho@revenuecat.com>"]
-packages = [{include = "meta_memcache", from="src"}]
-
-[tool.poetry.dependencies]
-python = "^3.8"
-uhashring = "^2.1"
-marisa-trie = "^1.0.0"
-meta-memcache-socket = "0.1.3"
-zstandard = "^0.22.0"
-
-[tool.poetry.group.extras.dependencies]
-prometheus-client = "^0.17.1"
 
 [tool.pytest.ini_options]
 addopts = "-ra"
-testpaths = [
-    "tests",
-]
-
-[tool.isort]
-profile = "black"
-known_third_party = ["uhashring", "pytest", "pytest_mock", "marisa-trie", "zstandard"]
+testpaths = ["tests"]
 
 [tool.coverage.paths]
 source = ["src", "*/site-packages"]
@@ -39,6 +33,9 @@ source = ["meta_memcache"]
 [tool.coverage.report]
 show_missing = true
 
-[build-system]
-requires = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = ["E731"]
+"src/meta_memcache/__init__.py" = ["F401"]
