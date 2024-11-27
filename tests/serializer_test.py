@@ -34,7 +34,7 @@ def get_compression_dict(compressor: zstd.ZstdCompressor) -> int:
 
 
 def get_data_compression_dict(data: bytes) -> int:
-    return zstd.get_frame_parameters(ZstdSerializer.ZSTD_MAGIC + data).dict_id
+    return zstd.get_frame_parameters(data, format=zstd.FORMAT_ZSTD1_MAGICLESS).dict_id
 
 
 def test_zstd_serializer_initialization(
