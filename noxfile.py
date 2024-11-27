@@ -3,11 +3,11 @@ from nox import session, Session
 
 
 package = "meta_memcache"
-nox.options.sessions = "lint", "format", "types", "tests"
+nox.options.sessions = "lint", "format", "check_version", "types", "tests"
 locations = "src", "tests", "noxfile.py", "benchmark.py"
 DEFAULT_VERSION = "3.11"
 DEFAULT_BENCHMARK_VERSIONS = ["3.12"]
-VERSIONS = ["3.12", "3.11", "3.10"]
+VERSIONS = ["3.13", "3.12", "3.11", "3.10"]
 
 # Default to uv backend:
 nox.options.default_venv_backend = "uv|virtualenv"
@@ -40,8 +40,6 @@ def fix_format(session: Session) -> None:
 @session(python=DEFAULT_VERSION)
 def types(session: Session) -> None:
     """Type-check using mypy."""
-    # session.run("poetry", "install", "--with", "extras", external=True)
-    # session.install(".[cicd]")  # Install the project and optional dependencies
     session.install("mypy", ".[metrics]")
     session.run("mypy", "src/")
 
@@ -57,6 +55,27 @@ def tests(session: Session) -> None:
         ".[metrics]",
     )
     session.run("pytest", *args, env={"PYTHONHASHSEED": "0"})
+
+
+@session(python=None)
+def check_version(session: Session) -> None:
+    """Check the version of the package."""
+    pyproject_version = nox.project.load_toml("pyproject.toml")["project"]["version"]
+    module_version = session.run(
+        "sed",
+        "-n",
+        's/^__version__ = "\(.*\)"$/\\1/p',
+        "src/meta_memcache/__init__.py",
+        silent=True,
+        external=True,
+    ).strip()
+    print(f"project version: {pyproject_version} (project.version on pyproject.toml)")
+    print(
+        f"module version: {module_version}  (__version__ on src/meta_memcache/__init__.py)"
+    )
+
+    if pyproject_version != module_version:
+        session.error("Version mismatch!")
 
 
 @session(python=DEFAULT_BENCHMARK_VERSIONS)

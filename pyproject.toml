@@ -8,7 +8,7 @@ dependencies = [
 authors = [{ name = "Guillermo Perez", email = "bisho@revenuecat.com" }]
 license = { text = "MIT License" }
 name = "meta-memcache"
-version = "2.0.0"
+version = "2.0.1"
 description = "Modern, pure python, memcache client with support for new meta commands."
 readme = "README.md"
 requires-python = ">=3.10"

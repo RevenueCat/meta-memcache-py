@@ -19,6 +19,8 @@ jobs:
         run: uv run --with nox -m nox -s format
       - name: Typing check
         run: uv run --with nox -m nox -s types
+      - name: Check versions match
+        run: uv run --with nox -m nox -s check_version
 
   tests:
     name: Run tests
