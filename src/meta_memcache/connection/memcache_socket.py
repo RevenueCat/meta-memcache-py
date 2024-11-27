@@ -246,6 +246,6 @@ class MemcacheSocket:
             raise MemcacheError(
                 f"Error parsing value: Expected {size} bytes, "
                 f"terminated in \\r\\n, got {len(data)} bytes: "
-                f"{bytes(data)+bytes(endl)!r}",
+                f"{bytes(data) + bytes(endl)!r}",
             )
         return data
