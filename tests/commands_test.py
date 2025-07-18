@@ -483,28 +483,28 @@ def assert_called_with_commands(mock, expected_cmds, **expected_kwargs):
         return command, key, set(pieces)
 
     calls = mock.call_args_list
-    assert len(calls) == len(
-        expected_cmds
-    ), f"Expected exactly {len(expected_cmds)} calls to {mock}"
+    assert len(calls) == len(expected_cmds), (
+        f"Expected exactly {len(expected_cmds)} calls to {mock}"
+    )
     for i in range(len(calls)):
         args, kwargs = calls[i]
         expected_cmd = expected_cmds[i]
         assert len(args) == 1, f"Unexpected num of args to {mock}"
-        assert (
-            kwargs == expected_kwargs
-        ), f"Unexpected kwargs to {mock}: {kwargs} expected {expected_kwargs}"
+        assert kwargs == expected_kwargs, (
+            f"Unexpected kwargs to {mock}: {kwargs} expected {expected_kwargs}"
+        )
         cmd = args[0]
         actual_cmd, actual_key, actual_flags = split_cmd(cmd)
         expected_cmd, expected_key, expected_flags = split_cmd(expected_cmd)
-        assert (
-            actual_cmd == expected_cmd
-        ), f"Unexpected cmd to {mock}: {actual_cmd} expected {expected_cmd}"
-        assert (
-            actual_key == expected_key
-        ), f"Unexpected key to {mock}: {actual_key} expected {expected_key}"
-        assert (
-            actual_flags == expected_flags
-        ), f"Unexpected flags to {mock}: {actual_flags} expected {expected_flags}"
+        assert actual_cmd == expected_cmd, (
+            f"Unexpected cmd to {mock}: {actual_cmd} expected {expected_cmd}"
+        )
+        assert actual_key == expected_key, (
+            f"Unexpected key to {mock}: {actual_key} expected {expected_key}"
+        )
+        assert actual_flags == expected_flags, (
+            f"Unexpected flags to {mock}: {actual_flags} expected {expected_flags}"
+        )
 
 
 def test_get_cmd(memcache_socket: MemcacheSocket, cache_client: CacheClient) -> None:

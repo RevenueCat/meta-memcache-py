@@ -141,7 +141,7 @@ class Benchmark:
         for _ in range(self.runs):
             start_time = time.perf_counter()
             while True:
-                self.client.get(f"key{count%200}")
+                self.client.get(f"key{count % 200}")
                 count += 1
                 if count % self.ops_per_run == 0:
                     elapsed_time = time.perf_counter() - start_time
@@ -156,7 +156,7 @@ class Benchmark:
         print(f" - server: {self.server or '<mocked>'}")
         print(f" - consistent_sharding: {'ON' if self.consistent_sharding else 'OFF'}")
         print(f" - concurrency: {self.concurrency} threads")
-        print(f" - Requests: {total/1_000_000:.2f}M")
+        print(f" - Requests: {total / 1_000_000:.2f}M")
         print(f"    ({self.runs} runs of {self.ops_per_run} reqs per thread)")
         print(f" - GC: {'enabled' if self.with_gc else 'disabled'}")
         print()
