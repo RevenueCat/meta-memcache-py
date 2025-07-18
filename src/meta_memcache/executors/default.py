@@ -13,7 +13,7 @@ from meta_memcache.base.base_serializer import BaseSerializer
 from meta_memcache.configuration import default_key_encoder
 from meta_memcache.connection.memcache_socket import MemcacheSocket
 from meta_memcache.connection.pool import ConnectionPool
-from meta_memcache.errors import MemcacheServerError
+from meta_memcache.errors import MemcacheServerError, UserDataError
 from meta_memcache.events.write_failure_event import WriteFailureEvent
 from meta_memcache.protocol import (
     ENDL,
@@ -241,6 +241,9 @@ class DefaultExecutor:
                 encoding_id = result.flags.client_flag or 0
                 try:
                     result.value = self._serializer.unserialize(data, encoding_id)
+                except UserDataError:
+                    """ Don't log user data errors when unserializing """
+                    result = Miss()
                 except Exception:
                     _log.exception(
                         f"Error unserializing value {data} "
