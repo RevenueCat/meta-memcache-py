@@ -1,6 +1,6 @@
 import pickle  # noqa: S403
 import zlib
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, ByteString, Dict, List, NamedTuple, Optional, Tuple
 
 from meta_memcache.base.base_serializer import BaseSerializer, EncodedValue
 from meta_memcache.protocol import Blob, Key
@@ -173,7 +173,7 @@ class ZstdSerializer(BaseSerializer):
         else:
             return zlib.compress(data), self.ZLIB_COMPRESSED
 
-    def _decompress(self, data: bytes) -> bytes:
+    def _decompress(self, data: ByteString) -> bytes:
         data = self.ZSTD_MAGIC + data
         dict_id = zstd.get_frame_parameters(data).dict_id
         if decompressor := self._zstd_decompressors.get(dict_id):

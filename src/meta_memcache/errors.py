@@ -9,3 +9,6 @@ class MemcacheServerError(MemcacheError):
 
 
 class ServerMarkedDownError(MemcacheServerError): ...
+
+
+class UserDataError(Exception): ...
