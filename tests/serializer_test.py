@@ -32,10 +32,6 @@ def dictionary_mapping(custom_dictionary):
     ]
 
 
-def get_compression_dict(compressor: zstd.ZstdCompressor) -> int:
-    return get_data_compression_dict(compressor.compress(b"test"))
-
-
 def get_data_compression_dict(data: bytes) -> int:
     return zstd.get_frame_parameters(data, format=zstd.FORMAT_ZSTD1_MAGICLESS).dict_id
 
@@ -58,10 +54,9 @@ def test_zstd_serializer_initialization(
         serializer._dict_compression_threshold
         == ZstdSerializer.DEFAULT_DICT_COMPRESSION_THRESHOLD
     )
-    assert isinstance(serializer._default_zstd_compressor, zstd.ZstdCompressor)
-    assert get_compression_dict(serializer._default_zstd_compressor) == 0
-    assert set(serializer._zstd_compressors.keys()) == {custom_dictionary_id}
-    assert set(serializer._zstd_decompressors.keys()) == {0, custom_dictionary_id}
+    assert serializer._default_zstd is True
+    assert serializer._default_dict_id is None
+    assert set(serializer._dicts.keys()) == {custom_dictionary_id}
     assert serializer._domain_to_dict_id == {"example": custom_dictionary_id}
 
     # Test with dictionary mappings, default to zstd with default_dictionary
@@ -79,17 +74,9 @@ def test_zstd_serializer_initialization(
         serializer._dict_compression_threshold
         == ZstdSerializer.DEFAULT_DICT_COMPRESSION_THRESHOLD
     )
-    assert isinstance(serializer._default_zstd_compressor, zstd.ZstdCompressor)
-    assert (
-        get_compression_dict(serializer._default_zstd_compressor)
-        == default_dictionary_id
-    )
-    assert set(serializer._zstd_compressors.keys()) == {
-        custom_dictionary_id,
-        default_dictionary_id,
-    }
-    assert set(serializer._zstd_decompressors.keys()) == {
-        0,
+    assert serializer._default_zstd is True
+    assert serializer._default_dict_id == default_dictionary_id
+    assert set(serializer._dicts.keys()) == {
         custom_dictionary_id,
         default_dictionary_id,
     }
@@ -109,9 +96,8 @@ def test_zstd_serializer_initialization(
         serializer._dict_compression_threshold
         == ZstdSerializer.DEFAULT_DICT_COMPRESSION_THRESHOLD
     )
-    assert serializer._default_zstd_compressor is None
-    assert not serializer._zstd_compressors
-    assert set(serializer._zstd_decompressors.keys()) == {0}
+    assert serializer._default_zstd is False
+    assert not serializer._dicts
     assert not serializer._domain_to_dict_id
 
 
@@ -195,6 +181,30 @@ def test_zstd_serializer_understands_zlib():
     zstd_serializer = ZstdSerializer()
     assert (
         zstd_serializer.unserialize(encoded_value.data, encoded_value.encoding_id)
+        == data
+    )
+
+
+def test_zstd_decompresses_zstd_when_zstd_is_disabled():
+    enabled_serializer = ZstdSerializer(default_zstd=True)
+    data = "compressed with zstd" * 100
+    zstd_encoded_value = enabled_serializer.serialize(Key("foo"), data)
+    assert zstd_encoded_value.encoding_id == ZstdSerializer.ZSTD_COMPRESSED
+
+    disabled_serializer = ZstdSerializer(default_zstd=False)
+    zlib_encoded_value = disabled_serializer.serialize(Key("foo"), data)
+    assert zlib_encoded_value.encoding_id == ZstdSerializer.ZLIB_COMPRESSED
+
+    assert (
+        disabled_serializer.unserialize(
+            zstd_encoded_value.data, zstd_encoded_value.encoding_id
+        )
+        == data
+    )
+    assert (
+        disabled_serializer.unserialize(
+            zlib_encoded_value.data, zlib_encoded_value.encoding_id
+        )
         == data
     )
 
