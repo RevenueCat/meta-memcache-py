@@ -10,6 +10,9 @@ from meta_memcache.serializer import (
 import zstandard as zstd
 
 
+ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
+
+
 @pytest.fixture
 def default_dictionary() -> zstd.ZstdCompressionDict:
     return zstd.train_dictionary(100 * 1024, [b"default", b"test", b"dictionary"] * 100)
@@ -34,7 +37,7 @@ def get_compression_dict(compressor: zstd.ZstdCompressor) -> int:
 
 
 def get_data_compression_dict(data: bytes) -> int:
-    return zstd.get_frame_parameters(ZstdSerializer.ZSTD_MAGIC + data).dict_id
+    return zstd.get_frame_parameters(data, format=zstd.FORMAT_ZSTD1_MAGICLESS).dict_id
 
 
 def test_zstd_serializer_initialization(
@@ -267,3 +270,34 @@ def test_zstd_custom_dict_compression(
     assert get_data_compression_dict(encoded_value.data) == custom_dictionary_id
 
     assert serializer.unserialize(encoded_value.data, encoded_value.encoding_id) == data
+
+
+def test_zstd_format_parameter():
+    # Test default format (FORMAT_ZSTD1_MAGICLESS)
+    serializer_default = ZstdSerializer()
+    assert serializer_default._zstd_format == zstd.FORMAT_ZSTD1_MAGICLESS
+
+    data = "test" * 100
+    key = Key("foo")
+    encoded_value = serializer_default.serialize(key, data)
+    assert encoded_value.encoding_id == ZstdSerializer.ZSTD_COMPRESSED
+    assert not encoded_value.data.startswith(ZSTD_MAGIC)
+    # Should be able to unserialize
+    assert (
+        serializer_default.unserialize(encoded_value.data, encoded_value.encoding_id)
+        == data
+    )
+    # Adding the magic bytes should be able to decompress
+    assert zstd.decompress(ZSTD_MAGIC + encoded_value.data).decode() == data
+
+    # Test with FORMAT_ZSTD1
+    serializer_magicless = ZstdSerializer(zstd_format=zstd.FORMAT_ZSTD1)
+    assert serializer_magicless._zstd_format == zstd.FORMAT_ZSTD1
+    encoded_value = serializer_magicless.serialize(key, data)
+    assert encoded_value.encoding_id == ZstdSerializer.ZSTD_COMPRESSED
+    assert encoded_value.data.startswith(ZSTD_MAGIC)
+    # Should be able to unserialize
+    assert (
+        serializer_magicless.unserialize(encoded_value.data, encoded_value.encoding_id)
+        == data
+    )
