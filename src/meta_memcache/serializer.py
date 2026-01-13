@@ -82,10 +82,11 @@ class ZstdSerializer(BaseSerializer):
     _compression_level: int
     _default_compression_threshold: int
     _dict_compression_threshold: int
-    _zstd_compressors: Dict[int, zstd.ZstdCompressor]
-    _zstd_decompressors: Dict[int, zstd.ZstdDecompressor]
+    _default_zstd: bool
+    _zstd_format: int
     _domain_to_dict_id: Dict[str, int]
-    _default_zstd_compressor: Optional[zstd.ZstdCompressor]
+    _default_dict_id: int | None
+    _dicts: Dict[int, zstd.ZstdCompressionDict]
 
     def __init__(
         self,
@@ -106,9 +107,9 @@ class ZstdSerializer(BaseSerializer):
             else dict_compression_threshold
         )
         self._dict_compression_threshold = dict_compression_threshold
-        self._zstd_compressors = {}
-        self._zstd_decompressors = {}
         self._domain_to_dict_id = {}
+        self._default_zstd = default_zstd
+        self._default_dict_id = None
         self._zstd_format = zstd_format
         self._compression_params = zstd.ZstdCompressionParameters.from_level(
             compression_level,
@@ -117,70 +118,56 @@ class ZstdSerializer(BaseSerializer):
             write_checksum=False,
             write_dict_id=True,
         )
+        self._dicts = {}
 
         if dictionary_mappings:
             for dictionary_mapping in dictionary_mappings:
-                dict_id, _, _ = self._add_dict(dictionary_mapping.dictionary)
+                dict_id = self._add_dict(dictionary_mapping.dictionary)
                 if dictionary_mapping.active_domains:
                     for domain in dictionary_mapping.active_domains:
                         self._domain_to_dict_id[domain] = dict_id
 
-        if default_zstd and default_dictionary:
-            dict_id, compressor, _ = self._add_dict(default_dictionary)
-            self._default_zstd_compressor = compressor
-        elif default_zstd:
-            self._default_zstd_compressor = zstd.ZstdCompressor(
-                compression_params=self._compression_params
-            )
-        else:
-            self._default_zstd_compressor = None
+        if self._default_zstd and default_dictionary:
+            dict_id = self._add_dict(default_dictionary)
+            self._default_dict_id = dict_id
 
-        # Decompressor for no dictionary (dict id 0)
-        self._zstd_decompressors[0] = zstd.ZstdDecompressor(
-            format=self._zstd_format,
-        )
-
-    def _add_dict(
-        self, dictionary: bytes
-    ) -> Tuple[int, zstd.ZstdCompressor, zstd.ZstdDecompressor]:
+    def _add_dict(self, dictionary: bytes) -> int:
         zstd_dict = zstd.ZstdCompressionDict(dictionary)
         dict_id = zstd_dict.dict_id()
-        compressor = self._add_dict_compressor(dict_id, zstd_dict)
-        decompressor = self._add_dict_decompressor(dict_id, zstd_dict)
-        return dict_id, compressor, decompressor
-
-    def _add_dict_decompressor(
-        self, dict_id: int, zstd_dict: zstd.ZstdCompressionDict
-    ) -> zstd.ZstdDecompressor:
-        self._zstd_decompressors[dict_id] = zstd.ZstdDecompressor(
-            dict_data=zstd_dict,
-            format=self._zstd_format,
-        )
-        return self._zstd_decompressors[dict_id]
-
-    def _add_dict_compressor(
-        self,
-        dict_id: int,
-        zstd_dict: zstd.ZstdCompressionDict,
-    ) -> zstd.ZstdCompressor:
-        self._zstd_compressors[dict_id] = zstd.ZstdCompressor(
-            dict_data=zstd_dict, compression_params=self._compression_params
-        )
-        return self._zstd_compressors[dict_id]
+        if dict_id not in self._dicts:
+            # precompute the dictionary so it can readily be consumed
+            # by multiple ZstdCompressor instances
+            zstd_dict.precompute_compress(compression_params=self._compression_params)
+            self._dicts[dict_id] = zstd_dict
+        return dict_id
 
     def _compress(self, key: Key, data: bytes) -> Tuple[bytes, int]:
-        if key.domain and (dict_id := self._domain_to_dict_id.get(key.domain)):
-            return self._zstd_compressors[dict_id].compress(data), self.ZSTD_COMPRESSED
-        elif self._default_zstd_compressor:
-            return self._default_zstd_compressor.compress(data), self.ZSTD_COMPRESSED
-        else:
+        if not self._default_zstd:
             return zlib.compress(data), self.ZLIB_COMPRESSED
+
+        dict_id = self._default_dict_id
+        if key.domain and (domain_dict_id := self._domain_to_dict_id.get(key.domain)):
+            dict_id = domain_dict_id
+
+        compressor = zstd.ZstdCompressor(
+            dict_data=self._dicts[dict_id] if dict_id else None,
+            compression_params=self._compression_params,
+        )
+
+        return compressor.compress(data), self.ZSTD_COMPRESSED
 
     def _zstd_decompress(self, data: ByteString) -> bytes:
         dict_id = zstd.get_frame_parameters(data, format=self._zstd_format).dict_id
-        if decompressor := self._zstd_decompressors.get(dict_id):
-            return decompressor.decompress(data)
-        raise ValueError(f"Unknown dictionary id: {dict_id}")
+        dict_data = None
+        if dict_id:
+            dict_data = self._dicts.get(dict_id)
+            if not dict_data:
+                raise ValueError(f"Unknown dictionary id: {dict_id}")
+        decompressor = zstd.ZstdDecompressor(
+            dict_data=dict_data,
+            format=self._zstd_format,
+        )
+        return decompressor.decompress(data)
 
     def _should_compress(self, key: Key, data: bytes) -> bool:
         data_len = len(data)
