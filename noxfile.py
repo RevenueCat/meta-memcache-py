@@ -25,16 +25,14 @@ def lint(session: Session) -> None:
 def format(session: Session) -> None:
     """Format check using ruff."""
     args = session.posargs or locations
-    session.install("ruff", ".")
-    session.run("ruff", "format", "--diff", *args)
+    session.run("uvx", "ruff", "format", "--diff", *args)
 
 
 @session(python=DEFAULT_VERSION)
 def fix_format(session: Session) -> None:
     """Fix format using ruff."""
     args = session.posargs or locations
-    session.install("ruff", ".")
-    session.run("ruff", "format", *args)
+    session.run("uvx", "ruff", "format", *args)
 
 
 @session(python=DEFAULT_VERSION)
@@ -64,7 +62,7 @@ def check_version(session: Session) -> None:
     module_version = session.run(
         "sed",
         "-n",
-        's/^__version__ = "\(.*\)"$/\\1/p',
+        r's/^__version__ = "\(.*\)"$/\1/p',
         "src/meta_memcache/__init__.py",
         silent=True,
         external=True,
