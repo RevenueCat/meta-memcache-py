@@ -5,8 +5,9 @@ from meta_memcache.serializer import (
     ZstdSerializer,
     DictionaryMapping,
     EncodedValue,
-    Key,
 )
+from meta_memcache.compression import ThreadLocalZstdManager
+from meta_memcache.protocol import Key
 import zstandard as zstd
 
 
@@ -32,78 +33,47 @@ def dictionary_mapping(custom_dictionary):
     ]
 
 
+@pytest.fixture
+def basic_manager() -> ThreadLocalZstdManager:
+    """Manager with default configuration, no dictionaries."""
+    return ThreadLocalZstdManager(
+        compression_level=ZstdSerializer.DEFAULT_COMPRESSION_LEVEL
+    )
+
+
+@pytest.fixture
+def manager_with_custom_dict(custom_dictionary) -> ThreadLocalZstdManager:
+    """Manager with custom dictionary for 'example' domain."""
+    manager = ThreadLocalZstdManager(
+        compression_level=ZstdSerializer.DEFAULT_COMPRESSION_LEVEL
+    )
+    manager.register_dictionary(custom_dictionary.as_bytes(), domains=["example"])
+    return manager
+
+
+@pytest.fixture
+def manager_with_both_dicts(
+    custom_dictionary, default_dictionary
+) -> ThreadLocalZstdManager:
+    """Manager with custom dictionary for 'example' domain and default dictionary."""
+    manager = ThreadLocalZstdManager(
+        compression_level=ZstdSerializer.DEFAULT_COMPRESSION_LEVEL
+    )
+    manager.register_dictionary(custom_dictionary.as_bytes(), domains=["example"])
+    manager.set_default_dictionary(default_dictionary.as_bytes())
+    return manager
+
+
 def get_data_compression_dict(data: bytes) -> int:
     return zstd.get_frame_parameters(data, format=zstd.FORMAT_ZSTD1_MAGICLESS).dict_id
 
 
-def test_zstd_serializer_initialization(
-    dictionary_mapping, default_dictionary, custom_dictionary
-):
-    default_dictionary_id = default_dictionary.dict_id()
-    custom_dictionary_id = custom_dictionary.dict_id()
-
-    # Test with dictionary mappings, default to zstd without dictionary
-    serializer = ZstdSerializer(dictionary_mappings=dictionary_mapping)
-    assert serializer._pickle_protocol == ZstdSerializer.DEFAULT_PICKLE_PROTOCOL
-    assert serializer._compression_level == ZstdSerializer.DEFAULT_COMPRESSION_LEVEL
-    assert (
-        serializer._default_compression_threshold
-        == ZstdSerializer.DEFAULT_COMPRESSION_THRESHOLD
-    )
-    assert (
-        serializer._dict_compression_threshold
-        == ZstdSerializer.DEFAULT_DICT_COMPRESSION_THRESHOLD
-    )
-    assert serializer._default_zstd is True
-    assert serializer._default_dict_id is None
-    assert set(serializer._dicts.keys()) == {custom_dictionary_id}
-    assert serializer._domain_to_dict_id == {"example": custom_dictionary_id}
-
-    # Test with dictionary mappings, default to zstd with default_dictionary
-    serializer = ZstdSerializer(
-        dictionary_mappings=dictionary_mapping,
-        default_dictionary=default_dictionary.as_bytes(),
-    )
-    assert serializer._pickle_protocol == ZstdSerializer.DEFAULT_PICKLE_PROTOCOL
-    assert serializer._compression_level == ZstdSerializer.DEFAULT_COMPRESSION_LEVEL
-    assert (
-        serializer._default_compression_threshold
-        == ZstdSerializer.DEFAULT_DICT_COMPRESSION_THRESHOLD
-    )
-    assert (
-        serializer._dict_compression_threshold
-        == ZstdSerializer.DEFAULT_DICT_COMPRESSION_THRESHOLD
-    )
-    assert serializer._default_zstd is True
-    assert serializer._default_dict_id == default_dictionary_id
-    assert set(serializer._dicts.keys()) == {
-        custom_dictionary_id,
-        default_dictionary_id,
-    }
-    assert serializer._domain_to_dict_id == {"example": custom_dictionary_id}
-
-    # Test without dictionary mapping and default to zlib
-    serializer = ZstdSerializer(
-        default_zstd=False,
-    )
-    assert serializer._pickle_protocol == ZstdSerializer.DEFAULT_PICKLE_PROTOCOL
-    assert serializer._compression_level == ZstdSerializer.DEFAULT_COMPRESSION_LEVEL
-    assert (
-        serializer._default_compression_threshold
-        == ZstdSerializer.DEFAULT_COMPRESSION_THRESHOLD
-    )
-    assert (
-        serializer._dict_compression_threshold
-        == ZstdSerializer.DEFAULT_DICT_COMPRESSION_THRESHOLD
-    )
-    assert serializer._default_zstd is False
-    assert not serializer._dicts
-    assert not serializer._domain_to_dict_id
-
-
 @pytest.mark.parametrize("serializer_class", [ZstdSerializer, MixedSerializer])
-def test_serialize_bytes(serializer_class):
-    serializer = serializer_class()
+def test_serialize_bytes(serializer_class, basic_manager):
+    if serializer_class == ZstdSerializer:
+        serializer = serializer_class(zstd_manager=basic_manager)
+    else:
+        serializer = serializer_class()
     data = b"test data"
     key = Key("foo")
     encoded_value = serializer.serialize(key, data)
@@ -114,8 +84,11 @@ def test_serialize_bytes(serializer_class):
 
 
 @pytest.mark.parametrize("serializer_class", [ZstdSerializer, MixedSerializer])
-def test_serialize_int(serializer_class):
-    serializer = serializer_class()
+def test_serialize_int(serializer_class, basic_manager):
+    if serializer_class == ZstdSerializer:
+        serializer = serializer_class(zstd_manager=basic_manager)
+    else:
+        serializer = serializer_class()
     data = 123
     key = Key("foo")
     encoded_value = serializer.serialize(key, data)
@@ -126,8 +99,11 @@ def test_serialize_int(serializer_class):
 
 
 @pytest.mark.parametrize("serializer_class", [ZstdSerializer, MixedSerializer])
-def test_serialize_string(serializer_class):
-    serializer = serializer_class()
+def test_serialize_string(serializer_class, basic_manager):
+    if serializer_class == ZstdSerializer:
+        serializer = serializer_class(zstd_manager=basic_manager)
+    else:
+        serializer = serializer_class()
     data = "test"
     key = Key("foo")
     encoded_value = serializer.serialize(key, data)
@@ -138,8 +114,11 @@ def test_serialize_string(serializer_class):
 
 
 @pytest.mark.parametrize("serializer_class", [ZstdSerializer, MixedSerializer])
-def test_serialize_complex(serializer_class):
-    serializer = serializer_class()
+def test_serialize_complex(serializer_class, basic_manager):
+    if serializer_class == ZstdSerializer:
+        serializer = serializer_class(zstd_manager=basic_manager)
+    else:
+        serializer = serializer_class()
     data = [1, 2, 3]
     key = Key("foo")
     encoded_value = serializer.serialize(key, data)
@@ -151,8 +130,11 @@ def test_serialize_complex(serializer_class):
 
 
 @pytest.mark.parametrize("serializer_class", [ZstdSerializer, MixedSerializer])
-def test_serialize_compress(serializer_class):
-    serializer = serializer_class()
+def test_serialize_compress(serializer_class, basic_manager):
+    if serializer_class == ZstdSerializer:
+        serializer = serializer_class(zstd_manager=basic_manager)
+    else:
+        serializer = serializer_class()
     data = ["test"] * 100
     key = Key("foo")
     encoded_value = serializer.serialize(key, data)
@@ -169,7 +151,7 @@ def test_serialize_compress(serializer_class):
     assert serializer.unserialize(encoded_value.data, encoded_value.encoding_id) == data
 
 
-def test_zstd_serializer_understands_zlib():
+def test_zstd_serializer_understands_zlib(basic_manager):
     mixed_serializer = MixedSerializer()
     data = b"compressed with zlib" * 100
     encoded_value = mixed_serializer.serialize(Key("foo"), data)
@@ -178,20 +160,20 @@ def test_zstd_serializer_understands_zlib():
         MixedSerializer.BINARY | MixedSerializer.ZLIB_COMPRESSED
     )
 
-    zstd_serializer = ZstdSerializer()
+    zstd_serializer = ZstdSerializer(zstd_manager=basic_manager)
     assert (
         zstd_serializer.unserialize(encoded_value.data, encoded_value.encoding_id)
         == data
     )
 
 
-def test_zstd_decompresses_zstd_when_zstd_is_disabled():
-    enabled_serializer = ZstdSerializer(default_zstd=True)
+def test_zstd_decompresses_zstd_when_zstd_is_disabled(basic_manager):
+    enabled_serializer = ZstdSerializer(zstd_manager=basic_manager, default_zstd=True)
     data = "compressed with zstd" * 100
     zstd_encoded_value = enabled_serializer.serialize(Key("foo"), data)
     assert zstd_encoded_value.encoding_id == ZstdSerializer.ZSTD_COMPRESSED
 
-    disabled_serializer = ZstdSerializer(default_zstd=False)
+    disabled_serializer = ZstdSerializer(zstd_manager=basic_manager, default_zstd=False)
     zlib_encoded_value = disabled_serializer.serialize(Key("foo"), data)
     assert zlib_encoded_value.encoding_id == ZstdSerializer.ZLIB_COMPRESSED
 
@@ -209,11 +191,11 @@ def test_zstd_decompresses_zstd_when_zstd_is_disabled():
     )
 
 
-def test_zstd_default_dict_compression(dictionary_mapping, default_dictionary):
+def test_zstd_default_dict_compression(manager_with_both_dicts, default_dictionary):
     default_dictionary_id = default_dictionary.dict_id()
+
     serializer = ZstdSerializer(
-        dictionary_mappings=dictionary_mapping,
-        default_dictionary=default_dictionary.as_bytes(),
+        zstd_manager=manager_with_both_dicts,
         compression_threshold=101,
         dict_compression_threshold=51,
     )
@@ -232,9 +214,9 @@ def test_zstd_default_dict_compression(dictionary_mapping, default_dictionary):
     assert serializer.unserialize(encoded_value.data, encoded_value.encoding_id) == data
 
 
-def test_zstd_no_default_dict_compression(dictionary_mapping):
+def test_zstd_no_default_dict_compression(manager_with_custom_dict):
     serializer = ZstdSerializer(
-        dictionary_mappings=dictionary_mapping,
+        zstd_manager=manager_with_custom_dict,
         compression_threshold=101,
         dict_compression_threshold=51,
     )
@@ -257,13 +239,11 @@ def test_zstd_no_default_dict_compression(dictionary_mapping):
     assert serializer.unserialize(encoded_value.data, encoded_value.encoding_id) == data
 
 
-def test_zstd_custom_dict_compression(
-    dictionary_mapping, default_dictionary, custom_dictionary
-):
+def test_zstd_custom_dict_compression(manager_with_both_dicts, custom_dictionary):
     custom_dictionary_id = custom_dictionary.dict_id()
+
     serializer = ZstdSerializer(
-        dictionary_mappings=dictionary_mapping,
-        default_dictionary=default_dictionary.as_bytes(),
+        zstd_manager=manager_with_both_dicts,
         compression_threshold=101,
         dict_compression_threshold=51,
     )
@@ -284,8 +264,9 @@ def test_zstd_custom_dict_compression(
 
 def test_zstd_format_parameter():
     # Test default format (FORMAT_ZSTD1_MAGICLESS)
-    serializer_default = ZstdSerializer()
-    assert serializer_default._zstd_format == zstd.FORMAT_ZSTD1_MAGICLESS
+    default_manager = ThreadLocalZstdManager()
+    assert default_manager._zstd_format == zstd.FORMAT_ZSTD1_MAGICLESS
+    serializer_default = ZstdSerializer(zstd_manager=default_manager)
 
     data = "test" * 100
     key = Key("foo")
@@ -301,13 +282,13 @@ def test_zstd_format_parameter():
     assert zstd.decompress(ZSTD_MAGIC + encoded_value.data).decode() == data
 
     # Test with FORMAT_ZSTD1
-    serializer_magicless = ZstdSerializer(zstd_format=zstd.FORMAT_ZSTD1)
-    assert serializer_magicless._zstd_format == zstd.FORMAT_ZSTD1
-    encoded_value = serializer_magicless.serialize(key, data)
+    manager_with_magic = ThreadLocalZstdManager(zstd_format=zstd.FORMAT_ZSTD1)
+    serializer_with_magic = ZstdSerializer(zstd_manager=manager_with_magic)
+    encoded_value = serializer_with_magic.serialize(key, data)
     assert encoded_value.encoding_id == ZstdSerializer.ZSTD_COMPRESSED
     assert encoded_value.data.startswith(ZSTD_MAGIC)
     # Should be able to unserialize
     assert (
-        serializer_magicless.unserialize(encoded_value.data, encoded_value.encoding_id)
+        serializer_with_magic.unserialize(encoded_value.data, encoded_value.encoding_id)
         == data
     )
