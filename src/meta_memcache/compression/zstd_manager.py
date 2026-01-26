@@ -83,18 +83,29 @@ class BaseZstdManager(ABC):
     def __init__(
         self,
         compression_level: int = 9,
+        dict_compression_level: int | None = None,
         zstd_format: int = zstd.FORMAT_ZSTD1_MAGICLESS,
     ) -> None:
         self._compression_level = compression_level
+        self._dict_compression_level = (
+            dict_compression_level
+            if dict_compression_level is not None
+            else compression_level
+        )
         self._zstd_format = zstd_format
 
         self._dictionaries = ZstdDictionaries()
         self._domain_to_dict_id: dict[str, int] = {}
         self._default_dict_id: int | None = None
 
-        self._compression_params = zstd.ZstdCompressionParameters.from_level(
+        self._compression_params = self._get_compression_params(compression_level)
+
+    def _get_compression_params(
+        self, compression_level: int
+    ) -> zstd.ZstdCompressionParameters:
+        return zstd.ZstdCompressionParameters.from_level(
             compression_level,
-            format=zstd_format,
+            format=self._zstd_format,
             write_content_size=True,
             write_checksum=False,
             write_dict_id=True,
@@ -104,27 +115,33 @@ class BaseZstdManager(ABC):
         self,
         dictionary: bytes | Path,
         domains: list[str],
+        compression_level: int | None = None,
     ) -> int:
         """Register a dictionary for specific domains."""
+        compression_params = self._get_compression_params(
+            compression_level or self._dict_compression_level
+        )
         dict_id = self._dictionaries.register_dictionary(
-            dictionary=dictionary,
-            compression_params=self._compression_params,
+            dictionary=dictionary, compression_params=compression_params
         )
 
         for domain in domains:
             self._domain_to_dict_id[domain] = dict_id
 
+        self._dictionary_added(dict_id)
         return dict_id
 
-    def set_default_dictionary(self, dictionary: bytes | Path) -> int:
+    def set_default_dictionary(
+        self, dictionary: bytes | Path, compression_level: int | None = None
+    ) -> int:
         """Set the default dictionary for keys without a domain."""
-        dict_id = self._dictionaries.register_dictionary(
-            dictionary=dictionary,
-            compression_params=self._compression_params,
+        self._default_dict_id = self.register_dictionary(
+            dictionary, domains=[], compression_level=compression_level
         )
+        return self._default_dict_id
 
-        self._default_dict_id = dict_id
-        return dict_id
+    def _dictionary_added(self, dict_id: int) -> None:
+        pass
 
     def select_dict_id(self, domain: str | None) -> int | None:
         """Select appropriate dictionary ID based on domain."""
@@ -182,9 +199,10 @@ class ThreadLocalZstdManager(BaseZstdManager):
     def __init__(
         self,
         compression_level: int = 9,
+        dict_compression_level: int | None = None,
         zstd_format: int = zstd.FORMAT_ZSTD1_MAGICLESS,
     ) -> None:
-        super().__init__(compression_level, zstd_format)
+        super().__init__(compression_level, dict_compression_level, zstd_format)
         self._local = threading.local()
 
     @contextmanager
@@ -199,6 +217,7 @@ class ThreadLocalZstdManager(BaseZstdManager):
             dict_data = self._dictionaries.get_dictionary(dict_id) if dict_id else None
             compressor = zstd.ZstdCompressor(
                 dict_data=dict_data,
+                # Dict params override default compression params
                 compression_params=self._compression_params,
             )
             self._local.cache.set_compressor(dict_id, compressor)
@@ -247,9 +266,10 @@ class PooledZstdManager(BaseZstdManager):
     def __init__(
         self,
         compression_level: int = 9,
+        dict_compression_level: int | None = None,
         zstd_format: int = zstd.FORMAT_ZSTD1_MAGICLESS,
     ) -> None:
-        super().__init__(compression_level, zstd_format)
+        super().__init__(compression_level, dict_compression_level, zstd_format)
         self._compressor_pools: dict[int, Deque[zstd.ZstdCompressor]] = {}
         self._decompressor_pools: dict[int, Deque[zstd.ZstdDecompressor]] = {}
         self._create_pools_for_dict(0)
@@ -260,21 +280,8 @@ class PooledZstdManager(BaseZstdManager):
         if dict_id not in self._decompressor_pools:
             self._decompressor_pools[dict_id] = deque()
 
-    def register_dictionary(
-        self,
-        dictionary: bytes | Path,
-        domains: list[str],
-    ) -> int:
-        """Register a dictionary for specific domains."""
-        dict_id = super().register_dictionary(dictionary, domains)
+    def _dictionary_added(self, dict_id: int) -> None:
         self._create_pools_for_dict(dict_id)
-        return dict_id
-
-    def set_default_dictionary(self, dictionary: bytes | Path) -> int:
-        """Set the default dictionary for keys without a domain."""
-        dict_id = super().set_default_dictionary(dictionary)
-        self._create_pools_for_dict(dict_id)
-        return dict_id
 
     @contextmanager
     def get_compressor(
@@ -291,6 +298,7 @@ class PooledZstdManager(BaseZstdManager):
             dict_data = self._dictionaries.get_dictionary(dict_id) if dict_id else None
             compressor = zstd.ZstdCompressor(
                 dict_data=dict_data,
+                # Dict params override default compression params
                 compression_params=self._compression_params,
             )
 

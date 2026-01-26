@@ -68,6 +68,23 @@ class TestBothZstdManagers:
 
         assert dict_id == custom_dictionary.dict_id()
 
+    def test_register_dictionary_twice(
+        self, manager: BaseZstdManager, custom_dictionary: zstd.ZstdCompressionDict
+    ) -> None:
+        dict_id = manager.register_dictionary(
+            dictionary=custom_dictionary.as_bytes(),
+            domains=["users"],
+        )
+        dict_id2 = manager.register_dictionary(
+            dictionary=custom_dictionary.as_bytes(),
+            domains=["posts"],
+        )
+
+        assert dict_id == custom_dictionary.dict_id()
+        assert dict_id2 == custom_dictionary.dict_id()
+        assert manager.select_dict_id("users") == dict_id
+        assert manager.select_dict_id("posts") == dict_id2
+
     def test_register_dictionary_with_path(
         self,
         manager: BaseZstdManager,
