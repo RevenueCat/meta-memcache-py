@@ -648,3 +648,207 @@ def test_stale_expires(
     assert store.get("foo_hot") is None
     client.meta_get.assert_called_once_with(key=Key(key="foo_hot"), **DEFAULT_FLAGS)
     client.meta_get.reset_mock()
+
+
+@pytest.fixture
+def client_with_dict_value() -> Mock:
+    """Client that returns mutable dict values to test deep copy behavior."""
+    original_value = {"key": "value", "nested": {"inner": 1}}
+
+    def meta_get(
+        key: Key,
+        flags: Optional[RequestFlags] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
+    ) -> ReadResponse:
+        if key.key.endswith("hot"):
+            return Value(
+                size=1,
+                value=original_value,
+                flags=ResponseFlags(
+                    fetched=True,
+                    last_access=1,
+                ),
+            )
+        elif key.key.endswith("miss"):
+            return Miss()
+        else:
+            return Value(
+                size=1,
+                value=original_value,
+                flags=ResponseFlags(
+                    fetched=True,
+                    last_access=9999,
+                ),
+            )
+
+    def meta_multiget(
+        keys: List[Key],
+        flags: Optional[RequestFlags] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
+    ) -> Dict[Key, ReadResponse]:
+        return {key: meta_get(key=key) for key in keys}
+
+    mock = Mock(spec=CacheClient)
+    mock.meta_get.side_effect = meta_get
+    mock.meta_multiget.side_effect = meta_multiget
+    mock.original_value = original_value
+    return mock
+
+
+def test_deep_copy_enabled_by_default(
+    time: Mock,
+    client_with_dict_value: Mock,
+) -> None:
+    """Test that deep copy is enabled by default and prevents mutation of cached values."""
+    store = {}
+    hot_cache = ProbabilisticHotCache(
+        client=client_with_dict_value,
+        store=store,
+        cache_ttl=60,
+        max_last_access_age_seconds=10,
+        probability_factor=1,
+        max_stale_while_revalidate_seconds=10,
+        # deep_copy defaults to True
+    )
+
+    time.time.return_value = 0
+
+    # First call populates the hot cache
+    result1 = hot_cache.get(key="foo_hot")
+    assert result1 == {"key": "value", "nested": {"inner": 1}}
+    assert "foo_hot" in store
+
+    # Mutate the returned value
+    result1["key"] = "mutated"
+    result1["nested"]["inner"] = 999
+
+    # Second call should return from hot cache with original value (deep copied)
+    time.time.return_value = 10
+    result2 = hot_cache.get(key="foo_hot")
+
+    # The cached value should NOT be mutated
+    assert result2 == {"key": "value", "nested": {"inner": 1}}
+    assert store["foo_hot"].value == {"key": "value", "nested": {"inner": 1}}
+
+
+def test_deep_copy_disabled(
+    time: Mock,
+    client_with_dict_value: Mock,
+) -> None:
+    """Test that with deep_copy=False, mutations affect the cached value."""
+    store = {}
+    hot_cache = ProbabilisticHotCache(
+        client=client_with_dict_value,
+        store=store,
+        cache_ttl=60,
+        max_last_access_age_seconds=10,
+        probability_factor=1,
+        max_stale_while_revalidate_seconds=10,
+        deep_copy=False,
+    )
+
+    time.time.return_value = 0
+
+    # First call populates the hot cache
+    result1 = hot_cache.get(key="foo_hot")
+    assert result1 == {"key": "value", "nested": {"inner": 1}}
+    assert "foo_hot" in store
+
+    # Mutate the returned value
+    result1["key"] = "mutated"
+    result1["nested"]["inner"] = 999
+
+    # Second call should return the same (mutated) object from hot cache
+    time.time.return_value = 10
+    result2 = hot_cache.get(key="foo_hot")
+
+    # The cached value IS mutated because deep_copy is False
+    assert result2 == {"key": "mutated", "nested": {"inner": 999}}
+    assert store["foo_hot"].value == {"key": "mutated", "nested": {"inner": 999}}
+
+
+def test_deep_copy_with_custom_function(
+    time: Mock,
+    client_with_dict_value: Mock,
+) -> None:
+    """Test that a custom deep_copy_fn can be provided."""
+    store = {}
+    copy_call_count = 0
+
+    def custom_copy_fn(value):
+        nonlocal copy_call_count
+        copy_call_count += 1
+        # Custom copy that adds a marker
+        import copy
+
+        result = copy.deepcopy(value)
+        result["_copied"] = True
+        return result
+
+    hot_cache = ProbabilisticHotCache(
+        client=client_with_dict_value,
+        store=store,
+        cache_ttl=60,
+        max_last_access_age_seconds=10,
+        probability_factor=1,
+        max_stale_while_revalidate_seconds=10,
+        deep_copy=True,
+        deep_copy_fn=custom_copy_fn,
+    )
+
+    time.time.return_value = 0
+
+    # First call populates the hot cache (deep copy on store)
+    result1 = hot_cache.get(key="foo_hot")
+    assert result1 == {"key": "value", "nested": {"inner": 1}}
+    assert "foo_hot" in store
+    assert copy_call_count == 1  # One copy when storing in hot cache
+    # The stored value should have the marker (because custom_copy_fn adds it)
+    assert store["foo_hot"].value == {"key": "value", "nested": {"inner": 1}, "_copied": True}
+
+    # Second call should use custom copy function again (on retrieval)
+    time.time.return_value = 10
+    result2 = hot_cache.get(key="foo_hot")
+
+    assert copy_call_count == 2  # Second copy when retrieving from hot cache
+    # Result has _copied from both store and retrieve (nested copying)
+    assert result2["key"] == "value"
+    assert result2["nested"]["inner"] == 1
+    assert result2["_copied"] is True
+
+
+def test_deep_copy_multi_get(
+    time: Mock,
+    client_with_dict_value: Mock,
+) -> None:
+    """Test that deep copy works correctly with multi_get."""
+    store = {}
+    hot_cache = ProbabilisticHotCache(
+        client=client_with_dict_value,
+        store=store,
+        cache_ttl=60,
+        max_last_access_age_seconds=10,
+        probability_factor=1,
+        max_stale_while_revalidate_seconds=10,
+        deep_copy=True,
+    )
+
+    time.time.return_value = 0
+
+    # First call populates the hot cache
+    results1 = hot_cache.multi_get(keys=["foo_hot"])
+    result1 = results1[Key("foo_hot")]
+    assert result1 == {"key": "value", "nested": {"inner": 1}}
+    assert "foo_hot" in store
+
+    # Mutate the returned value
+    result1["key"] = "mutated"
+
+    # Second call should return from hot cache with original value
+    time.time.return_value = 10
+    results2 = hot_cache.multi_get(keys=["foo_hot"])
+    result2 = results2[Key("foo_hot")]
+
+    # The cached value should NOT be mutated
+    assert result2 == {"key": "value", "nested": {"inner": 1}}
+    assert store["foo_hot"].value == {"key": "value", "nested": {"inner": 1}}

@@ -1,8 +1,9 @@
+import copy
 import random
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
 from marisa_trie import Trie  # type: ignore
 
@@ -31,7 +32,26 @@ class ProbabilisticHotCache(ClientWrapper):
         max_stale_while_revalidate_seconds: int = 10,
         allowed_prefixes: Optional[List[str]] = None,
         metrics_collector: Optional[BaseMetricsCollector] = None,
+        deep_copy: bool = True,
+        deep_copy_fn: Optional[Callable[[Any], Any]] = None,
     ) -> None:
+        """
+        Initialize the ProbabilisticHotCache.
+
+        Args:
+            client: The underlying cache client.
+            store: The in-memory store for hot cache entries.
+            cache_ttl: TTL for hot cache entries in seconds.
+            max_last_access_age_seconds: Max age of last access to consider a key hot.
+            probability_factor: 1 in probability_factor chance to cache a hot key.
+            max_stale_while_revalidate_seconds: Max staleness for stale-while-revalidate.
+            allowed_prefixes: Optional list of key prefixes to cache.
+            metrics_collector: Optional metrics collector.
+            deep_copy: If True, deep copy values when returning from hot cache to prevent
+                mutation of cached values. Defaults to True for safety.
+            deep_copy_fn: Optional custom deep copy function. If provided, this function
+                is used instead of copy.deepcopy when deep_copy is True.
+        """
         super().__init__(client=client)
         self._store = store
         self._lock = threading.Lock()
@@ -42,6 +62,8 @@ class ProbabilisticHotCache(ClientWrapper):
         self._allowed_prefixes: Optional[Trie] = (
             Trie(allowed_prefixes) if allowed_prefixes else None
         )
+        self._deep_copy = deep_copy
+        self._deep_copy_fn = deep_copy_fn if deep_copy_fn else copy.deepcopy
         if metrics_collector:
             metrics_collector.init_metrics(
                 namespace="hot_cache",
@@ -78,7 +100,10 @@ class ProbabilisticHotCache(ClientWrapper):
         value: Optional[Any]
         if found := self._store.get(key.key):
             is_hot = True
-            value = found.value
+            # Deep copy the value to prevent callers from mutating the cached value
+            value = (
+                self._deep_copy_fn(found.value) if self._deep_copy else found.value
+            )
             now = int(time.time())
             ttl = found.expiration - now
             if ttl > 0:
@@ -140,8 +165,11 @@ class ProbabilisticHotCache(ClientWrapper):
         if not is_hot:
             return
 
+        # Deep copy the value when storing to protect the cached value from
+        # mutations by the caller who received the original return value
+        stored_value = self._deep_copy_fn(value.value) if self._deep_copy else value.value
         self._store[key.key] = CachedValue(
-            value=value.value,
+            value=stored_value,
             expiration=int(time.time()) + self._cache_ttl,
             extended=False,
         )
