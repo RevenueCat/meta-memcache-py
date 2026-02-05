@@ -804,7 +804,11 @@ def test_deep_copy_with_custom_function(
     assert "foo_hot" in store
     assert copy_call_count == 1  # One copy when storing in hot cache
     # The stored value should have the marker (because custom_copy_fn adds it)
-    assert store["foo_hot"].value == {"key": "value", "nested": {"inner": 1}, "_copied": True}
+    assert store["foo_hot"].value == {
+        "key": "value",
+        "nested": {"inner": 1},
+        "_copied": True,
+    }
 
     # Second call should use custom copy function again (on retrieval)
     time.time.return_value = 10

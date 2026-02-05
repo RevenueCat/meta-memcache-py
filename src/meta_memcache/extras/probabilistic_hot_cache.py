@@ -101,9 +101,7 @@ class ProbabilisticHotCache(ClientWrapper):
         if found := self._store.get(key.key):
             is_hot = True
             # Deep copy the value to prevent callers from mutating the cached value
-            value = (
-                self._deep_copy_fn(found.value) if self._deep_copy else found.value
-            )
+            value = self._deep_copy_fn(found.value) if self._deep_copy else found.value
             now = int(time.time())
             ttl = found.expiration - now
             if ttl > 0:
@@ -167,7 +165,9 @@ class ProbabilisticHotCache(ClientWrapper):
 
         # Deep copy the value when storing to protect the cached value from
         # mutations by the caller who received the original return value
-        stored_value = self._deep_copy_fn(value.value) if self._deep_copy else value.value
+        stored_value = (
+            self._deep_copy_fn(value.value) if self._deep_copy else value.value
+        )
         self._store[key.key] = CachedValue(
             value=stored_value,
             expiration=int(time.time()) + self._cache_ttl,
