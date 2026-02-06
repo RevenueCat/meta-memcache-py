@@ -102,6 +102,7 @@ def test_get_without_prefixes(
         max_stale_while_revalidate_seconds=10,
         allowed_prefixes=None,
         metrics_collector=metrics_collector,
+        immutable_types=[],
     )
 
     time.time.return_value = 0
@@ -477,6 +478,7 @@ def test_hot_miss_invalidates_hot_cache(
         max_stale_while_revalidate_seconds=10,
         allowed_prefixes=None,
         metrics_collector=metrics_collector,
+        immutable_types=[],
     )
 
     time.time.return_value = 0
@@ -614,6 +616,7 @@ def test_stale_expires(
         max_stale_while_revalidate_seconds=10,
         allowed_prefixes=None,
         metrics_collector=metrics_collector,
+        immutable_types=[],
     )
 
     time.time.return_value = 0
@@ -648,3 +651,190 @@ def test_stale_expires(
     assert store.get("foo_hot") is None
     client.meta_get.assert_called_once_with(key=Key(key="foo_hot"), **DEFAULT_FLAGS)
     client.meta_get.reset_mock()
+
+
+def test_cache_pollution_immutable_vs_mutable(
+    time: Mock,
+    client: Mock,
+) -> None:
+    """Test that immutable values aren't copied but mutable values are cloned
+    to prevent cache pollution."""
+    store = {}
+    hot_cache = ProbabilisticHotCache(
+        client=client,
+        store=store,
+        cache_ttl=60,
+        max_last_access_age_seconds=10,
+        probability_factor=1,
+        max_stale_while_revalidate_seconds=10,
+        allowed_prefixes=None,
+    )
+
+    time.time.return_value = 0
+
+    # Mock client to return different types of values
+    def meta_get_with_types(
+        key: Key,
+        flags: Optional[RequestFlags] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
+    ) -> ReadResponse:
+        if key.key == "immutable_int":
+            return Value(
+                size=1,
+                value=42,
+                flags=ResponseFlags(fetched=True, last_access=1),
+            )
+        elif key.key == "immutable_str":
+            return Value(
+                size=1,
+                value="hello",
+                flags=ResponseFlags(fetched=True, last_access=1),
+            )
+        elif key.key == "mutable_list":
+            return Value(
+                size=1,
+                value=[1, 2, 3],
+                flags=ResponseFlags(fetched=True, last_access=1),
+            )
+        elif key.key == "mutable_dict":
+            return Value(
+                size=1,
+                value={"key": "value"},
+                flags=ResponseFlags(fetched=True, last_access=1),
+            )
+        else:
+            return Miss()
+
+    client.meta_get.side_effect = meta_get_with_types
+
+    # Test immutable integer - should not be copied
+    result_int_1 = hot_cache.get(key="immutable_int")
+    assert result_int_1 == 42
+    assert "immutable_int" in store
+    assert store["immutable_int"]._is_serialized is False
+
+    # Second call should return the same value (no copying for immutables)
+    result_int_2 = hot_cache.get(key="immutable_int")
+    assert result_int_2 == 42
+    assert result_int_2 is result_int_1  # Same object for immutable types
+
+    # Test immutable string - should not be copied
+    result_str_1 = hot_cache.get(key="immutable_str")
+    assert result_str_1 == "hello"
+    assert "immutable_str" in store
+    assert store["immutable_str"]._is_serialized is False
+
+    result_str_2 = hot_cache.get(key="immutable_str")
+    assert result_str_2 == "hello"
+    assert result_str_2 is result_str_1  # Same object for immutable types
+
+    # Test mutable list - should be cloned on retrieval
+    result_list_1 = hot_cache.get(key="mutable_list")
+    assert result_list_1 == [1, 2, 3]
+    assert "mutable_list" in store
+    assert store["mutable_list"]._is_serialized is True  # Stored as pickle
+
+    # Second call should return a NEW copy
+    result_list_2 = hot_cache.get(key="mutable_list")
+    assert result_list_2 == [1, 2, 3]
+    assert result_list_2 is not result_list_1  # Different object!
+
+    # Modify the returned list - should NOT affect cached value
+    result_list_2.append(4)
+    assert result_list_2 == [1, 2, 3, 4]
+
+    # Get again - should still return original [1, 2, 3]
+    result_list_3 = hot_cache.get(key="mutable_list")
+    assert result_list_3 == [1, 2, 3]  # Not affected by modification
+    assert result_list_3 is not result_list_2  # Yet another different object
+
+    # Test mutable dict - should be cloned on retrieval
+    result_dict_1 = hot_cache.get(key="mutable_dict")
+    assert result_dict_1 == {"key": "value"}
+    assert "mutable_dict" in store
+    assert store["mutable_dict"]._is_serialized is True  # Stored as pickle
+
+    # Second call should return a NEW copy
+    result_dict_2 = hot_cache.get(key="mutable_dict")
+    assert result_dict_2 == {"key": "value"}
+    assert result_dict_2 is not result_dict_1  # Different object!
+
+    # Modify the returned dict - should NOT affect cached value
+    result_dict_2["new_key"] = "new_value"
+    assert result_dict_2 == {"key": "value", "new_key": "new_value"}
+
+    # Get again - should still return original dict
+    result_dict_3 = hot_cache.get(key="mutable_dict")
+    assert result_dict_3 == {"key": "value"}  # Not affected by modification
+    assert result_dict_3 is not result_dict_2  # Yet another different object
+
+
+def test_cache_pollution_multi_get(
+    time: Mock,
+    client: Mock,
+) -> None:
+    """Test that multi_get also properly clones mutable values."""
+    store = {}
+    hot_cache = ProbabilisticHotCache(
+        client=client,
+        store=store,
+        cache_ttl=60,
+        max_last_access_age_seconds=10,
+        probability_factor=1,
+        max_stale_while_revalidate_seconds=10,
+        allowed_prefixes=None,
+    )
+
+    time.time.return_value = 0
+
+    # Mock client to return mutable values
+    def meta_multiget_with_types(
+        keys: List[Key],
+        flags: Optional[RequestFlags] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
+    ) -> Dict[Key, ReadResponse]:
+        results = {}
+        for key in keys:
+            if key.key == "list_hot":
+                results[key] = Value(
+                    size=1,
+                    value=[10, 20, 30],
+                    flags=ResponseFlags(fetched=True, last_access=1),
+                )
+            elif key.key == "dict_hot":
+                results[key] = Value(
+                    size=1,
+                    value={"a": 1, "b": 2},
+                    flags=ResponseFlags(fetched=True, last_access=1),
+                )
+        return results
+
+    client.meta_multiget.side_effect = meta_multiget_with_types
+
+    # First call - caches the values
+    results_1 = hot_cache.multi_get(keys=["list_hot", "dict_hot"])
+    assert results_1[Key("list_hot")] == [10, 20, 30]
+    assert results_1[Key("dict_hot")] == {"a": 1, "b": 2}
+    assert "list_hot" in store
+    assert "dict_hot" in store
+
+    # Second call - should return cloned copies
+    results_2 = hot_cache.multi_get(keys=["list_hot", "dict_hot"])
+    assert results_2[Key("list_hot")] == [10, 20, 30]
+    assert results_2[Key("dict_hot")] == {"a": 1, "b": 2}
+
+    # Verify they are different objects
+    assert results_2[Key("list_hot")] is not results_1[Key("list_hot")]
+    assert results_2[Key("dict_hot")] is not results_1[Key("dict_hot")]
+
+    # Modify the returned values
+    results_2[Key("list_hot")].append(40)
+    results_2[Key("dict_hot")]["c"] = 3
+
+    # Get again - should return unmodified values
+    results_3 = hot_cache.multi_get(keys=["list_hot", "dict_hot"])
+    assert results_3[Key("list_hot")] == [10, 20, 30]  # Not [10, 20, 30, 40]
+    assert results_3[Key("dict_hot")] == {
+        "a": 1,
+        "b": 2,
+    }  # Not {"a": 1, "b": 2, "c": 3}

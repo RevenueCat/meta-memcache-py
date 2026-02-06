@@ -3,6 +3,7 @@ import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+import pickle
 
 from marisa_trie import Trie  # type: ignore
 
@@ -12,12 +13,36 @@ from meta_memcache.interfaces.cache_api import CacheApi
 from meta_memcache.metrics.base import BaseMetricsCollector, MetricDefinition
 from meta_memcache.protocol import Key, Value
 
+IMMUTABLE_TYPES = frozenset((type(None), bool, int, float, str, bytes))
 
-@dataclass
+# Use this if you know when you store tuples / frozensets in cache, they don't contain
+# mutable objects, ie, not list, dict, set, etc on their values.
+IMMUTABLE_TYPES_RISKY = frozenset(
+    (type(None), bool, int, float, str, bytes, tuple, frozenset)
+)
+
+
+@dataclass(slots=True)
 class CachedValue:
-    value: Any
+    _value: Any
     expiration: int
-    extended: bool
+    extended: bool = False
+    _is_serialized: bool = False
+
+    def __init__(
+        self, value: Any, expiration: int, extended: bool, is_immutable: bool = False
+    ):
+        self._value = (
+            value
+            if is_immutable
+            else pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
+        )
+        self.expiration = expiration
+        self.extended = extended
+        self._is_serialized = not is_immutable
+
+    def get_cloned_value(self) -> Any:
+        return pickle.loads(self._value) if self._is_serialized else self._value
 
 
 class ProbabilisticHotCache(ClientWrapper):
@@ -31,6 +56,7 @@ class ProbabilisticHotCache(ClientWrapper):
         max_stale_while_revalidate_seconds: int = 10,
         allowed_prefixes: Optional[List[str]] = None,
         metrics_collector: Optional[BaseMetricsCollector] = None,
+        immutable_types: Iterable[type] = IMMUTABLE_TYPES,
     ) -> None:
         super().__init__(client=client)
         self._store = store
@@ -68,6 +94,7 @@ class ProbabilisticHotCache(ClientWrapper):
                 ],
             )
         self._metrics = metrics_collector
+        self._immutable_types = immutable_types
 
     def _lookup_hot_cache(
         self,
@@ -78,7 +105,6 @@ class ProbabilisticHotCache(ClientWrapper):
         value: Optional[Any]
         if found := self._store.get(key.key):
             is_hot = True
-            value = found.value
             now = int(time.time())
             ttl = found.expiration - now
             if ttl > 0:
@@ -107,12 +133,13 @@ class ProbabilisticHotCache(ClientWrapper):
                 self._clear_hot_cache_if_necessary(key)
                 is_found = False
                 is_hot = False
-                value = None
+            value = found.get_cloned_value() if is_found else None
         else:
             # Not found so not hot
             is_found = False
             is_hot = False
             value = None
+
         self._metrics and self._metrics.metric_inc("hits" if is_found else "misses")
         return is_found, is_hot, value
 
@@ -140,10 +167,12 @@ class ProbabilisticHotCache(ClientWrapper):
         if not is_hot:
             return
 
+        is_immutable = type(value.value) in self._immutable_types
         self._store[key.key] = CachedValue(
             value=value.value,
             expiration=int(time.time()) + self._cache_ttl,
             extended=False,
+            is_immutable=is_immutable,
         )
         self._metrics and self._metrics.gauge_set("item_count", len(self._store))
 
