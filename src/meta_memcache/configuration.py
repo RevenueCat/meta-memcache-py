@@ -69,6 +69,7 @@ def connection_pool_factory_builder(
     recv_timeout: float = 1,
     no_delay: bool = True,
     read_buffer_size: int = 4096,
+    after_fork_initial_pool_size: int = 0,
 ) -> Callable[[ServerAddress], ConnectionPool]:
     """
     Helper to generate a connection_pool_builder with desired settings
@@ -93,6 +94,7 @@ def connection_pool_factory_builder(
             mark_down_period_s=mark_down_period_s,
             read_buffer_size=read_buffer_size,
             version=server_address.version,
+            after_fork_initial_pool_size=after_fork_initial_pool_size,
         )
 
     return connection_pool_builder
