@@ -1,7 +1,9 @@
 import itertools
 import logging
+import os
 import socket
 import time
+import weakref
 from collections import deque
 from contextlib import contextmanager
 from typing import Callable, Deque, Generator, NamedTuple, Optional
@@ -12,6 +14,37 @@ from meta_memcache.protocol import ServerVersion
 from meta_memcache.settings import DEFAULT_MARK_DOWN_PERIOD_S, DEFAULT_READ_BUFFER_SIZE
 
 _log: logging.Logger = logging.getLogger(__name__)
+
+
+def _get_pool_registry() -> weakref.WeakSet["ConnectionPool"]:
+    """Get the pool registry, registering the at-fork handler on first call.
+
+    Returns a WeakSet that tracks all ConnectionPool instances. On first call,
+    also registers an os.register_at_fork() handler so that after fork(), all
+    pooled connections are closed in the child process. This prevents parent
+    and child from sharing sockets, which causes protocol-level corruption.
+
+    Call _get_pool_registry().add(pool) to register a pool for fork safety.
+    """
+    global _pool_registry
+    if _pool_registry is None:
+        _pool_registry = weakref.WeakSet()
+        if hasattr(os, "register_at_fork"):
+            registry = _pool_registry
+            os.register_at_fork(
+                after_in_child=lambda: _reset_pools_after_fork(registry)
+            )
+    return _pool_registry
+
+
+_pool_registry: Optional[weakref.WeakSet["ConnectionPool"]] = None
+
+
+def _reset_pools_after_fork(
+    registry: weakref.WeakSet["ConnectionPool"],
+) -> None:
+    for pool in list(registry):
+        pool._reset_after_fork()
 
 
 class PoolCounters(NamedTuple):
@@ -39,19 +72,16 @@ class ConnectionPool:
         mark_down_period_s: float = DEFAULT_MARK_DOWN_PERIOD_S,
         read_buffer_size: int = DEFAULT_READ_BUFFER_SIZE,
         version: ServerVersion = ServerVersion.STABLE,
+        after_fork_initial_pool_size: int = 0,
     ) -> None:
         self.server = server
         self._socket_factory_fn = socket_factory_fn
         self._initial_pool_size: int = min(initial_pool_size, max_pool_size)
+        self._after_fork_initial_pool_size: int = min(
+            after_fork_initial_pool_size, max_pool_size
+        )
         self._max_pool_size = max_pool_size
         self._mark_down_period_s = mark_down_period_s
-        self._created_counter: itertools.count[int] = itertools.count(start=1)
-        self._created = 0
-        self._errors_counter: itertools.count[int] = itertools.count(start=1)
-        self._errors = 0
-        self._destroyed_counter: itertools.count[int] = itertools.count(start=1)
-        self._destroyed = 0
-        self._marked_down_until: Optional[float] = None
         # We don't use maxlen because deque will evict the first element when
         # appending one over maxlen, and we won't be closing the connection
         # proactively, relying on GC instead. We use a soft max limit, after
@@ -60,11 +90,37 @@ class ConnectionPool:
         self._pool: Deque[MemcacheSocket] = deque()
         self._read_buffer_size = read_buffer_size
         self._version = version
-        for _ in range(self._initial_pool_size):
+        self._init_pool(self._initial_pool_size)
+        _get_pool_registry().add(self)
+
+    def _init_pool(self, initial_size: int) -> None:
+        """Reset counters and pre-populate the pool with initial connections."""
+        self._created_counter: itertools.count[int] = itertools.count(start=1)
+        self._created = 0
+        self._errors_counter: itertools.count[int] = itertools.count(start=1)
+        self._errors = 0
+        self._destroyed_counter: itertools.count[int] = itertools.count(start=1)
+        self._destroyed = 0
+        self._marked_down_until: Optional[float] = None
+        for _ in range(initial_size):
             try:
                 self._pool.append(self._create_connection())
             except MemcacheServerError:
                 pass
+
+    def _reset_after_fork(self) -> None:
+        """Reset pool state in child process after fork.
+
+        Closes all inherited connections to avoid sharing sockets with
+        the parent process, then re-initializes with fresh connections.
+        """
+        while self._pool:
+            conn = self._pool.popleft()
+            try:
+                conn.close()
+            except Exception:
+                pass
+        self._init_pool(self._after_fork_initial_pool_size)
 
     def get_counters(self) -> PoolCounters:
         available = len(self._pool)
