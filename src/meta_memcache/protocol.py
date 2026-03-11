@@ -12,6 +12,13 @@ from meta_memcache_socket import (  # noqa: F401
     SET_MODE_SET,
     MA_MODE_INC as MA_MODE_INC,
     MA_MODE_DEC as MA_MODE_DEC,
+    Value,
+    Success,
+    Miss,
+    NotStored,
+    Conflict,
+    SERVER_VERSION_STABLE,
+    SERVER_VERSION_AWS_1_6_6,
 )
 
 ENDL = b"\r\n"
@@ -59,29 +66,7 @@ class SetMode(Enum):
     REPLACE = SET_MODE_REPLACE  # Set only if item already exists.
 
 
-@dataclass
-class MemcacheResponse:
-    __slots__ = ()
-
-
-@dataclass
-class Miss(MemcacheResponse):
-    __slots__ = ()
-
-    pass
-
-
-@dataclass
-class Success(MemcacheResponse):
-    __slots__ = ("flags",)
-    flags: ResponseFlags
-
-
-@dataclass
-class Value(Success):
-    __slots__ = ("flags", "size", "value")
-    size: int
-    value: Optional[Any]
+MemcacheResponse = Union[Value, Success, Miss, NotStored, Conflict]
 
 
 @dataclass
@@ -94,18 +79,9 @@ MaybeValue = Optional[ValueContainer]
 MaybeValues = Optional[List[ValueContainer]]
 
 
-@dataclass
-class NotStored(MemcacheResponse):
-    __slots__ = ()
-
-
-@dataclass
-class Conflict(MemcacheResponse):
-    __slots__ = ()
-
-
 ReadResponse = Union[Miss, Value, Success]
 WriteResponse = Union[Success, NotStored, Conflict, Miss]
+ArithmeticResponse = Union[Success, NotStored, Conflict, Miss, Value]
 
 
 Blob = Union[bytes, bytearray, memoryview]
@@ -119,8 +95,8 @@ class ServerVersion(IntEnum):
     the behavior of the different versions.
     """
 
-    AWS_1_6_6 = 1
-    STABLE = 2
+    AWS_1_6_6 = SERVER_VERSION_AWS_1_6_6
+    STABLE = SERVER_VERSION_STABLE
 
 
 def get_store_success_response_header(version: ServerVersion) -> bytes:

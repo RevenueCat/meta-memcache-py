@@ -7,6 +7,7 @@ from meta_memcache.interfaces.router import (
     HasRouter,
 )
 from meta_memcache.protocol import (
+    ArithmeticResponse,
     Conflict,
     Key,
     MetaCommand,
@@ -100,7 +101,7 @@ class MetaCommandsMixin:
         key: Key,
         flags: Optional[RequestFlags] = None,
         failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
-    ) -> WriteResponse:
+    ) -> ArithmeticResponse:
         result = self.router.exec(
             command=MetaCommand.META_ARITHMETIC,
             key=key,

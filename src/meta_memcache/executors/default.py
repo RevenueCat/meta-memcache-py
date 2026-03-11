@@ -59,6 +59,7 @@ class DefaultExecutor:
         if command == MetaCommand.META_GET:
             return build_meta_get(encoded_key, flags)
         elif command == MetaCommand.META_SET:
+            assert size is not None
             legazy_size_format = version == ServerVersion.AWS_1_6_6
             return build_meta_set(encoded_key, size, flags, legazy_size_format)
         elif command == MetaCommand.META_DELETE:
@@ -211,7 +212,7 @@ class DefaultExecutor:
             key,
             size=len(value) if value is not None else None,
             flags=flags,
-            version=conn.get_version(),
+            version=ServerVersion(conn.get_version()),
         )
         # write meta commands with NOREPLY can potentially return errors
         # they are not fully silent, so we need to add a no-op to the wire.
@@ -236,17 +237,18 @@ class DefaultExecutor:
             return Success(flags=ResponseFlags())
         result = conn.get_response()
         if isinstance(result, Value):
-            data = conn.get_value(result.size)
             if result.size > 0:
                 encoding_id = result.flags.client_flag or 0
                 try:
-                    result.value = self._serializer.unserialize(data, encoding_id)
+                    result.value = self._serializer.unserialize(
+                        result.value, encoding_id
+                    )
                 except UserDataError:
                     """ Don't log user data errors when unserializing """
                     result = Miss()
                 except Exception:
                     _log.exception(
-                        f"Error unserializing value {data} "
+                        f"Error unserializing value {result.value} "
                         f"with encoding id: {encoding_id}"
                     )
                     result = Miss()

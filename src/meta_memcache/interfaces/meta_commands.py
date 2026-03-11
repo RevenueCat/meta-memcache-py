@@ -2,6 +2,7 @@ from typing import Any, Dict, List, Optional, Protocol
 
 from meta_memcache.interfaces.router import FailureHandling, DEFAULT_FAILURE_HANDLING
 from meta_memcache.protocol import (
+    ArithmeticResponse,
     Key,
     ReadResponse,
     WriteResponse,
@@ -45,4 +46,4 @@ class MetaCommandsProtocol(Protocol):
         key: Key,
         flags: Optional[RequestFlags] = None,
         failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
-    ) -> WriteResponse: ...  # pragma: no cover
+    ) -> ArithmeticResponse: ...  # pragma: no cover
