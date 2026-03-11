@@ -1,31 +1,17 @@
 import os
-import socket
-from typing import Callable, Generator
+from typing import Callable
+from unittest.mock import MagicMock
 
 import pytest
+from pytest_mock import MockerFixture
 
+from meta_memcache.connection.memcache_socket import MemcacheSocket
 from meta_memcache.connection.pool import ConnectionPool
+from meta_memcache.protocol import ServerVersion
 
 pytestmark = pytest.mark.skipif(
     not hasattr(os, "fork"), reason="fork not available on this platform"
 )
-
-
-@pytest.fixture
-def socket_factory() -> Generator[Callable[[], socket.socket], None, None]:
-    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    listener.bind(("127.0.0.1", 0))
-    listener.listen(16)
-    port = listener.getsockname()[1]
-
-    def factory() -> socket.socket:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.connect(("127.0.0.1", port))
-        return s
-
-    yield factory
-    listener.close()
 
 
 def _run_in_child(fn: Callable[[], None]) -> None:
@@ -54,11 +40,29 @@ def _run_in_child(fn: Callable[[], None]) -> None:
         assert result == "OK", f"Child failed: {result}"
 
 
-def test_pool_reset_after_fork(socket_factory: Callable[[], socket.socket]) -> None:
+def test_pool_reset_after_fork(
+    mocker: MockerFixture,
+    mock_raw_socket: MagicMock,
+) -> None:
     """After fork, child should get fresh connections, not shared FDs."""
+    test_id_counter = 0
+
+    def _make_unique_mock(*args, **kwargs):
+        nonlocal test_id_counter
+        test_id_counter += 1
+        mock = MagicMock(spec=MemcacheSocket)
+        mock.get_version.return_value = ServerVersion.STABLE
+        mock._test_id = test_id_counter
+        return mock
+
+    mocker.patch(
+        "meta_memcache.connection.pool.MemcacheSocket",
+        side_effect=_make_unique_mock,
+    )
+
     pool = ConnectionPool(
         server="test:0",
-        socket_factory_fn=socket_factory,
+        socket_factory_fn=lambda: mock_raw_socket,
         initial_pool_size=2,
         max_pool_size=3,
         after_fork_initial_pool_size=1,
@@ -66,37 +70,39 @@ def test_pool_reset_after_fork(socket_factory: Callable[[], socket.socket]) -> N
 
     assert pool.get_counters().total_created == 2
 
-    # Remember the client-side ephemeral ports of the parent's connections
-    parent_ports = set()
+    # Record parent connection ids
+    parent_ids = set()
     with pool.get_connection() as conn:
-        parent_ports.add(conn._conn.getsockname()[1])
+        parent_ids.add(conn._test_id)
     with pool.get_connection() as conn:
-        parent_ports.add(conn._conn.getsockname()[1])
+        parent_ids.add(conn._test_id)
 
     def child_checks() -> None:
         # Counters should reflect only 1 fresh connection
-        assert pool.get_counters().total_created == 1
+        counters = pool.get_counters()
+        assert counters.total_created == 1
+        assert counters.available == 1
 
-        # The connection should be a new one with a different ephemeral port
+        # The child connection should have a different id
         with pool.get_connection() as child_conn:
-            child_port = child_conn._conn.getsockname()[1]
-            assert child_port not in parent_ports
+            assert child_conn._test_id not in parent_ids
 
     _run_in_child(child_checks)
 
     # Parent pool should be unaffected
     with pool.get_connection() as parent_conn:
-        assert parent_conn._conn.getsockname()[1] in parent_ports
+        assert parent_conn._test_id in parent_ids
     assert pool.get_counters().total_created == 2
 
 
 def test_pool_reset_after_fork_default_no_connections(
-    socket_factory: Callable[[], socket.socket],
+    mock_raw_socket: MagicMock,
+    mock_memcache_socket: MagicMock,
 ) -> None:
     """With default after_fork_initial_pool_size=0, child gets an empty pool."""
     pool = ConnectionPool(
         server="test:0",
-        socket_factory_fn=socket_factory,
+        socket_factory_fn=lambda: mock_raw_socket,
         initial_pool_size=1,
         max_pool_size=3,
     )

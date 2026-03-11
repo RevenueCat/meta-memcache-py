@@ -1,6 +1,6 @@
 import random
 from typing import Tuple
-from unittest.mock import call
+from unittest.mock import MagicMock, call
 
 from pytest_mock import MockerFixture
 
@@ -12,12 +12,11 @@ from meta_memcache import (
 )
 from meta_memcache.connection.pool import ConnectionPool, PoolCounters
 from meta_memcache.errors import MemcacheServerError
-from meta_memcache.protocol import NOOP, RequestFlags
+from meta_memcache.protocol import RequestFlags
 from meta_memcache.settings import DEFAULT_MARK_DOWN_PERIOD_S
 
 
-def test_sharded_cache_client(mocker: MockerFixture) -> None:
-    mocker.patch("meta_memcache.configuration.socket", autospec=True)
+def test_sharded_cache_client(mock_memcache_socket: MagicMock) -> None:
     cache_client = CacheClient.cache_client_from_servers(
         servers=[
             ServerAddress(host="1.1.1.1", port=11211),
@@ -42,9 +41,8 @@ def test_sharded_cache_client(mocker: MockerFixture) -> None:
 
 
 def test_sharded_cache_client_different_order_same_results(
-    mocker: MockerFixture,
+    mock_memcache_socket: MagicMock,
 ) -> None:
-    mocker.patch("meta_memcache.configuration.socket", autospec=True)
     server_addresses = [
         ServerAddress(host="1.1.1.1", port=11211),
         ServerAddress(host="2.2.2.2", port=11211),
@@ -70,8 +68,9 @@ def test_sharded_cache_client_different_order_same_results(
     assert connection_pool.server == "2.2.2.2:11211"
 
 
-def test_sharded_cache_client_honors_server_id(mocker: MockerFixture) -> None:
-    mocker.patch("meta_memcache.configuration.socket", autospec=True)
+def test_sharded_cache_client_honors_server_id(
+    mock_memcache_socket: MagicMock,
+) -> None:
     server_addresses = [
         ServerAddress(host="1.1.1.1", port=11211, server_id="1"),
         ServerAddress(host="2.2.2.2", port=11211, server_id="2"),
@@ -94,7 +93,11 @@ def test_sharded_cache_client_honors_server_id(mocker: MockerFixture) -> None:
     assert connection_pool.server == "1"
 
 
-def test_sharded_with_gutter_cache_client(mocker: MockerFixture) -> None:
+def test_sharded_with_gutter_cache_client(
+    mocker: MockerFixture,
+    mock_raw_socket: MagicMock,
+    mock_memcache_socket: MagicMock,
+) -> None:
     server_is_bad = True
 
     def connect(server_address: Tuple[str, int]) -> None:
@@ -104,9 +107,10 @@ def test_sharded_with_gutter_cache_client(mocker: MockerFixture) -> None:
 
     time = mocker.patch("meta_memcache.connection.pool.time")
     time.time.return_value = 123
-    socket = mocker.patch("meta_memcache.configuration.socket", autospec=True)
-    c = socket.socket()
-    c.connect.side_effect = connect
+    # Make "ko" servers fail during pool initialization
+    mock_raw_socket.connect.side_effect = connect
+    c = mock_memcache_socket
+
     cache_client = CacheClient.cache_client_with_gutter_from_servers(
         servers=[
             ServerAddress(host="ok1", port=11211),
@@ -152,7 +156,7 @@ def test_sharded_with_gutter_cache_client(mocker: MockerFixture) -> None:
     cache_client.set(key=Key("bar"), value=1, ttl=1000, no_reply=True)
     get_pool.assert_called_once_with(Key("bar"))
     get_gutter_pool.assert_not_called()
-    c.sendall.assert_called_once_with(b"ms bar 1 q T1000 F2\r\n1\r\n" + NOOP)
+    c.sendall.assert_called_once_with(b"ms bar 1 q T1000 F2\r\n1\r\n", with_noop=True)
     c.sendall.reset_mock()
     get_pool.reset_mock()
     get_gutter_pool.reset_mock()
@@ -160,7 +164,7 @@ def test_sharded_with_gutter_cache_client(mocker: MockerFixture) -> None:
     cache_client.set(key=Key("foo"), value=1, ttl=1000, no_reply=True)
     get_pool.assert_called_once_with(Key("foo"))
     get_gutter_pool.assert_called_once_with(Key("foo"))
-    c.sendall.assert_called_once_with(b"ms foo 1 q T60 F2\r\n1\r\n" + NOOP)
+    c.sendall.assert_called_once_with(b"ms foo 1 q T60 F2\r\n1\r\n", with_noop=True)
     c.sendall.reset_mock()
     get_pool.reset_mock()
     get_gutter_pool.reset_mock()
@@ -174,7 +178,12 @@ def test_sharded_with_gutter_cache_client(mocker: MockerFixture) -> None:
     )
     get_pool.assert_has_calls([call(Key(key="bar")), call(Key(key="foo"))])
     get_gutter_pool.assert_called_once_with(Key("foo"))
-    c.sendall.assert_has_calls([call(b"mg bar q T1000\r\n"), call(b"mg foo q T60\r\n")])
+    c.sendall.assert_has_calls(
+        [
+            call(b"mg bar q T1000\r\n", with_noop=False),
+            call(b"mg foo q T60\r\n", with_noop=False),
+        ]
+    )
     c.sendall.reset_mock()
     get_pool.reset_mock()
     get_gutter_pool.reset_mock()
@@ -187,7 +196,7 @@ def test_sharded_with_gutter_cache_client(mocker: MockerFixture) -> None:
     cache_client.set(key=Key("foo"), value=1, ttl=1000, no_reply=True)
     get_pool.assert_called_once_with(Key("foo"))
     get_gutter_pool.assert_called_once_with(Key("foo"))
-    c.sendall.assert_called_once_with(b"ms foo 1 q T60 F2\r\n1\r\n" + NOOP)
+    c.sendall.assert_called_once_with(b"ms foo 1 q T60 F2\r\n1\r\n", with_noop=True)
     c.sendall.reset_mock()
     get_pool.reset_mock()
     get_gutter_pool.reset_mock()
@@ -201,7 +210,12 @@ def test_sharded_with_gutter_cache_client(mocker: MockerFixture) -> None:
     )
     get_pool.assert_has_calls([call(Key(key="bar")), call(Key(key="foo"))])
     get_gutter_pool.assert_called_once_with(Key("foo"))
-    c.sendall.assert_has_calls([call(b"mg bar q T1000\r\n"), call(b"mg foo q T60\r\n")])
+    c.sendall.assert_has_calls(
+        [
+            call(b"mg bar q T1000\r\n", with_noop=False),
+            call(b"mg foo q T60\r\n", with_noop=False),
+        ]
+    )
     c.sendall.reset_mock()
     get_pool.reset_mock()
     get_gutter_pool.reset_mock()
@@ -213,7 +227,7 @@ def test_sharded_with_gutter_cache_client(mocker: MockerFixture) -> None:
     cache_client.set(key=Key("foo"), value=1, ttl=1000, no_reply=True)
     get_pool.assert_called_once_with(Key("foo"))
     get_gutter_pool.assert_not_called()
-    c.sendall.assert_called_once_with(b"ms foo 1 q T1000 F2\r\n1\r\n" + NOOP)
+    c.sendall.assert_called_once_with(b"ms foo 1 q T1000 F2\r\n1\r\n", with_noop=True)
     c.sendall.reset_mock()
     get_pool.reset_mock()
     get_gutter_pool.reset_mock()
@@ -228,7 +242,10 @@ def test_sharded_with_gutter_cache_client(mocker: MockerFixture) -> None:
     get_pool.assert_has_calls([call(Key(key="bar")), call(Key(key="foo"))])
     get_gutter_pool.assert_not_called()
     c.sendall.assert_has_calls(
-        [call(b"mg bar q T1000\r\n"), call(b"mg foo q T1000\r\n")]
+        [
+            call(b"mg bar q T1000\r\n", with_noop=False),
+            call(b"mg foo q T1000\r\n", with_noop=False),
+        ]
     )
     c.sendall.reset_mock()
     get_pool.reset_mock()

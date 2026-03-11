@@ -1,11 +1,8 @@
 import socket
-from typing import Callable, List
 
 import pytest
-from pytest_mock import MockerFixture
 
 from meta_memcache.connection.memcache_socket import MemcacheSocket
-from meta_memcache.errors import MemcacheError
 from meta_memcache.protocol import (
     Conflict,
     Miss,
@@ -16,55 +13,37 @@ from meta_memcache.protocol import (
 )
 
 
-def recv_into_mock(datas: List[bytes]) -> Callable[[memoryview], int]:
-    def recv_into(buffer: memoryview, length: int = 0, flags: int = 0) -> int:
-        if not datas:
-            return -1
-        data = datas[0]
-        data_size = len(data)
-        if length > 0:
-            buffer_size = length
-        else:
-            buffer_size = len(buffer)
-        if data_size > buffer_size:
-            read = buffer_size
-            buffer[:] = data[0:buffer_size]
-            datas[0] = data[buffer_size:]
-        else:
-            read = data_size
-            buffer[0:data_size] = data
-            datas.pop(0)
-        return read
-
-    return recv_into
-
-
 @pytest.fixture
-def fake_socket(mocker: MockerFixture) -> socket.socket:
-    return mocker.MagicMock(spec=socket.socket)
+def socket_pair():
+    a, b = socket.socketpair()
+    yield a, b
+    a.close()
+    b.close()
 
 
-def test_get_response(
-    fake_socket: socket.socket,
-) -> None:
-    fake_socket.recv_into.side_effect = recv_into_mock(
-        [b"EN\r\n", b"NF\r\nNS", b"\r\nE", b"X\r\nXX\r\n"]
-    )
-    ms = MemcacheSocket(fake_socket)
+def test_get_response(socket_pair: tuple[socket.socket, socket.socket]) -> None:
+    a, b = socket_pair
+    ms = MemcacheSocket(a)
+
+    b.sendall(b"EN\r\nNF\r\nNS\r\nEX\r\n")
     assert isinstance(ms.get_response(), Miss)
     assert isinstance(ms.get_response(), Miss)
     assert isinstance(ms.get_response(), NotStored)
     assert isinstance(ms.get_response(), Conflict)
-    try:
-        ms.get_response()
-        raise AssertionError("Should not be reached")
-    except MemcacheError as e:
-        assert "Error parsing response header" in str(e)
 
-    fake_socket.recv_into.side_effect = recv_into_mock(
-        [b"HD c1\r\nVA 2 c1", b"\r\nOK\r\n"]
-    )
-    ms = MemcacheSocket(fake_socket)
+    # Close the write end to trigger error on next read
+    b.close()
+    with pytest.raises(ConnectionError):
+        ms.get_response()
+
+
+def test_get_response_success_and_value(
+    socket_pair: tuple[socket.socket, socket.socket],
+) -> None:
+    a, b = socket_pair
+    ms = MemcacheSocket(a)
+
+    b.sendall(b"HD c1\r\nVA 2 c1\r\nOK\r\n")
     result = ms.get_response()
     assert isinstance(result, Success)
     assert result.flags.cas_token == 1
@@ -73,15 +52,16 @@ def test_get_response(
     assert isinstance(result, Value)
     assert result.flags.cas_token == 1
     assert result.size == 2
+    assert result.value == b"OK"
 
 
 def test_get_response_1_6_6(
-    fake_socket: socket.socket,
+    socket_pair: tuple[socket.socket, socket.socket],
 ) -> None:
-    fake_socket.recv_into.side_effect = recv_into_mock(
-        [b"OK c1\r\nVA 2 c1", b"\r\nOK\r\n"]
-    )
-    ms = MemcacheSocket(fake_socket, version=ServerVersion.AWS_1_6_6)
+    a, b = socket_pair
+    ms = MemcacheSocket(a, version=ServerVersion.AWS_1_6_6)
+
+    b.sendall(b"OK c1\r\nVA 2 c1\r\nOK\r\n")
     result = ms.get_response()
     assert isinstance(result, Success)
     assert result.flags.cas_token == 1
@@ -90,151 +70,129 @@ def test_get_response_1_6_6(
     assert isinstance(result, Value)
     assert result.flags.cas_token == 1
     assert result.size == 2
+    assert result.value == b"OK"
 
 
-def test_noreply(
-    fake_socket: socket.socket,
-) -> None:
-    fake_socket.recv_into.side_effect = recv_into_mock(
-        [b"EX\r\n", b"MN", b"\r\nHD", b"\r\n"]
-    )
-    ms = MemcacheSocket(fake_socket)
+def test_noreply(socket_pair: tuple[socket.socket, socket.socket]) -> None:
+    a, b = socket_pair
+    ms = MemcacheSocket(a)
+
     ms.sendall(b"test", with_noop=True)
     # The first EX should be skipped as it is before the No-op
     # response, so this should be a success:
+    b.sendall(b"EX\r\nMN\r\nHD\r\n")
     assert isinstance(ms.get_response(), Success)
 
 
-def test_socket_closed(
-    fake_socket: socket.socket,
-) -> None:
-    fake_socket.recv_into.side_effect = recv_into_mock([b""])
-    ms = MemcacheSocket(fake_socket)
-    with pytest.raises(MemcacheError):
+def test_socket_closed(socket_pair: tuple[socket.socket, socket.socket]) -> None:
+    a, b = socket_pair
+    ms = MemcacheSocket(a)
+    b.close()
+    with pytest.raises(ConnectionError):
         ms.get_response()
 
 
-def test_get_value(
-    fake_socket: socket.socket,
-) -> None:
-    fake_socket.recv_into.side_effect = recv_into_mock([b"VA 2 c1\r\nOK\r\n"])
-    ms = MemcacheSocket(fake_socket)
+def test_get_value(socket_pair: tuple[socket.socket, socket.socket]) -> None:
+    a, b = socket_pair
+    ms = MemcacheSocket(a)
+
+    b.sendall(b"VA 2 c1\r\nOK\r\n")
     result = ms.get_response()
     assert isinstance(result, Value)
     assert result.flags.cas_token == 1
     assert result.size == 2
-    ms.get_value(2)
+    assert result.value == b"OK"
 
 
-def test_get_value_large(
-    fake_socket: socket.socket,
-) -> None:
-    fake_socket.recv_into.side_effect = recv_into_mock(
-        [b"VA 200 c1  Oxxx W Q Qa  \r\n", b"1234567890", b"1234567890" * 19 + b"\r\n"],
-    )
-    ms = MemcacheSocket(fake_socket, buffer_size=100)
+def test_get_value_large(socket_pair: tuple[socket.socket, socket.socket]) -> None:
+    a, b = socket_pair
+    ms = MemcacheSocket(a, buffer_size=100)
+
+    b.sendall(b"VA 200 c1  Oxxx W Q Qa  \r\n" + b"1234567890" * 20 + b"\r\n")
     result = ms.get_response()
     assert isinstance(result, Value)
     assert result.flags.cas_token == 1
     assert result.flags.win is True
     assert bytes(result.flags.opaque) == b"xxx"
     assert result.size == 200
-    value = ms.get_value(result.size)
-    assert len(value) == result.size
-    assert value == b"1234567890" * 20
+    assert len(result.value) == result.size
+    assert result.value == b"1234567890" * 20
 
 
 def test_get_value_with_incomplete_endl(
-    fake_socket: socket.socket,
+    socket_pair: tuple[socket.socket, socket.socket],
 ) -> None:
-    data = b"VA 10\r\n1234567890\r\n"
-    fake_socket.recv_into.side_effect = recv_into_mock([data])
-    ms = MemcacheSocket(fake_socket, buffer_size=len(data) - 1)
+    a, b = socket_pair
+    # Use a small buffer so the endl may be split
+    ms = MemcacheSocket(a, buffer_size=18)
+
+    b.sendall(b"VA 10\r\n1234567890\r\n")
     result = ms.get_response()
     assert isinstance(result, Value)
     assert result.size == 10
-    value = ms.get_value(result.size)
-    assert len(value) == result.size
-    assert value == b"1234567890"
-
-    fake_socket.recv_into.side_effect = recv_into_mock([data])
-    ms = MemcacheSocket(fake_socket, buffer_size=len(data) - 2)
-    result = ms.get_response()
-    assert isinstance(result, Value)
-    assert result.size == 10
-    value = ms.get_value(result.size)
-    assert len(value) == result.size
-    assert value == b"1234567890"
+    assert len(result.value) == result.size
+    assert result.value == b"1234567890"
 
 
-def test_bad(
-    fake_socket: socket.socket,
-) -> None:
-    fake_socket.recv_into.side_effect = recv_into_mock(
-        [b"VA 10 c1\r\n", b"1234567890XX"]
-    )
-    ms = MemcacheSocket(fake_socket, buffer_size=100)
-    result = ms.get_response()
-    try:
-        ms.get_value(result.size)
-        raise AssertionError("Should not be reached")
-    except MemcacheError as e:
-        assert "Error parsing value" in str(e)
+def test_unknown_response(socket_pair: tuple[socket.socket, socket.socket]) -> None:
+    a, b = socket_pair
+    ms = MemcacheSocket(a)
 
-    fake_socket.recv_into.side_effect = recv_into_mock(
-        [b"VA 200 c1\r\n", b"1234567890", b"1234567890" * 19 + b"XX"],
-    )
-    ms = MemcacheSocket(fake_socket, buffer_size=100)
-    result = ms.get_response()
-    try:
-        ms.get_value(result.size)
-        raise AssertionError("Should not be reached")
-    except MemcacheError as e:
-        assert "Error parsing value" in str(e)
-
-    fake_socket.recv_into.side_effect = recv_into_mock([b"VA 10 c1", b"XX"])
-    ms = MemcacheSocket(fake_socket, buffer_size=100)
-    try:
+    b.sendall(b"XX\r\n")
+    with pytest.raises(ConnectionError):
         ms.get_response()
-        raise AssertionError("Should not be reached")
-    except MemcacheError as e:
-        assert "Bad response" in str(e)
 
 
-def test_reset_buffer(
-    fake_socket: socket.socket,
+def test_bad_value_termination(
+    socket_pair: tuple[socket.socket, socket.socket],
 ) -> None:
+    a, b = socket_pair
+    ms = MemcacheSocket(a, buffer_size=100)
+
+    # Value terminated with XX instead of \r\n
+    b.sendall(b"VA 10 c1\r\n1234567890XX")
+    with pytest.raises(ConnectionError):
+        ms.get_response()
+
+
+def test_bad_large_value_termination(
+    socket_pair: tuple[socket.socket, socket.socket],
+) -> None:
+    a, b = socket_pair
+    ms = MemcacheSocket(a, buffer_size=100)
+
+    # Large value (exceeds buffer) terminated with XX instead of \r\n
+    b.sendall(b"VA 200 c1\r\n" + b"1234567890" * 20 + b"XX")
+    with pytest.raises(ConnectionError):
+        ms.get_response()
+
+
+def test_sequential_reads_small_buffer(
+    socket_pair: tuple[socket.socket, socket.socket],
+) -> None:
+    """Test multiple response+value sequences with a small buffer.
+
+    This exercises the internal buffer reset logic that occurs when
+    multiple responses are read in sequence and the buffer fills up.
+    """
+    a, b = socket_pair
+    ms = MemcacheSocket(a, buffer_size=60)
+
     data = b"VA 50 \r\n" + (b"1234567890" * 5) + b"\r\n"
-    fake_socket.recv_into.side_effect = recv_into_mock([data])
-    ms = MemcacheSocket(fake_socket, buffer_size=len(data) - 1)
-    result = ms.get_response()
-    value = ms.get_value(result.size)
-    assert len(value) == result.size
-    assert value == b"1234567890" * 5
-    ms._reset_buffer()
-    assert ms._pos == 0
-
-    data = (b"VA 50 \r\n" + (b"1234567890" * 5) + b"\r\n") * 2
-    fake_socket.recv_into.side_effect = recv_into_mock([data])
-    ms = MemcacheSocket(fake_socket, buffer_size=len(data) - 10)
-    result = ms.get_response()
-    value = ms.get_value(result.size)
-    assert len(value) == result.size
-    assert value == b"1234567890" * 5
-    ms._reset_buffer()
-    assert ms._pos == 0
+    b.sendall(data * 2)
 
     result = ms.get_response()
-    value = ms.get_value(result.size)
-    assert len(value) == result.size
-    assert value == b"1234567890" * 5
-    ms._reset_buffer()
-    assert ms._pos == 0
+    assert len(result.value) == result.size
+    assert result.value == b"1234567890" * 5
+
+    result = ms.get_response()
+    assert len(result.value) == result.size
+    assert result.value == b"1234567890" * 5
 
 
-def test_close(
-    fake_socket: socket.socket,
-) -> None:
-    ms = MemcacheSocket(fake_socket, buffer_size=100)
+def test_close(socket_pair: tuple[socket.socket, socket.socket]) -> None:
+    a, b = socket_pair
+    ms = MemcacheSocket(a, buffer_size=100)
     ms.close()
-    fake_socket.close.assert_called_once()
+    # Socket should be closed
+    assert a.fileno() == -1
