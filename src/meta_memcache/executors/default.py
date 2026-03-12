@@ -1,13 +1,7 @@
 import logging
 from typing import Callable, Dict, List, Optional, Tuple
 
-from meta_memcache_socket import (
-    RequestFlags,
-    build_meta_get,
-    build_meta_delete,
-    build_meta_set,
-    build_meta_arithmetic,
-)
+from meta_memcache_socket import RequestFlags
 
 from meta_memcache.base.base_serializer import BaseSerializer
 from meta_memcache.configuration import default_key_encoder
@@ -16,7 +10,6 @@ from meta_memcache.connection.pool import ConnectionPool
 from meta_memcache.errors import MemcacheServerError, UserDataError
 from meta_memcache.events.write_failure_event import WriteFailureEvent
 from meta_memcache.protocol import (
-    ENDL,
     Key,
     MaybeValue,
     MemcacheResponse,
@@ -24,7 +17,6 @@ from meta_memcache.protocol import (
     Miss,
     NotStored,
     ResponseFlags,
-    ServerVersion,
     Success,
     Value,
     ValueContainer,
@@ -46,25 +38,6 @@ class DefaultExecutor:
         self._raise_on_server_error = raise_on_server_error
         self._touch_ttl_to_consider_write_failure = touch_ttl_to_consider_write_failure
         self.on_write_failure = WriteFailureEvent()
-
-    def _build_cmd(
-        self,
-        command: MetaCommand,
-        key: Key,
-        size: Optional[int] = None,
-        flags: Optional[RequestFlags] = None,
-        version: ServerVersion = ServerVersion.STABLE,
-    ) -> bytes:
-        encoded_key = self._key_encoder_fn(key)
-        if command == MetaCommand.META_GET:
-            return build_meta_get(encoded_key, flags)
-        elif command == MetaCommand.META_SET:
-            legazy_size_format = version == ServerVersion.AWS_1_6_6
-            return build_meta_set(encoded_key, size, flags, legazy_size_format)
-        elif command == MetaCommand.META_DELETE:
-            return build_meta_delete(encoded_key, flags)
-        elif command == MetaCommand.META_ARITHMETIC:
-            return build_meta_arithmetic(encoded_key, flags)
 
     def _prepare_serialized_value_and_flags(
         self,
@@ -94,6 +67,50 @@ class DefaultExecutor:
             return True
         return False
 
+    def _conn_exec_cmd(
+        self,
+        conn: MemcacheSocket,
+        command: MetaCommand,
+        key: Key,
+        value: Optional[bytes] = None,
+        flags: Optional[RequestFlags] = None,
+    ) -> MemcacheResponse:
+        """
+        Execute a blocking command on a connection (send + recv).
+        The blocking meta_* methods handle no_reply internally.
+        """
+        encoded_key = self._key_encoder_fn(key)
+        if command == MetaCommand.META_GET:
+            result = conn.meta_get(encoded_key, flags)
+        elif command == MetaCommand.META_SET:
+            result = conn.meta_set(encoded_key, value, flags)
+        elif command == MetaCommand.META_DELETE:
+            result = conn.meta_delete(encoded_key, flags)
+        elif command == MetaCommand.META_ARITHMETIC:
+            result = conn.meta_arithmetic(encoded_key, flags)
+        else:
+            raise ValueError(f"Unknown command: {command}")
+        return self._process_response(result)
+
+    def _process_response(self, result: MemcacheResponse) -> MemcacheResponse:
+        if isinstance(result, Value):
+            if result.size > 0:
+                encoding_id = result.flags.client_flag or 0
+                try:
+                    result.value = self._serializer.unserialize(
+                        result.value, encoding_id
+                    )
+                except UserDataError:
+                    """ Don't log user data errors when unserializing """
+                    result = Miss()
+                except Exception:
+                    _log.exception(
+                        f"Error unserializing value {result.value} "
+                        f"with encoding id: {encoding_id}"
+                    )
+                    result = Miss()
+        return result
+
     def exec_on_pool(
         self,
         pool: ConnectionPool,
@@ -113,14 +130,13 @@ class DefaultExecutor:
             conn = pool.pop_connection()
             error = False
             try:
-                self._conn_send_cmd(
+                return self._conn_exec_cmd(
                     conn,
                     command=command,
                     key=key,
                     value=cmd_value,
                     flags=flags,
                 )
-                return self._conn_recv_response(conn, flags=flags)
             except Exception as e:
                 error = True
                 raise MemcacheServerError(pool.server, "Memcache error") from e
@@ -204,25 +220,18 @@ class DefaultExecutor:
         flags: Optional[RequestFlags] = None,
     ) -> None:
         """
-        Execute command on a connection
+        Send a command on a connection (for pipelining).
+        The send_meta_* methods handle no_reply/noop internally.
         """
-        cmd = self._build_cmd(
-            command,
-            key,
-            size=len(value) if value is not None else None,
-            flags=flags,
-            version=conn.get_version(),
-        )
-        # write meta commands with NOREPLY can potentially return errors
-        # they are not fully silent, so we need to add a no-op to the wire.
-        with_noop = (
-            command != MetaCommand.META_GET and flags is not None and flags.no_reply
-        )
-
-        if value:
-            conn.sendall(cmd + value + ENDL, with_noop=with_noop)
-        else:
-            conn.sendall(cmd, with_noop=with_noop)
+        encoded_key = self._key_encoder_fn(key)
+        if command == MetaCommand.META_GET:
+            conn.send_meta_get(encoded_key, flags)
+        elif command == MetaCommand.META_SET:
+            conn.send_meta_set(encoded_key, value, flags)
+        elif command == MetaCommand.META_DELETE:
+            conn.send_meta_delete(encoded_key, flags)
+        elif command == MetaCommand.META_ARITHMETIC:
+            conn.send_meta_arithmetic(encoded_key, flags)
 
     def _conn_recv_response(
         self,
@@ -230,26 +239,8 @@ class DefaultExecutor:
         flags: Optional[RequestFlags] = None,
     ) -> MemcacheResponse:
         """
-        Read response on a connection
+        Read response on a connection (for pipelining).
         """
         if flags and flags.no_reply:
             return Success(flags=ResponseFlags())
-        result = conn.get_response()
-        if isinstance(result, Value):
-            if result.size > 0:
-                encoding_id = result.flags.client_flag or 0
-                try:
-                    result.value = self._serializer.unserialize(
-                        result.value, encoding_id
-                    )
-                except UserDataError:
-                    """ Don't log user data errors when unserializing """
-                    result = Miss()
-                except Exception:
-                    _log.exception(
-                        f"Error unserializing value {result.value} "
-                        f"with encoding id: {encoding_id}"
-                    )
-                    result = Miss()
-
-        return result
+        return self._process_response(conn.get_response())
