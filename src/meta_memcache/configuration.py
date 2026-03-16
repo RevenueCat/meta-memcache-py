@@ -1,11 +1,10 @@
-import hashlib
 import socket
 from enum import IntEnum
 from typing import Callable, Dict, Iterable, NamedTuple, Optional
 
 from meta_memcache.connection.pool import ConnectionPool
-from meta_memcache.protocol import Key, ServerVersion
-from meta_memcache.settings import DEFAULT_MARK_DOWN_PERIOD_S, MAX_KEY_SIZE
+from meta_memcache.protocol import ServerVersion
+from meta_memcache.settings import DEFAULT_MARK_DOWN_PERIOD_S
 
 
 class ServerAddress(NamedTuple):
@@ -156,20 +155,6 @@ class StalePolicy(NamedTuple):
 
     mark_stale_on_deletion_ttl: int = 0  # 0 means disabled
     mark_stale_on_cas_mismatch: bool = False
-
-
-def default_key_encoder(key: Key) -> bytes:
-    """
-    Generate valid memcache key as bytes for given Key.
-    """
-    # TODO: Support
-    # if isinstance(key.key, bytes):
-    #     data = key.key
-    # else:
-    data = key.key.encode()
-    if len(data) >= MAX_KEY_SIZE:
-        data = hashlib.blake2b(data, digest_size=18).digest()
-    return data
 
 
 class MigrationMode(IntEnum):

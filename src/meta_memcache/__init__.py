@@ -8,7 +8,6 @@ from meta_memcache.configuration import (
     StalePolicy,
     build_server_pool,
     connection_pool_factory_builder,
-    default_key_encoder,
     socket_factory_builder,
 )
 from meta_memcache.connection.pool import ConnectionPool, PoolCounters
