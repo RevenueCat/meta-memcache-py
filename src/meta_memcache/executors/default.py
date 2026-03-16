@@ -158,6 +158,37 @@ class DefaultExecutor:
             else:
                 return NotStored()
 
+    def _exec_multi_get_on_pool(
+        self,
+        pool: ConnectionPool,
+        keys: List[Union[bytes, str]],
+        flags: Optional[RequestFlags],
+        raise_on_server_error: Optional[bool] = None,
+    ) -> Dict[Key, MemcacheResponse]:
+        try:
+            conn = pool.pop_connection()
+            error = False
+            try:
+                responses = conn.meta_multiget(keys, flags)
+            except Exception as e:
+                error = True
+                raise MemcacheServerError(pool.server, "Memcache error") from e
+            finally:
+                pool.release_connection(conn, error=error)
+            return {
+                key: self._process_response(response)
+                for key, response in zip(keys, responses, strict=True)
+            }
+        except MemcacheServerError:
+            raise_on_server_error = (
+                raise_on_server_error
+                if raise_on_server_error is not None
+                else self._raise_on_server_error
+            )
+            if raise_on_server_error:
+                raise
+            return {key: Miss() for key in keys}
+
     def exec_multi_on_pool(  # noqa: C901
         self,
         pool: ConnectionPool,
@@ -167,12 +198,16 @@ class DefaultExecutor:
         track_write_failures: bool,
         raise_on_server_error: Optional[bool] = None,
     ) -> Dict[Key, MemcacheResponse]:
+        if command == MetaCommand.META_GET:
+            return self._exec_multi_get_on_pool(
+                pool, [key.key for key, _ in key_values], flags, raise_on_server_error
+            )
+
         results: Dict[Key, MemcacheResponse] = {}
         try:
             conn = pool.pop_connection()
             error = False
             try:
-                # with pool.get_connection() as conn:
                 for key, value in key_values:
                     cmd_value, flags = (
                         (None, flags)
