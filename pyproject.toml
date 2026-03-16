@@ -3,12 +3,12 @@ dependencies = [
     "uhashring >= 2.3, < 3",
     "marisa-trie >= 1.2.1, < 1.3",
     "zstandard >= 0.25.0, < 0.26",
-    "meta-memcache-socket >= 0.3.0, < 0.4.0",
+    "meta-memcache-socket >= 0.3.1, < 0.4.0",
 ]
 authors = [{ name = "Guillermo Perez", email = "bisho@revenuecat.com" }]
 license = { text = "MIT License" }
 name = "meta-memcache"
-version = "2.5.0"
+version = "2.6.0"
 description = "Modern, pure python, memcache client with support for new meta commands."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -23,6 +23,10 @@ homepage = "https://github.com/RevenueCat/meta-memcache-py"
 # Dependency cooldown: only resolve releases that are at least 7 days old.
 # Mitigates supply-chain risk from compromised fresh package versions.
 exclude-newer = "P7D"
+# meta-memcache-socket 0.3.1 (released 2026-08-24) adds the meta_multiget()
+# connection method the multi-get executor depends on; excepted from the
+# cooldown so it can be resolved before the 7 days elapse.
+exclude-newer-package = { meta-memcache-socket = "2026-08-24T23:59:59Z" }
 
 [tool.pytest.ini_options]
 addopts = "-ra"

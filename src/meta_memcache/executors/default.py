@@ -161,6 +161,47 @@ class DefaultExecutor:
             else:
                 return NotStored()
 
+    def _exec_multi_get_on_pool(
+        self,
+        pool: ConnectionPool,
+        keys: List[Key],
+        flags: Optional[RequestFlags],
+        track_write_failures: bool,
+        raise_on_server_error: Optional[bool] = None,
+    ) -> Dict[Key, MemcacheResponse]:
+        wire_keys: List[Union[bytes, str]] = [
+            self._key_encoder_fn(key) if self._key_encoder_fn else key.key
+            for key in keys
+        ]
+        try:
+            conn = pool.pop_connection()
+            error = False
+            try:
+                responses = conn.meta_multiget(wire_keys, request_flags=flags)
+            except Exception as e:
+                error = True
+                raise MemcacheServerError(pool.server, "Memcache error") from e
+            finally:
+                pool.release_connection(conn, error=error)
+            return {
+                key: self._process_response(response)
+                for key, response in zip(keys, responses, strict=True)
+            }
+        except MemcacheServerError:
+            if track_write_failures and self._is_a_write_failure(
+                MetaCommand.META_GET, flags
+            ):
+                for key in keys:
+                    self.on_write_failure(key)
+            raise_on_server_error = (
+                raise_on_server_error
+                if raise_on_server_error is not None
+                else self._raise_on_server_error
+            )
+            if raise_on_server_error:
+                raise
+            return {key: Miss() for key in keys}
+
     def exec_multi_on_pool(  # noqa: C901
         self,
         pool: ConnectionPool,
@@ -170,12 +211,20 @@ class DefaultExecutor:
         track_write_failures: bool,
         raise_on_server_error: Optional[bool] = None,
     ) -> Dict[Key, MemcacheResponse]:
+        if command == MetaCommand.META_GET:
+            return self._exec_multi_get_on_pool(
+                pool,
+                [key for key, _ in key_values],
+                flags,
+                track_write_failures,
+                raise_on_server_error,
+            )
+
         results: Dict[Key, MemcacheResponse] = {}
         try:
             conn = pool.pop_connection()
             error = False
             try:
-                # with pool.get_connection() as conn:
                 for key, value in key_values:
                     cmd_value, flags = (
                         (None, flags)
