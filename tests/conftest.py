@@ -39,6 +39,9 @@ def mock_memcache_socket(mocker, mock_raw_socket) -> MagicMock:
     mock.get_version.return_value = ServerVersion.STABLE
     _success = Success(flags=ResponseFlags())
     mock.meta_get.return_value = Miss()
+    mock.meta_multiget.side_effect = lambda keys, request_flags=None: [
+        Miss() for _ in keys
+    ]
     mock.meta_set.return_value = _success
     mock.meta_delete.return_value = _success
     mock.meta_arithmetic.return_value = _success
