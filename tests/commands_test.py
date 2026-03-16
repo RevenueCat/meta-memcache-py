@@ -1,4 +1,3 @@
-import base64
 import pickle
 import zlib
 from dataclasses import dataclass
@@ -14,7 +13,6 @@ from meta_memcache.configuration import (
     RecachePolicy,
     ServerAddress,
     StalePolicy,
-    default_key_encoder,
 )
 from meta_memcache.connection.memcache_socket import MemcacheSocket
 from meta_memcache.connection.pool import ConnectionPool
@@ -101,7 +99,6 @@ def get_test_cache_client(
     )
     executor = DefaultExecutor(
         serializer=MixedSerializer(),
-        key_encoder_fn=default_key_encoder,
         raise_on_server_error=raise_on_server_error,
     )
     router = DefaultRouter(
@@ -457,20 +454,19 @@ def test_get_cmd(
     cache_client.get(key=Key("foo"), touch_ttl=300, recache_policy=RecachePolicy())
     ws.assert_wire(b"mg foo f v t l h T300 R30\r\n")
 
-    # large key gets hashed; the raw bytes from default_key_encoder are
-    # base64-encoded in the wire protocol
-    large_key = Key("large_key" * 50)
-    encoded_key_bytes = default_key_encoder(large_key)
-    wire_key = base64.b64encode(encoded_key_bytes, altchars=b"-_").rstrip(b"=")
-    cache_client.get(key=large_key, touch_ttl=300, recache_policy=RecachePolicy())
-    ws.assert_wire(b"mg " + wire_key + b" b f v t l h T300 R30\r\n")
+    # large key gets hashed and base64-encoded by the socket
+    cache_client.get(
+        key=Key("large_key" * 50), touch_ttl=300, recache_policy=RecachePolicy()
+    )
+    ws.assert_wire(b"mg 4gCNJuSyOJPGW8kRddioRlPx b f v t l h T300 R30\r\n")
 
     # unicode key is base64-encoded on the wire (non-ASCII bytes)
-    unicode_key = Key("\u00fan\u00ed\u00e7od\u2377")
-    encoded_unicode = default_key_encoder(unicode_key)
-    wire_unicode_key = base64.b64encode(encoded_unicode, altchars=b"-_").rstrip(b"=")
-    cache_client.get(key=unicode_key, touch_ttl=300, recache_policy=RecachePolicy())
-    ws.assert_wire(b"mg " + wire_unicode_key + b" b f v t l h T300 R30\r\n")
+    cache_client.get(
+        key=Key("\u00fan\u00ed\u00e7od\u2377"),
+        touch_ttl=300,
+        recache_policy=RecachePolicy(),
+    )
+    ws.assert_wire(b"mg w7puw63Dp29k4o23 b f v t l h T300 R30\r\n")
 
     # get_or_lease adds c (return_cas_token), N30 (vivify_on_miss_ttl=30),
     # R60 (recache_ttl=60), T300 (cache_ttl=300)
@@ -1122,9 +1118,9 @@ def test_multi_get_with_values(
 
     calls = memcache_socket.send_meta_get.call_args_list
     assert len(calls) == 3
-    assert calls[0][0][0] == b"k1"
-    assert calls[1][0][0] == b"k2"
-    assert calls[2][0][0] == b"k3"
+    assert calls[0][0][0] == "k1"
+    assert calls[1][0][0] == "k2"
+    assert calls[2][0][0] == "k3"
     assert memcache_socket.get_response.call_count == 3
     assert results == {
         Key("k1"): "hello",
@@ -1149,8 +1145,8 @@ def test_multi_get_with_touch_ttl(
 
     calls = memcache_socket.send_meta_get.call_args_list
     assert len(calls) == 2
-    assert calls[0][0][0] == b"a"
-    assert calls[1][0][0] == b"b"
+    assert calls[0][0][0] == "a"
+    assert calls[1][0][0] == "b"
     # Verify the flags contain the touch TTL
     for c in calls:
         flags = c[0][1]
@@ -1191,8 +1187,8 @@ def test_meta_multiget_no_reply(
 
     calls = memcache_socket.send_meta_get.call_args_list
     assert len(calls) == 2
-    assert calls[0][0][0] == b"a"
-    assert calls[1][0][0] == b"b"
+    assert calls[0][0][0] == "a"
+    assert calls[1][0][0] == "b"
     # no_reply: get_response not called, executor returns Success directly
     memcache_socket.get_response.assert_not_called()
     assert all(isinstance(r, Success) for r in results.values())
