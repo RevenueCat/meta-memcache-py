@@ -12,7 +12,6 @@ from meta_memcache.configuration import (
     ServerAddress,
     build_server_pool,
     connection_pool_factory_builder,
-    default_key_encoder,
 )
 from meta_memcache.connection.providers import (
     HashRingConnectionPoolProvider,
@@ -100,7 +99,6 @@ class Benchmark:
                 zstd_manager=PooledZstdManager(),
                 compression_threshold=1_000_000_000,  # effectively disable compression
             ),
-            key_encoder_fn=default_key_encoder,
             raise_on_server_error=True,
         )
         router = DefaultRouter(

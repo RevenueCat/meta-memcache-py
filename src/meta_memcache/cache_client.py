@@ -6,7 +6,6 @@ from meta_memcache.commands.meta_commands import MetaCommandsMixin
 from meta_memcache.configuration import (
     ServerAddress,
     build_server_pool,
-    default_key_encoder,
 )
 from meta_memcache.connection.pool import ConnectionPool
 from meta_memcache.connection.providers import HashRingConnectionPoolProvider
@@ -25,7 +24,7 @@ class CacheClient(HighLevelCommandsMixin, MetaCommandsMixin, BaseCacheClient):
         servers: Iterable[ServerAddress],
         connection_pool_factory_fn: Callable[[ServerAddress], ConnectionPool],
         serializer: Optional[BaseSerializer] = None,
-        key_encoder_fn: Callable[[Key], bytes] = default_key_encoder,
+        key_encoder_fn: Optional[Callable[[Key], bytes]] = None,
         raise_on_server_error: bool = True,
     ) -> CacheApi:
         executor = DefaultExecutor(
@@ -48,7 +47,7 @@ class CacheClient(HighLevelCommandsMixin, MetaCommandsMixin, BaseCacheClient):
         gutter_ttl: int,
         connection_pool_factory_fn: Callable[[ServerAddress], ConnectionPool],
         serializer: Optional[BaseSerializer] = None,
-        key_encoder_fn: Callable[[Key], bytes] = default_key_encoder,
+        key_encoder_fn: Optional[Callable[[Key], bytes]] = None,
         raise_on_server_error: bool = True,
     ) -> CacheApi:
         executor = DefaultExecutor(
@@ -76,7 +75,7 @@ class CacheClient(HighLevelCommandsMixin, MetaCommandsMixin, BaseCacheClient):
         max_ttl: int,
         connection_pool_factory_fn: Callable[[ServerAddress], ConnectionPool],
         serializer: Optional[BaseSerializer] = None,
-        key_encoder_fn: Callable[[Key], bytes] = default_key_encoder,
+        key_encoder_fn: Optional[Callable[[Key], bytes]] = None,
         raise_on_server_error: bool = True,
     ) -> CacheApi:
         executor = DefaultExecutor(
