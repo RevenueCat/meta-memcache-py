@@ -1096,7 +1096,7 @@ def test_multi_get_with_values(
     int_encoded = serializer.serialize(Key("k2"), 42)
     list_encoded = serializer.serialize(Key("k3"), [1, 2])
 
-    memcache_socket.get_response.side_effect = [
+    memcache_socket.meta_multiget.return_value = [
         Value(
             size=len(str_encoded.data),
             value=str_encoded.data,
@@ -1116,12 +1116,9 @@ def test_multi_get_with_values(
 
     results = cache_client.multi_get(keys=[Key("k1"), Key("k2"), Key("k3")])
 
-    calls = memcache_socket.send_meta_get.call_args_list
-    assert len(calls) == 3
-    assert calls[0][0][0] == "k1"
-    assert calls[1][0][0] == "k2"
-    assert calls[2][0][0] == "k3"
-    assert memcache_socket.get_response.call_count == 3
+    memcache_socket.meta_multiget.assert_called_once()
+    keys_sent = memcache_socket.meta_multiget.call_args.args[0]
+    assert keys_sent == ["k1", "k2", "k3"]
     assert results == {
         Key("k1"): "hello",
         Key("k2"): 42,
@@ -1132,8 +1129,8 @@ def test_multi_get_with_values(
 def test_multi_get_with_touch_ttl(
     memcache_socket: MemcacheSocket, cache_client: CacheClient
 ) -> None:
-    """Test multi_get passes touch_ttl through to the pipelining path."""
-    memcache_socket.get_response.side_effect = [
+    """Test multi_get passes touch_ttl through to meta_multiget."""
+    memcache_socket.meta_multiget.return_value = [
         Miss(),
         Miss(),
     ]
@@ -1143,32 +1140,28 @@ def test_multi_get_with_touch_ttl(
         touch_ttl=300,
     )
 
-    calls = memcache_socket.send_meta_get.call_args_list
-    assert len(calls) == 2
-    assert calls[0][0][0] == "a"
-    assert calls[1][0][0] == "b"
-    # Verify the flags contain the touch TTL
-    for c in calls:
-        flags = c[0][1]
-        assert flags is not None
-        assert flags.cache_ttl == 300
+    memcache_socket.meta_multiget.assert_called_once()
+    keys_sent = memcache_socket.meta_multiget.call_args.args[0]
+    flags = memcache_socket.meta_multiget.call_args.kwargs["request_flags"]
+    assert keys_sent == ["a", "b"]
+    assert flags is not None
+    assert flags.cache_ttl == 300
     assert results == {Key("a"): None, Key("b"): None}
 
 
 def test_multi_get_with_recache(
     memcache_socket: MemcacheSocket, cache_client: CacheClient
 ) -> None:
-    """Test multi_get with recache_policy passes recache_ttl in flags."""
-    memcache_socket.get_response.side_effect = [Miss()]
+    """Test multi_get with recache_policy passes recache_ttl in request flags."""
+    memcache_socket.meta_multiget.return_value = [Miss()]
 
     cache_client.multi_get(
         keys=[Key("x")],
         recache_policy=RecachePolicy(ttl=60),
     )
 
-    calls = memcache_socket.send_meta_get.call_args_list
-    assert len(calls) == 1
-    flags = calls[0][0][1]
+    memcache_socket.meta_multiget.assert_called_once()
+    flags = memcache_socket.meta_multiget.call_args.kwargs["request_flags"]
     assert flags is not None
     assert flags.recache_ttl == 60
 
@@ -1176,19 +1169,18 @@ def test_multi_get_with_recache(
 def test_meta_multiget_no_reply(
     memcache_socket: MemcacheSocket, cache_client: CacheClient
 ) -> None:
-    """Test meta_multiget with no_reply flag uses pipelining path correctly.
+    """Test meta_multiget with no_reply uses socket batch API."""
+    memcache_socket.meta_multiget.return_value = [
+        Success(flags=ResponseFlags()),
+        Success(flags=ResponseFlags()),
+    ]
 
-    With no_reply on mg, the executor skips get_response and returns Success.
-    """
     results = cache_client.meta_multiget(
         keys=[Key("a"), Key("b")],
         flags=RequestFlags(no_reply=True, cache_ttl=60),
     )
 
-    calls = memcache_socket.send_meta_get.call_args_list
-    assert len(calls) == 2
-    assert calls[0][0][0] == "a"
-    assert calls[1][0][0] == "b"
-    # no_reply: get_response not called, executor returns Success directly
-    memcache_socket.get_response.assert_not_called()
+    memcache_socket.meta_multiget.assert_called_once()
+    keys_sent = memcache_socket.meta_multiget.call_args.args[0]
+    assert keys_sent == ["a", "b"]
     assert all(isinstance(r, Success) for r in results.values())
