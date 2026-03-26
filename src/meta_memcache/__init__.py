@@ -1,4 +1,4 @@
-__version__ = "2.0.8"
+__version__ = "2.1.0"
 
 from meta_memcache.cache_client import CacheClient
 from meta_memcache.configuration import (
@@ -8,7 +8,6 @@ from meta_memcache.configuration import (
     StalePolicy,
     build_server_pool,
     connection_pool_factory_builder,
-    default_key_encoder,
     socket_factory_builder,
 )
 from meta_memcache.connection.pool import ConnectionPool, PoolCounters

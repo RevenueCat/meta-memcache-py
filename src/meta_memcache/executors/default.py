@@ -1,10 +1,9 @@
 import logging
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 from meta_memcache_socket import RequestFlags
 
 from meta_memcache.base.base_serializer import BaseSerializer
-from meta_memcache.configuration import default_key_encoder
 from meta_memcache.connection.memcache_socket import MemcacheSocket
 from meta_memcache.connection.pool import ConnectionPool
 from meta_memcache.errors import MemcacheServerError, UserDataError
@@ -29,7 +28,7 @@ class DefaultExecutor:
     def __init__(
         self,
         serializer: BaseSerializer,
-        key_encoder_fn: Callable[[Key], bytes] = default_key_encoder,
+        key_encoder_fn: Optional[Callable[[Key], bytes]] = None,
         raise_on_server_error: bool = True,
         touch_ttl_to_consider_write_failure: Optional[int] = 50,
     ) -> None:
@@ -79,16 +78,18 @@ class DefaultExecutor:
         Execute a blocking command on a connection (send + recv).
         The blocking meta_* methods handle no_reply internally.
         """
-        encoded_key = self._key_encoder_fn(key)
+        wire_key: Union[str, bytes] = (
+            self._key_encoder_fn(key) if self._key_encoder_fn else key.key
+        )
         if command == MetaCommand.META_GET:
-            result = conn.meta_get(encoded_key, flags)
+            result = conn.meta_get(wire_key, flags)
         elif command == MetaCommand.META_SET:
             assert value is not None
-            result = conn.meta_set(encoded_key, value, flags)
+            result = conn.meta_set(wire_key, value, flags)
         elif command == MetaCommand.META_DELETE:
-            result = conn.meta_delete(encoded_key, flags)
+            result = conn.meta_delete(wire_key, flags)
         elif command == MetaCommand.META_ARITHMETIC:
-            result = conn.meta_arithmetic(encoded_key, flags)
+            result = conn.meta_arithmetic(wire_key, flags)
         else:
             raise ValueError(f"Unknown command: {command}")
         return self._process_response(result)
@@ -224,16 +225,18 @@ class DefaultExecutor:
         Send a command on a connection (for pipelining).
         The send_meta_* methods handle no_reply/noop internally.
         """
-        encoded_key = self._key_encoder_fn(key)
+        wire_key: Union[str, bytes] = (
+            self._key_encoder_fn(key) if self._key_encoder_fn else key.key
+        )
         if command == MetaCommand.META_GET:
-            conn.send_meta_get(encoded_key, flags)
+            conn.send_meta_get(wire_key, flags)
         elif command == MetaCommand.META_SET:
             assert value is not None
-            conn.send_meta_set(encoded_key, value, flags)
+            conn.send_meta_set(wire_key, value, flags)
         elif command == MetaCommand.META_DELETE:
-            conn.send_meta_delete(encoded_key, flags)
+            conn.send_meta_delete(wire_key, flags)
         elif command == MetaCommand.META_ARITHMETIC:
-            conn.send_meta_arithmetic(encoded_key, flags)
+            conn.send_meta_arithmetic(wire_key, flags)
         else:
             raise ValueError(f"Unknown command: {command}")
 
