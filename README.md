@@ -200,7 +200,7 @@ of flags, and features, but are very low level for general use.
         key: Key,
         flags: Optional[RequestFlags] = None,
         failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
-    ) -> WriteResponse:
+    ) -> ArithmeticResponse:
 ```
 ### Special arguments:
 `RequestFlags` has the following arguments:
@@ -243,7 +243,8 @@ due to CAS semantics, or because it was an add vs when it is due to server failu
 ### Responses:
 The responses are either:
  * `ReadResponse`: `Union[Miss, Value, Success]`
- * `WriteResponse`:  `Union[Success, NotStored, Conflict, Miss]`
+ * `WriteResponse`: `Union[Success, NotStored, Conflict, Miss]`
+ * `ArithmeticResponse`: `Union[Success, NotStored, Conflict, Miss, Value]` — like `WriteResponse` but also includes `Value`, since `meta_arithmetic` can return the resulting counter value when `return_value` is set in the request flags
 
 Which are:
  * `Miss`: For key not found. No arguments

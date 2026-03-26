@@ -8,6 +8,7 @@ from meta_memcache.connection.pool import PoolCounters
 from meta_memcache.events.write_failure_event import WriteFailureEvent
 from meta_memcache.interfaces.cache_api import CacheApi
 from meta_memcache.protocol import (
+    ArithmeticResponse,
     Key,
     ReadResponse,
     RequestFlags,
@@ -233,7 +234,7 @@ class MigratingCacheClient(HighLevelCommandsMixin):
         key: Key,
         flags: Optional[RequestFlags] = None,
         failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
-    ) -> WriteResponse:
+    ) -> ArithmeticResponse:
         """
         We can't reliably migrate cache data modified by meta-arithmetic,
         since we may now know the value after the operation. Using memcache

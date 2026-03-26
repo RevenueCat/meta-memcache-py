@@ -6,6 +6,7 @@ from meta_memcache.connection.pool import PoolCounters
 from meta_memcache.interfaces.router import FailureHandling, DEFAULT_FAILURE_HANDLING
 from meta_memcache.interfaces.cache_api import CacheApi
 from meta_memcache.protocol import (
+    ArithmeticResponse,
     Key,
     ReadResponse,
     RequestFlags,
@@ -85,7 +86,7 @@ class ClientWrapper(HighLevelCommandsMixin):
         key: Key,
         flags: Optional[RequestFlags] = None,
         failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
-    ) -> WriteResponse:
+    ) -> ArithmeticResponse:
         return self.client.meta_arithmetic(
             key=key,
             flags=flags,
