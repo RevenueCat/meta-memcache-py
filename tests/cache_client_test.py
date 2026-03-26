@@ -96,7 +96,7 @@ def test_sharded_cache_client_honors_server_id(
 def test_sharded_with_gutter_cache_client(
     mocker: MockerFixture,
     mock_raw_socket: MagicMock,
-    mock_memcache_socket: MagicMock,
+    wire_socket,
 ) -> None:
     server_is_bad = True
 
@@ -109,7 +109,6 @@ def test_sharded_with_gutter_cache_client(
     time.time.return_value = 123
     # Make "ko" servers fail during pool initialization
     mock_raw_socket.connect.side_effect = connect
-    c = mock_memcache_socket
 
     cache_client = CacheClient.cache_client_with_gutter_from_servers(
         servers=[
@@ -153,22 +152,23 @@ def test_sharded_with_gutter_cache_client(
     get_pool = mocker.spy(cache_client.router.pool_provider, "get_pool")
     get_gutter_pool = mocker.spy(cache_client.router.gutter_pool_provider, "get_pool")
 
+    # "bar" routes to ok1 (healthy) — TTL NOT capped
     cache_client.set(key=Key("bar"), value=1, ttl=1000, no_reply=True)
     get_pool.assert_called_once_with(Key("bar"))
     get_gutter_pool.assert_not_called()
-    c.sendall.assert_called_once_with(b"ms bar 1 q T1000 F2\r\n1\r\n", with_noop=True)
-    c.sendall.reset_mock()
+    wire_socket.assert_wire(b"ms bar 1 q T1000 F2\r\n1\r\nmn\r\n")
     get_pool.reset_mock()
     get_gutter_pool.reset_mock()
 
+    # "foo" routes to ko2 (down) → gutter — TTL capped to gutter_ttl=60
     cache_client.set(key=Key("foo"), value=1, ttl=1000, no_reply=True)
     get_pool.assert_called_once_with(Key("foo"))
     get_gutter_pool.assert_called_once_with(Key("foo"))
-    c.sendall.assert_called_once_with(b"ms foo 1 q T60 F2\r\n1\r\n", with_noop=True)
-    c.sendall.reset_mock()
+    wire_socket.assert_wire(b"ms foo 1 q T60 F2\r\n1\r\nmn\r\n")
     get_pool.reset_mock()
     get_gutter_pool.reset_mock()
 
+    # meta_multiget: "bar" uses full TTL, "foo" capped to gutter_ttl=60
     cache_client.meta_multiget(
         keys=[Key("bar"), Key("foo")],
         flags=RequestFlags(
@@ -178,13 +178,9 @@ def test_sharded_with_gutter_cache_client(
     )
     get_pool.assert_has_calls([call(Key(key="bar")), call(Key(key="foo"))])
     get_gutter_pool.assert_called_once_with(Key("foo"))
-    c.sendall.assert_has_calls(
-        [
-            call(b"mg bar q T1000\r\n", with_noop=False),
-            call(b"mg foo q T60\r\n", with_noop=False),
-        ]
-    )
-    c.sendall.reset_mock()
+    # no_reply is ignored for mg — q flag is forbidden on GET commands by the
+    # socket to avoid protocol mismatches (q only suppresses misses, not hits)
+    wire_socket.assert_wire(b"mg bar T1000\r\n", b"mg foo T60\r\n")
     get_pool.reset_mock()
     get_gutter_pool.reset_mock()
 
@@ -196,8 +192,7 @@ def test_sharded_with_gutter_cache_client(
     cache_client.set(key=Key("foo"), value=1, ttl=1000, no_reply=True)
     get_pool.assert_called_once_with(Key("foo"))
     get_gutter_pool.assert_called_once_with(Key("foo"))
-    c.sendall.assert_called_once_with(b"ms foo 1 q T60 F2\r\n1\r\n", with_noop=True)
-    c.sendall.reset_mock()
+    wire_socket.assert_wire(b"ms foo 1 q T60 F2\r\n1\r\nmn\r\n")
     get_pool.reset_mock()
     get_gutter_pool.reset_mock()
 
@@ -210,13 +205,9 @@ def test_sharded_with_gutter_cache_client(
     )
     get_pool.assert_has_calls([call(Key(key="bar")), call(Key(key="foo"))])
     get_gutter_pool.assert_called_once_with(Key("foo"))
-    c.sendall.assert_has_calls(
-        [
-            call(b"mg bar q T1000\r\n", with_noop=False),
-            call(b"mg foo q T60\r\n", with_noop=False),
-        ]
-    )
-    c.sendall.reset_mock()
+    # no_reply is ignored for mg — q flag is forbidden on GET commands by the
+    # socket to avoid protocol mismatches (q only suppresses misses, not hits)
+    wire_socket.assert_wire(b"mg bar T1000\r\n", b"mg foo T60\r\n")
     get_pool.reset_mock()
     get_gutter_pool.reset_mock()
 
@@ -224,11 +215,11 @@ def test_sharded_with_gutter_cache_client(
     server_is_bad = False
     time.time.return_value = 123 + DEFAULT_MARK_DOWN_PERIOD_S
 
+    # "foo" now routes to recovered ko2 — TTL NOT capped
     cache_client.set(key=Key("foo"), value=1, ttl=1000, no_reply=True)
     get_pool.assert_called_once_with(Key("foo"))
     get_gutter_pool.assert_not_called()
-    c.sendall.assert_called_once_with(b"ms foo 1 q T1000 F2\r\n1\r\n", with_noop=True)
-    c.sendall.reset_mock()
+    wire_socket.assert_wire(b"ms foo 1 q T1000 F2\r\n1\r\nmn\r\n")
     get_pool.reset_mock()
     get_gutter_pool.reset_mock()
 
@@ -241,12 +232,8 @@ def test_sharded_with_gutter_cache_client(
     )
     get_pool.assert_has_calls([call(Key(key="bar")), call(Key(key="foo"))])
     get_gutter_pool.assert_not_called()
-    c.sendall.assert_has_calls(
-        [
-            call(b"mg bar q T1000\r\n", with_noop=False),
-            call(b"mg foo q T1000\r\n", with_noop=False),
-        ]
-    )
-    c.sendall.reset_mock()
+    # no_reply is ignored for mg — q flag is forbidden on GET commands by the
+    # socket to avoid protocol mismatches (q only suppresses misses, not hits)
+    wire_socket.assert_wire(b"mg bar T1000\r\n", b"mg foo T1000\r\n")
     get_pool.reset_mock()
     get_gutter_pool.reset_mock()
