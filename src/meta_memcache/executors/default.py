@@ -45,8 +45,10 @@ class DefaultExecutor:
         flags: Optional[RequestFlags],
     ) -> Tuple[Optional[bytes], RequestFlags]:
         encoded_value = self._serializer.serialize(key, value.value)
-        flags = flags if flags is not None else RequestFlags()
-        flags.client_flag = encoded_value.encoding_id
+        if flags is None:
+            flags = RequestFlags(client_flag=encoded_value.encoding_id)
+        else:
+            flags = flags.replace(client_flag=encoded_value.encoding_id)
         return encoded_value.data, flags
 
     def _is_a_write_failure(
