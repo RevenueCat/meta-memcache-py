@@ -77,6 +77,8 @@ class HighLevelCommandMixinWithMetaCommands(
         no_reply: bool = False,
         cas_token: Optional[int] = None,
         return_value: bool = False,
+        initial_value: Optional[int] = None,
+        initial_ttl: Optional[int] = None,
     ) -> RequestFlags: ...  # pragma: no cover
 
 
@@ -95,15 +97,17 @@ class HighLevelCommandsMixin:
         Write a value using the specified `set_mode`
         """
         key = key if isinstance(key, Key) else Key(key)
-        flags = RequestFlags(cache_ttl=ttl)
-        if no_reply:
-            flags.no_reply = True
-        if cas_token is not None:
-            flags.cas_token = cas_token
-            if stale_policy and stale_policy.mark_stale_on_cas_mismatch:
-                flags.mark_stale = True
-        if set_mode != SetMode.SET:
-            flags.mode = set_mode.value
+        flags = RequestFlags(
+            cache_ttl=ttl,
+            no_reply=no_reply,
+            cas_token=cas_token,
+            mark_stale=bool(
+                cas_token is not None
+                and stale_policy
+                and stale_policy.mark_stale_on_cas_mismatch
+            ),
+            mode=set_mode.value if set_mode != SetMode.SET else None,
+        )
 
         result = self.meta_set(
             key=key,
@@ -141,9 +145,8 @@ class HighLevelCommandsMixin:
         flags = RequestFlags(
             cache_ttl=ttl,
             mode=SetMode.ADD.value,
+            no_reply=no_reply,
         )
-        if no_reply:
-            flags.no_reply = True
 
         result = self.meta_set(
             key=key,
@@ -169,14 +172,17 @@ class HighLevelCommandsMixin:
         it exists or not, use invalidate() instead.
         """
         key = key if isinstance(key, Key) else Key(key)
-        flags = RequestFlags()
-        if no_reply:
-            flags.no_reply = True
-        if cas_token is not None:
-            flags.cas_token = cas_token
-        if stale_policy and stale_policy.mark_stale_on_deletion_ttl > 0:
-            flags.mark_stale = True
-            flags.cache_ttl = stale_policy.mark_stale_on_deletion_ttl
+        _stale_ttl = (
+            stale_policy.mark_stale_on_deletion_ttl
+            if stale_policy and stale_policy.mark_stale_on_deletion_ttl > 0
+            else None
+        )
+        flags = RequestFlags(
+            no_reply=no_reply,
+            cas_token=cas_token,
+            mark_stale=_stale_ttl is not None,
+            cache_ttl=_stale_ttl,
+        )
 
         result = self.meta_delete(key=key, flags=flags)
 
@@ -193,14 +199,17 @@ class HighLevelCommandsMixin:
         Returns true of the key deleted or it didn't exist anyway
         """
         key = key if isinstance(key, Key) else Key(key)
-        flags = RequestFlags()
-        if no_reply:
-            flags.no_reply = True
-        if cas_token is not None:
-            flags.cas_token = cas_token
-        if stale_policy and stale_policy.mark_stale_on_deletion_ttl > 0:
-            flags.mark_stale = True
-            flags.cache_ttl = stale_policy.mark_stale_on_deletion_ttl
+        _stale_ttl = (
+            stale_policy.mark_stale_on_deletion_ttl
+            if stale_policy and stale_policy.mark_stale_on_deletion_ttl > 0
+            else None
+        )
+        flags = RequestFlags(
+            no_reply=no_reply,
+            cas_token=cas_token,
+            mark_stale=_stale_ttl is not None,
+            cache_ttl=_stale_ttl,
+        )
 
         result = self.meta_delete(key=key, flags=flags)
 
@@ -216,9 +225,7 @@ class HighLevelCommandsMixin:
         Modify the TTL of a key without retrieving the value
         """
         key = key if isinstance(key, Key) else Key(key)
-        flags = RequestFlags(cache_ttl=ttl)
-        if no_reply:
-            flags.no_reply = True
+        flags = RequestFlags(cache_ttl=ttl, no_reply=no_reply)
         result = self.meta_get(key, flags=flags)
 
         return isinstance(result, Success)
@@ -344,14 +351,11 @@ class HighLevelCommandsMixin:
         recache_policy: Optional[RecachePolicy] = None,
         return_cas_token: bool = False,
     ) -> Dict[Key, Optional[Value]]:
-        if return_cas_token:
-            flags = DEFAULT_GET_CAS_FLAGS.copy()
-        else:
-            flags = DEFAULT_GET_FLAGS.copy()
-        if recache_policy:
-            flags.recache_ttl = recache_policy.ttl
-        if touch_ttl is not None and touch_ttl >= 0:
-            flags.cache_ttl = touch_ttl
+        base = DEFAULT_GET_CAS_FLAGS if return_cas_token else DEFAULT_GET_FLAGS
+        flags = base.replace(
+            recache_ttl=recache_policy.ttl if recache_policy else None,
+            cache_ttl=touch_ttl if touch_ttl is not None and touch_ttl >= 0 else None,
+        )
 
         results = self.meta_multiget(
             keys=[key if isinstance(key, Key) else Key(key) for key in keys],
@@ -389,16 +393,12 @@ class HighLevelCommandsMixin:
         return_cas_token: bool = False,
     ) -> Optional[Value]:
         key = key if isinstance(key, Key) else Key(key)
-        if return_cas_token:
-            flags = DEFAULT_GET_CAS_FLAGS.copy()
-        else:
-            flags = DEFAULT_GET_FLAGS.copy()
-        if lease_policy:
-            flags.vivify_on_miss_ttl = lease_policy.ttl
-        if recache_policy:
-            flags.recache_ttl = recache_policy.ttl
-        if touch_ttl is not None and touch_ttl >= 0:
-            flags.cache_ttl = touch_ttl
+        base = DEFAULT_GET_CAS_FLAGS if return_cas_token else DEFAULT_GET_FLAGS
+        flags = base.replace(
+            vivify_on_miss_ttl=lease_policy.ttl if lease_policy else None,
+            recache_ttl=recache_policy.ttl if recache_policy else None,
+            cache_ttl=touch_ttl if touch_ttl is not None and touch_ttl >= 0 else None,
+        )
 
         result = self.meta_get(key, flags=flags)
         return self._process_get_result(key, result)
@@ -478,22 +478,19 @@ class HighLevelCommandsMixin:
         no_reply: bool = False,
         cas_token: Optional[int] = None,
         return_value: bool = False,
+        initial_value: Optional[int] = None,
+        initial_ttl: Optional[int] = None,
     ) -> RequestFlags:
-        flags = RequestFlags(
+        return RequestFlags(
             ma_delta_value=abs(delta),
+            return_value=return_value,
+            no_reply=no_reply,
+            cache_ttl=refresh_ttl,
+            cas_token=cas_token,
+            mode=MA_MODE_DEC if delta < 0 else None,
+            ma_initial_value=abs(initial_value) if initial_value is not None else None,
+            vivify_on_miss_ttl=initial_ttl,
         )
-        if return_value:
-            flags.return_value = True
-        if no_reply:
-            flags.no_reply = True
-        if refresh_ttl is not None:
-            flags.cache_ttl = refresh_ttl
-        if cas_token is not None:
-            flags.cas_token = cas_token
-        if delta < 0:
-            flags.mode = MA_MODE_DEC
-
-        return flags
 
     def delta(
         self: HighLevelCommandMixinWithMetaCommands,
@@ -537,9 +534,9 @@ class HighLevelCommandsMixin:
             refresh_ttl=refresh_ttl,
             no_reply=no_reply,
             cas_token=cas_token,
+            initial_value=initial_value,
+            initial_ttl=initial_ttl,
         )
-        flags.ma_initial_value = abs(initial_value)
-        flags.vivify_on_miss_ttl = initial_ttl
         result = self.meta_arithmetic(key=key, flags=flags)
         return isinstance(result, Success)
 
@@ -588,9 +585,9 @@ class HighLevelCommandsMixin:
             delta=delta,
             refresh_ttl=refresh_ttl,
             cas_token=cas_token,
+            initial_value=initial_value,
+            initial_ttl=initial_ttl,
         )
-        flags.ma_initial_value = abs(initial_value)
-        flags.vivify_on_miss_ttl = initial_ttl
         result = self.meta_arithmetic(key=key, flags=flags)
         if isinstance(result, Value):
             if isinstance(result.value, str) and result.value.isnumeric():
