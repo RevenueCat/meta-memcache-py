@@ -370,13 +370,17 @@ Invalidation...
         lease_policy: LeasePolicy,
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
+        lease_wait_fn: Optional[Callable[[float], None]] = None,
     ) -> Optional[Any]:
         """
         Get a key. On miss try to get a lease.
 
         Guarantees only one cache client will get the miss and
         gets to repopulate cache, while the others are blocked
-        waiting (according to the settings in the LeasePolicy)
+        waiting (according to the settings in the LeasePolicy).
+
+        ``lease_wait_fn`` is invoked with the number of seconds to wait
+        between lease retries. Defaults to ``time.sleep``.
         """
 
     def get_or_lease_cas(
@@ -385,6 +389,7 @@ Invalidation...
         lease_policy: LeasePolicy,
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
+        lease_wait_fn: Optional[Callable[[float], None]] = None,
     ) -> Tuple[Optional[Any], Optional[int]]:
         """
         Same as get_or_lease(), but also return the CAS token so

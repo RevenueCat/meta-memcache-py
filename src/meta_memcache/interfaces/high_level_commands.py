@@ -1,4 +1,15 @@
-from typing import Any, Dict, Iterable, Optional, Protocol, Tuple, Type, TypeVar, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    Optional,
+    Protocol,
+    Tuple,
+    Type,
+    TypeVar,
+    Union,
+)
 
 from meta_memcache.configuration import LeasePolicy, RecachePolicy, StalePolicy
 from meta_memcache.protocol import Key, SetMode, Value
@@ -83,6 +94,7 @@ class HighLevelCommandsProtocol(Protocol):
         lease_policy: LeasePolicy,
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
+        lease_wait_fn: Optional[Callable[[float], None]] = None,
     ) -> Optional[Any]: ...  # pragma: no cover
 
     def get_or_lease_cas(
@@ -91,6 +103,7 @@ class HighLevelCommandsProtocol(Protocol):
         lease_policy: LeasePolicy,
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
+        lease_wait_fn: Optional[Callable[[float], None]] = None,
     ) -> Tuple[Optional[Any], Optional[int]]: ...  # pragma: no cover
 
     def get(

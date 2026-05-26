@@ -1,6 +1,7 @@
 import time
 from typing import (
     Any,
+    Callable,
     Dict,
     Iterable,
     Optional,
@@ -236,6 +237,7 @@ class HighLevelCommandsMixin:
         lease_policy: LeasePolicy,
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
+        lease_wait_fn: Optional[Callable[[float], None]] = None,
     ) -> Optional[Any]:
         """
         Get a key. On miss try to get a lease.
@@ -243,12 +245,16 @@ class HighLevelCommandsMixin:
         Guarantees only one cache client will get the miss and
         gets to repopulate cache, while the others are blocked
         waiting (according to the settings in the LeasePolicy)
+
+        ``lease_wait_fn`` is invoked with the number of seconds to wait
+        between lease retries. Defaults to ``time.sleep``.
         """
         value, _ = self.get_or_lease_cas(
             key=key,
             lease_policy=lease_policy,
             touch_ttl=touch_ttl,
             recache_policy=recache_policy,
+            lease_wait_fn=lease_wait_fn,
         )
         return value
 
@@ -258,6 +264,7 @@ class HighLevelCommandsMixin:
         lease_policy: LeasePolicy,
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
+        lease_wait_fn: Optional[Callable[[float], None]] = None,
     ) -> Tuple[Optional[Any], Optional[int]]:
         """
         Same as get_or_lease(), but also return the CAS token so
@@ -267,10 +274,11 @@ class HighLevelCommandsMixin:
             raise ValueError(
                 "Wrong lease_policy: miss_retries needs to be greater than 0"
             )
+        wait = lease_wait_fn if lease_wait_fn is not None else time.sleep
         i = 0
         while True:
             if i > 0:
-                time.sleep(
+                wait(
                     min(
                         lease_policy.miss_max_retry_wait,
                         lease_policy.miss_retry_wait
