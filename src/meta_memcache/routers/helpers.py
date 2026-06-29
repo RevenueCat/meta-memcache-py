@@ -17,8 +17,10 @@ def adjust_flags_for_max_ttl(
     Override TTLs > than `max_ttl`
     """
     if flags:
-        flags.cache_ttl = _adjust_ttl(flags.cache_ttl, max_ttl)
-        flags.recache_ttl = _adjust_ttl(flags.recache_ttl, max_ttl)
-        flags.vivify_on_miss_ttl = _adjust_ttl(flags.vivify_on_miss_ttl, max_ttl)
+        flags = flags.replace(
+            cache_ttl=_adjust_ttl(flags.cache_ttl, max_ttl),
+            recache_ttl=_adjust_ttl(flags.recache_ttl, max_ttl),
+            vivify_on_miss_ttl=_adjust_ttl(flags.vivify_on_miss_ttl, max_ttl),
+        )
 
     return flags
