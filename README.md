@@ -625,8 +625,8 @@ class PoolCounters(NamedTuple):
     available: int
     # The # of connections active, currently in use, out of the pool
     active: int
-    # Current stablished connections (available + active)
-    stablished: int
+    # Current established connections (available + active)
+    established: int
     # Total # of connections created. If this keeps growing
     # might mean the pool size is too small and we are
     # constantly needing to create new connections:

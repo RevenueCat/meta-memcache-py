@@ -52,8 +52,8 @@ class PoolCounters(NamedTuple):
     available: int
     # The # of connections active, currently in use, out of the pool
     active: int
-    # Current stablished connections (available + active)
-    stablished: int
+    # Current established connections (available + active)
+    established: int
     # Total # of connections created. If this keeps growing
     # might meen the pool size is too small and we are
     # constantly needing to create new connections:
@@ -125,13 +125,13 @@ class ConnectionPool:
     def get_counters(self) -> PoolCounters:
         available = len(self._pool)
         total_created, total_destroyed = self._created, self._destroyed
-        stablished = total_created - total_destroyed
-        active = stablished - available
+        established = total_created - total_destroyed
+        active = established - available
 
         return PoolCounters(
             available=available,
             active=active,
-            stablished=stablished,
+            established=established,
             total_created=total_created,
             total_errors=self._errors,
         )
