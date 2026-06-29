@@ -132,7 +132,7 @@ def test_sharded_with_gutter_cache_client(
     assert connection_pool.get_counters() == PoolCounters(
         available=0,
         active=0,
-        stablished=0,
+        established=0,
         total_created=0,
         total_errors=1,  # The second conn is not attempted, marked down
     )
@@ -144,7 +144,7 @@ def test_sharded_with_gutter_cache_client(
     assert connection_pool.get_counters() == PoolCounters(
         available=2,
         active=0,
-        stablished=2,
+        established=2,
         total_created=2,
         total_errors=0,
     )
