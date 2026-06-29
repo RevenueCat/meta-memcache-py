@@ -110,6 +110,6 @@ class MetaCommandsMixin:
         )
         if not isinstance(result, (Success, NotStored, Conflict, Miss, Value)):
             raise MemcacheError(
-                f"Unexpected response for Meta Delete command: {result}"
+                f"Unexpected response for Meta Arithmetic command: {result}"
             )
         return result
