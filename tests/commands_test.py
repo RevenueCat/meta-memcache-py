@@ -833,6 +833,32 @@ def test_get_or_lease_miss_runs_out_of_retries(
     )
 
 
+def test_get_or_lease_uses_custom_wait_fn(
+    wire_memcache_socket: WireSocket, wire_cache_client: CacheClient, time: MagicMock
+) -> None:
+    ws = wire_memcache_socket
+    cache_client = wire_cache_client
+    expected_cas_token = 123
+    # Two miss-lost (Z=loss), then a miss-win (W)
+    ws.queue_response(
+        b"VA 0 Z c122\r\n\r\n",
+        b"VA 0 Z c122\r\n\r\n",
+        b"VA 0 W c123\r\n\r\n",
+    )
+
+    custom_wait = MagicMock()
+    result, cas_token = cache_client.get_or_lease_cas(
+        key=Key("foo"),
+        lease_policy=LeasePolicy(),
+        lease_wait_fn=custom_wait,
+    )
+    assert result is None
+    assert cas_token == expected_cas_token
+    # time.sleep must not be called when a custom wait fn is provided
+    time.sleep.assert_not_called()
+    custom_wait.assert_has_calls([call(1.0), call(1.2)])
+
+
 def test_get_or_lease_errors(
     wire_memcache_socket: WireSocket, wire_cache_client: CacheClient
 ) -> None:
