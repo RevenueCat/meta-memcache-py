@@ -126,7 +126,7 @@ class ConnectionPool:
         available = len(self._pool)
         total_created, total_destroyed = self._created, self._destroyed
         stablished = total_created - total_destroyed
-        active = available - stablished
+        active = stablished - available
 
         return PoolCounters(
             available=available,
