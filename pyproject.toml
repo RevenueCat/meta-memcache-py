@@ -19,6 +19,11 @@ metrics = ["prometheus-client >= 0.17.1"]
 [project.urls]
 homepage = "https://github.com/RevenueCat/meta-memcache-py"
 
+[tool.uv]
+# Dependency cooldown: only resolve releases that are at least 7 days old.
+# Mitigates supply-chain risk from compromised fresh package versions.
+exclude-newer = "P7D"
+
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
