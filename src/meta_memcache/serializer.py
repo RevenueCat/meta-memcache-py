@@ -1,6 +1,6 @@
 import pickle  # noqa: S403
 import zlib
-from typing import Any, List, NamedTuple, Tuple
+from typing import Any, Tuple
 
 from meta_memcache.base.base_serializer import BaseSerializer, EncodedValue
 from meta_memcache.compression.zstd_manager import BaseZstdManager
@@ -57,11 +57,6 @@ class MixedSerializer(BaseSerializer):
             return bytes(data)
         else:
             return pickle.loads(data)  # noqa: S301
-
-
-class DictionaryMapping(NamedTuple):
-    dictionary: bytes
-    active_domains: List[str]
 
 
 class ZstdSerializer(BaseSerializer):
