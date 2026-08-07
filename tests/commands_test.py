@@ -1234,6 +1234,104 @@ def test_multi_get_with_recache(
     assert flags.recache_ttl == 60
 
 
+def test_multi_get_cas(
+    wire_memcache_socket: WireSocket,
+    wire_cache_client: CacheClient,
+) -> None:
+    ws = wire_memcache_socket
+    cache_client = wire_cache_client
+
+    # Queue responses for pipelined gets
+    ws.queue_response(EN)  # miss
+    ws.queue_response(b"VA 2 c123 f16\r\nOK\r\n")  # Value with cas_token
+    ws.queue_response(b"VA 2 c456 W\r\nOK\r\n")  # Value with win=True (lease)
+
+    results = cache_client.multi_get_cas(
+        keys=[
+            Key("miss"),
+            Key("found"),
+            Key("lease"),
+        ]
+    )
+
+    wire = ws.read_wire()
+    # Check the full wire: three mg commands, each with f v t l h c flags
+    lines = [line for line in wire.split(b"\r\n") if line]
+    assert len(lines) == 3
+    for line in lines:
+        assert line.startswith(b"mg ")
+        parts = set(line.split(b" ")[2:])
+        assert {b"f", b"v", b"t", b"l", b"h", b"c"} == parts
+
+    assert results == {
+        Key("miss"): (None, None),
+        # On a recache win the value is mimicked as a miss, but the
+        # cas token is still returned so the refill can detect races.
+        Key("found"): (b"OK", 123),
+        Key("lease"): (None, 456),
+    }
+
+
+def test_multi_get_cas_with_values(
+    memcache_socket: MemcacheSocket, cache_client: CacheClient
+) -> None:
+    """Test multi_get_cas with deserialized values and their cas tokens."""
+    serializer = MixedSerializer()
+    str_encoded = serializer.serialize(Key("k1"), "hello")
+    int_encoded = serializer.serialize(Key("k2"), 42)
+
+    memcache_socket.get_response.side_effect = [
+        Value(
+            size=len(str_encoded.data),
+            value=str_encoded.data,
+            flags=ResponseFlags(cas_token=1, client_flag=str_encoded.encoding_id),
+        ),
+        Value(
+            size=len(int_encoded.data),
+            value=int_encoded.data,
+            flags=ResponseFlags(cas_token=2, client_flag=int_encoded.encoding_id),
+        ),
+        Miss(),
+    ]
+
+    results = cache_client.multi_get_cas(keys=[Key("k1"), Key("k2"), Key("k3")])
+
+    calls = memcache_socket.send_meta_get.call_args_list
+    assert len(calls) == 3
+    for c in calls:
+        flags = c[0][1]
+        assert flags is not None
+        assert flags.return_cas_token is True
+    assert results == {
+        Key("k1"): ("hello", 1),
+        Key("k2"): (42, 2),
+        Key("k3"): (None, None),
+    }
+
+
+def test_multi_get_cas_with_touch_ttl_and_recache(
+    memcache_socket: MemcacheSocket, cache_client: CacheClient
+) -> None:
+    """Test multi_get_cas passes touch_ttl and recache_ttl through."""
+    memcache_socket.get_response.side_effect = [Miss(), Miss()]
+
+    results = cache_client.multi_get_cas(
+        keys=[Key("a"), Key("b")],
+        touch_ttl=300,
+        recache_policy=RecachePolicy(ttl=60),
+    )
+
+    calls = memcache_socket.send_meta_get.call_args_list
+    assert len(calls) == 2
+    for c in calls:
+        flags = c[0][1]
+        assert flags is not None
+        assert flags.cache_ttl == 300
+        assert flags.recache_ttl == 60
+        assert flags.return_cas_token is True
+    assert results == {Key("a"): (None, None), Key("b"): (None, None)}
+
+
 def test_meta_multiget_no_reply(
     memcache_socket: MemcacheSocket, cache_client: CacheClient
 ) -> None:
