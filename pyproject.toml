@@ -41,6 +41,11 @@ show_missing = true
 [tool.ruff]
 line-length = 88
 
+[tool.ruff.lint]
+# Ruff 0.16 expanded the default rule set from 59 to 413 rules. Pin the selection
+# to the pre-0.16 default so version bumps don't silently add new rules.
+select = ["E4", "E7", "E9", "F"]
+
 [tool.ruff.lint.per-file-ignores]
 "tests/*.py" = ["E731"]
 "src/meta_memcache/__init__.py" = ["F401"]
