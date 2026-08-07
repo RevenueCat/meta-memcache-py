@@ -416,6 +416,17 @@ Invalidation...
         Get multiple keys at once
         """
 
+    def multi_get_cas(
+        self,
+        keys: List[Union[Key, str]],
+        touch_ttl: Optional[int] = None,
+        recache_policy: Optional[RecachePolicy] = None,
+    ) -> Dict[Key, Tuple[Optional[Any], Optional[int]]]:
+        """
+        Same as multi_get(), but also return the CAS tokens so
+        they can be used during writes and detect races
+        """
+
     def get_cas(
         self,
         key: Union[Key, str],

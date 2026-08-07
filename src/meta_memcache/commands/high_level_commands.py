@@ -352,6 +352,27 @@ class HighLevelCommandsMixin:
         )
         return {k: v.value if v is not None else None for k, v in results.items()}
 
+    def multi_get_cas(
+        self: HighLevelCommandMixinWithMetaCommands,
+        keys: Iterable[Union[Key, str]],
+        touch_ttl: Optional[int] = None,
+        recache_policy: Optional[RecachePolicy] = None,
+    ) -> Dict[Key, Tuple[Optional[Any], Optional[int]]]:
+        """
+        Same as multi_get(), but also return the CAS tokens so
+        they can be used during writes and detect races
+        """
+        results = self._multi_get(
+            keys=keys,
+            touch_ttl=touch_ttl,
+            recache_policy=recache_policy,
+            return_cas_token=True,
+        )
+        return {
+            k: (v.value, v.flags.cas_token) if v is not None else (None, None)
+            for k, v in results.items()
+        }
+
     def _multi_get(
         self: HighLevelCommandMixinWithMetaCommands,
         keys: Iterable[Union[Key, str]],

@@ -120,6 +120,13 @@ class HighLevelCommandsProtocol(Protocol):
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Dict[Key, Optional[Any]]: ...  # pragma: no cover
 
+    def multi_get_cas(
+        self,
+        keys: Iterable[Union[Key, str]],
+        touch_ttl: Optional[int] = None,
+        recache_policy: Optional[RecachePolicy] = None,
+    ) -> Dict[Key, Tuple[Optional[Any], Optional[int]]]: ...  # pragma: no cover
+
     def _multi_get(
         self,
         keys: Iterable[Union[Key, str]],
