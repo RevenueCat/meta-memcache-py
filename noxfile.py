@@ -8,6 +8,7 @@ locations = "src", "tests", "noxfile.py", "benchmark.py"
 DEFAULT_VERSION = "3.14"
 DEFAULT_BENCHMARK_VERSIONS = ["3.14"]
 VERSIONS = ["3.14", "3.13", "3.12", "3.11", "3.10"]
+RUFF_VERSION = "0.16.1"
 
 # Default to uv backend:
 nox.options.default_venv_backend = "uv|virtualenv"
@@ -17,7 +18,7 @@ nox.options.default_venv_backend = "uv|virtualenv"
 def lint(session: Session) -> None:
     """Lint using ruff."""
     args = session.posargs or locations
-    session.install("ruff", ".")
+    session.install(f"ruff=={RUFF_VERSION}", ".")
     session.run("ruff", "check", *args)
 
 
@@ -25,14 +26,14 @@ def lint(session: Session) -> None:
 def format(session: Session) -> None:
     """Format check using ruff."""
     args = session.posargs or locations
-    session.run("uvx", "ruff", "format", "--diff", *args)
+    session.run("uvx", f"ruff@{RUFF_VERSION}", "format", "--diff", *args)
 
 
 @session(python=DEFAULT_VERSION)
 def fix_format(session: Session) -> None:
     """Fix format using ruff."""
     args = session.posargs or locations
-    session.run("uvx", "ruff", "format", *args)
+    session.run("uvx", f"ruff@{RUFF_VERSION}", "format", *args)
 
 
 @session(python=DEFAULT_VERSION)
