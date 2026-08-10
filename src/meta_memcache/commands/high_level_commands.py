@@ -25,6 +25,7 @@ from meta_memcache.protocol import (
     SetMode,
     Success,
     Value,
+    WriteResponse,
     MA_MODE_DEC,
 )
 
@@ -58,6 +59,18 @@ class HighLevelCommandMixinWithMetaCommands(
         recache_policy: Optional[RecachePolicy] = None,
         return_cas_token: bool = False,
     ) -> Optional[Value]: ...  # pragma: no cover
+
+    def _set(
+        self,
+        key: Union[Key, str],
+        value: Any,
+        ttl: int,
+        no_reply: bool = False,
+        cas_token: Optional[int] = None,
+        stale_policy: Optional[StalePolicy] = None,
+        set_mode: SetMode = SetMode.SET,
+        return_cas_token: bool = False,
+    ) -> WriteResponse: ...  # pragma: no cover
 
     def _process_get_result(
         self, key: Union[Key, str], result: ReadResponse
@@ -97,10 +110,65 @@ class HighLevelCommandsMixin:
         """
         Write a value using the specified `set_mode`
         """
+        result = self._set(
+            key=key,
+            value=value,
+            ttl=ttl,
+            no_reply=no_reply,
+            cas_token=cas_token,
+            stale_policy=stale_policy,
+            set_mode=set_mode,
+        )
+
+        return isinstance(result, Success)
+
+    def set_cas(
+        self: HighLevelCommandMixinWithMetaCommands,
+        key: Union[Key, str],
+        value: Any,
+        ttl: int,
+        cas_token: Optional[int] = None,
+        stale_policy: Optional[StalePolicy] = None,
+        set_mode: SetMode = SetMode.SET,
+    ) -> Optional[int]:
+        """
+        Same as set(), but also return the CAS token of the value
+        just written, so it can be used in following writes without
+        having to read the value back.
+
+        Returns None if the write was not successful.
+
+        Note `no_reply` is not supported, since the server needs to
+        reply for the CAS token to be returned.
+        """
+        result = self._set(
+            key=key,
+            value=value,
+            ttl=ttl,
+            cas_token=cas_token,
+            stale_policy=stale_policy,
+            set_mode=set_mode,
+            return_cas_token=True,
+        )
+
+        return result.flags.cas_token if isinstance(result, Success) else None
+
+    def _set(
+        self: HighLevelCommandMixinWithMetaCommands,
+        key: Union[Key, str],
+        value: Any,
+        ttl: int,
+        no_reply: bool = False,
+        cas_token: Optional[int] = None,
+        stale_policy: Optional[StalePolicy] = None,
+        set_mode: SetMode = SetMode.SET,
+        return_cas_token: bool = False,
+    ) -> WriteResponse:
         key = key if isinstance(key, Key) else Key(key)
         flags = RequestFlags(
             cache_ttl=ttl,
             no_reply=no_reply,
+            return_cas_token=return_cas_token,
             cas_token=cas_token,
             mark_stale=bool(
                 cas_token is not None
@@ -110,14 +178,12 @@ class HighLevelCommandsMixin:
             mode=set_mode.value if set_mode != SetMode.SET else None,
         )
 
-        result = self.meta_set(
+        return self.meta_set(
             key=key,
             value=value,
             ttl=ttl,
             flags=flags,
         )
-
-        return isinstance(result, Success)
 
     def refill(
         self: HighLevelCommandMixinWithMetaCommands,

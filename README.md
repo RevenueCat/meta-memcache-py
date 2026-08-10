@@ -305,6 +305,26 @@ Invalidation...
         Write a value using the specified `set_mode`
         """
 
+    def set_cas(
+        self,
+        key: Union[Key, str],
+        value: Any,
+        ttl: int,
+        cas_token: Optional[int] = None,
+        stale_policy: Optional[StalePolicy] = None,
+        set_mode: SetMode = SetMode.SET,  # Other are ADD, REPLACE, APPEND...
+    ) -> Optional[int]:
+        """
+        Same as set(), but also return the CAS token of the value
+        just written, so it can be used in following writes without
+        having to read the value back.
+
+        Returns None if the write was not successful.
+
+        Note `no_reply` is not supported, since the server needs to
+        reply for the CAS token to be returned.
+        """
+
     def refill(
         self: HighLevelCommandMixinWithMetaCommands,
         key: Union[Key, str],

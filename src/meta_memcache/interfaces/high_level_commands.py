@@ -12,7 +12,7 @@ from typing import (
 )
 
 from meta_memcache.configuration import LeasePolicy, RecachePolicy, StalePolicy
-from meta_memcache.protocol import Key, SetMode, Value
+from meta_memcache.protocol import Key, SetMode, Value, WriteResponse
 
 T = TypeVar("T")
 
@@ -28,6 +28,39 @@ class HighLevelCommandsProtocol(Protocol):
         stale_policy: Optional[StalePolicy] = None,
         set_mode: SetMode = SetMode.SET,
     ) -> bool: ...  # pragma: no cover
+
+    def set_cas(
+        self,
+        key: Union[Key, str],
+        value: Any,
+        ttl: int,
+        cas_token: Optional[int] = None,
+        stale_policy: Optional[StalePolicy] = None,
+        set_mode: SetMode = SetMode.SET,
+    ) -> Optional[int]:
+        """
+        Same as set(), but also return the CAS token of the value
+        just written, so it can be used in following writes without
+        having to read the value back.
+
+        Returns None if the write was not successful.
+
+        Note `no_reply` is not supported, since the server needs to
+        reply for the CAS token to be returned.
+        """
+        ...  # pragma: no cover
+
+    def _set(
+        self,
+        key: Union[Key, str],
+        value: Any,
+        ttl: int,
+        no_reply: bool = False,
+        cas_token: Optional[int] = None,
+        stale_policy: Optional[StalePolicy] = None,
+        set_mode: SetMode = SetMode.SET,
+        return_cas_token: bool = False,
+    ) -> WriteResponse: ...  # pragma: no cover
 
     def refill(
         self,
