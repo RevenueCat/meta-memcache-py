@@ -694,6 +694,22 @@ def test_recache_lost_returns_stale_value(
     assert cas_token == expected_cas_token
 
 
+def test_get_empty_value_is_not_a_lease_placeholder(
+    wire_memcache_socket: WireSocket, wire_cache_client: CacheClient
+) -> None:
+    ws = wire_memcache_socket
+    cache_client = wire_cache_client
+
+    # A zero-sized value is only a lease placeholder when the server also
+    # flags it as lost (Z). Without the flag it is just an empty value.
+    encoded_value = MixedSerializer().serialize(Key("foo"), b"")
+    assert len(encoded_value.data) == 0
+    ws.queue_response(b"VA 0 f" + str(encoded_value.encoding_id).encode() + b"\r\n\r\n")
+
+    assert cache_client.get(key=Key("foo")) == b""
+    ws.assert_wire(b"mg foo f v t l h\r\n")
+
+
 def test_get_or_lease_hit(
     wire_memcache_socket: WireSocket, wire_cache_client: CacheClient, time: MagicMock
 ) -> None:
