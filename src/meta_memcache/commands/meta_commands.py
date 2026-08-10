@@ -63,7 +63,6 @@ class MetaCommandsMixin:
         self: HasRouter,
         key: Key,
         value: Any,
-        ttl: int,
         flags: Optional[RequestFlags] = None,
         failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> WriteResponse:

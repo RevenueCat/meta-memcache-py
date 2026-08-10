@@ -166,7 +166,6 @@ def test_migration_mode_origin_only(
     origin_client.meta_set.assert_called_once_with(
         key=Key(key="foo", routing_key=None),
         value="bar",
-        ttl=10,
         flags=RequestFlags(cache_ttl=10),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
@@ -223,7 +222,6 @@ def test_migration_mode_destination_only(
     destination_client.meta_set.assert_called_once_with(
         key=Key(key="foo", routing_key=None),
         value="bar",
-        ttl=10,
         flags=RequestFlags(cache_ttl=10),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
@@ -282,14 +280,12 @@ def test_migration_mode_populate_writes(
     origin_client.meta_set.assert_called_once_with(
         key=Key(key="foo", routing_key=None),
         value="bar",
-        ttl=10,
         flags=RequestFlags(cache_ttl=10),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
     destination_client.meta_set.assert_called_once_with(
         key=Key(key="foo", routing_key=None),
         value="bar",
-        ttl=10,
         flags=RequestFlags(cache_ttl=10),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
@@ -435,14 +431,12 @@ def test_migration_mode_populate_writes_and_reads_1pct(
     origin_client.meta_set.assert_called_once_with(
         key=Key(key="foo", routing_key=None),
         value="bar",
-        ttl=10,
         flags=RequestFlags(cache_ttl=10),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
     destination_client.meta_set.assert_called_once_with(
         key=Key(key="foo", routing_key=None),
         value="bar",
-        ttl=10,
         flags=RequestFlags(cache_ttl=10),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
@@ -543,14 +537,12 @@ def test_migration_mode_populate_writes_and_reads_10pct(
     origin_client.meta_set.assert_called_once_with(
         key=Key(key="foo", routing_key=None),
         value="bar",
-        ttl=10,
         flags=RequestFlags(cache_ttl=10),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
     destination_client.meta_set.assert_called_once_with(
         key=Key(key="foo", routing_key=None),
         value="bar",
-        ttl=10,
         flags=RequestFlags(cache_ttl=10),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
@@ -616,14 +608,12 @@ def test_migration_mode_use_destination_update_origin(
     origin_client.meta_set.assert_called_once_with(
         key=Key(key="foo", routing_key=None),
         value="bar",
-        ttl=10,
         flags=RequestFlags(cache_ttl=10),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )
     destination_client.meta_set.assert_called_once_with(
         key=Key(key="foo", routing_key=None),
         value="bar",
-        ttl=10,
         flags=RequestFlags(cache_ttl=10),
         failure_handling=DEFAULT_FAILURE_HANDLING,
     )

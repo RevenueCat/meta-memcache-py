@@ -362,7 +362,6 @@ def test_refill(
     meta_command_mock.meta_set.assert_called_once_with(
         key=Key(key="foo"),
         value="bar",
-        ttl=300,
         flags=RequestFlags(cache_ttl=300, mode=SetMode.ADD.value),
         failure_handling=FailureHandling(track_write_failures=False),
     )
@@ -1090,7 +1089,6 @@ def test_on_write_failure_disabled(
         cache_client.meta_set(
             key=Key("foo"),
             value=1,
-            ttl=10,
             failure_handling=FailureHandling(track_write_failures=False),
         )
         raise AssertionError("Should not be reached")
@@ -1483,7 +1481,7 @@ def test_write_server_failure_is_reported_as_a_not_stored_due_to_error(
     )
 
     for command in (
-        lambda: cache_client.meta_set(key=Key("foo"), value=1, ttl=300),
+        lambda: cache_client.meta_set(key=Key("foo"), value=1),
         lambda: cache_client.meta_delete(key=Key("foo")),
         lambda: cache_client.meta_arithmetic(key=Key("foo")),
     ):
@@ -1499,7 +1497,7 @@ def test_a_real_not_stored_is_not_flagged_as_an_error(
     """`ms` with ADD mode on an existing key is a legit NS, not a failure."""
     memcache_socket.meta_set.return_value = NotStored()
     result = cache_client.meta_set(
-        key=Key("foo"), value=1, ttl=300, flags=RequestFlags(mode=SetMode.ADD.value)
+        key=Key("foo"), value=1, flags=RequestFlags(mode=SetMode.ADD.value)
     )
     assert isinstance(result, NotStored)
     assert not is_error_response(result)
