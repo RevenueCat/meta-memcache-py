@@ -7,6 +7,7 @@ from meta_memcache.interfaces.router import DEFAULT_FAILURE_HANDLING, FailureHan
 import pytest
 
 from meta_memcache import CacheClient, Key, Value
+from meta_memcache.configuration import LeasePolicy
 from meta_memcache.errors import MemcacheError
 from meta_memcache.extras.probabilistic_hot_cache import (
     CachedValue,
@@ -58,6 +59,45 @@ def client() -> Mock:
 
 
 @pytest.fixture
+def lease_client() -> Mock:
+    """A client that answers the vivify-on-miss (lease) variants of a get.
+
+    With the N flag the server always replies with a Value, never a Miss:
+    either the data, or a zero-sized placeholder flagged as won (W) or
+    lost (Z).
+    """
+
+    def meta_get(
+        key: Key,
+        flags: Optional[RequestFlags] = None,
+        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
+    ) -> ReadResponse:
+        if key.key.endswith("win"):
+            # We got the lease: empty placeholder, we must repopulate.
+            return Value(size=0, value=None, flags=ResponseFlags(win=True))
+        elif key.key.endswith("lost"):
+            # Someone else holds the lease. The placeholder looks hot
+            # (fetched, recently accessed) but must never be promoted.
+            return Value(
+                size=0,
+                value=None,
+                flags=ResponseFlags(win=False, fetched=True, last_access=1),
+            )
+        elif key.key.endswith("hot"):
+            return Value(
+                size=1, value=1, flags=ResponseFlags(fetched=True, last_access=1)
+            )
+        else:
+            return Value(
+                size=1, value=1, flags=ResponseFlags(fetched=True, last_access=9999)
+            )
+
+    mock = Mock(spec=CacheClient)
+    mock.meta_get.side_effect = meta_get
+    return mock
+
+
+@pytest.fixture
 def time(monkeypatch) -> Mock:
     time_mock = Mock()
     monkeypatch.setattr("meta_memcache.extras.probabilistic_hot_cache.time", time_mock)
@@ -80,6 +120,19 @@ DEFAULT_FLAGS = {
         return_value=True,
         return_fetched=True,
         return_client_flag=True,
+    ),
+    "failure_handling": DEFAULT_FAILURE_HANDLING,
+}
+
+LEASE_FLAGS = {
+    "flags": RequestFlags(
+        return_ttl=True,
+        return_last_access=True,
+        return_value=True,
+        return_fetched=True,
+        return_client_flag=True,
+        return_cas_token=True,
+        vivify_on_miss_ttl=30,
     ),
     "failure_handling": DEFAULT_FAILURE_HANDLING,
 }
@@ -838,3 +891,208 @@ def test_cache_pollution_multi_get(
         "a": 1,
         "b": 2,
     }  # Not {"a": 1, "b": 2, "c": 3}
+
+
+def test_get_or_lease_uses_hot_cache(
+    time: Mock,
+    lease_client: Mock,
+) -> None:
+    store = {}
+    hot_cache = ProbabilisticHotCache(
+        client=lease_client,
+        store=store,
+        cache_ttl=60,
+        max_last_access_age_seconds=10,
+        probability_factor=1,
+        max_stale_while_revalidate_seconds=10,
+        allowed_prefixes=None,
+        immutable_types=[],
+    )
+    lease_policy = LeasePolicy()
+
+    time.time.return_value = 0
+
+    # A cold key is fetched from the server and not promoted
+    assert hot_cache.get_or_lease(key="foo_cold", lease_policy=lease_policy) == 1
+    assert "foo_cold" not in store
+    lease_client.meta_get.assert_called_once_with(
+        key=Key(key="foo_cold"), **LEASE_FLAGS
+    )
+    lease_client.meta_get.reset_mock()
+
+    # A hot key is fetched from the server and promoted to the hot cache
+    assert hot_cache.get_or_lease(key="foo_hot", lease_policy=lease_policy) == 1
+    assert store.get("foo_hot") == CachedValue(value=1, expiration=60, extended=False)
+    lease_client.meta_get.assert_called_once_with(key=Key(key="foo_hot"), **LEASE_FLAGS)
+    lease_client.meta_get.reset_mock()
+
+    time.time.return_value = 10
+
+    # The cold key still goes to the server every time
+    assert hot_cache.get_or_lease(key="foo_cold", lease_policy=lease_policy) == 1
+    lease_client.meta_get.assert_called_once_with(
+        key=Key(key="foo_cold"), **LEASE_FLAGS
+    )
+    lease_client.meta_get.reset_mock()
+
+    # The hot key is served locally: no lease needed, no call to the server
+    assert hot_cache.get_or_lease(key="foo_hot", lease_policy=lease_policy) == 1
+    lease_client.meta_get.assert_not_called()
+
+    # Once the local copy expires, it is refreshed through the lease path
+    time.time.return_value = 60
+
+    assert hot_cache.get_or_lease(key="foo_hot", lease_policy=lease_policy) == 1
+    assert store.get("foo_hot") == CachedValue(value=1, expiration=120, extended=False)
+    lease_client.meta_get.assert_called_once_with(key=Key(key="foo_hot"), **LEASE_FLAGS)
+
+
+def test_get_or_lease_does_not_promote_lease_placeholders(
+    time: Mock,
+    lease_client: Mock,
+) -> None:
+    store = {}
+    hot_cache = ProbabilisticHotCache(
+        client=lease_client,
+        store=store,
+        cache_ttl=60,
+        max_last_access_age_seconds=10,
+        probability_factor=1,
+        max_stale_while_revalidate_seconds=10,
+        allowed_prefixes=None,
+        immutable_types=[],
+    )
+
+    time.time.return_value = 0
+
+    # We won the lease: behaves as a miss, and the empty placeholder we
+    # planted on the server must not be cached locally.
+    assert hot_cache.get_or_lease(key="foo_win", lease_policy=LeasePolicy()) is None
+    assert "foo_win" not in store
+    lease_client.meta_get.reset_mock()
+
+    # We lost the lease and ran out of retries: same, even though the
+    # placeholder looks hot to the promotion heuristic.
+    wait = Mock()
+    assert (
+        hot_cache.get_or_lease(
+            key="foo_lost",
+            lease_policy=LeasePolicy(miss_retries=2),
+            lease_wait_fn=wait,
+        )
+        is None
+    )
+    assert "foo_lost" not in store
+    assert lease_client.meta_get.call_count == 2
+    wait.assert_called_once_with(1.0)
+
+
+def test_get_or_lease_stale_while_revalidate_elects_one_refresher(
+    time: Mock,
+    lease_client: Mock,
+) -> None:
+    store = {}
+    hot_cache = ProbabilisticHotCache(
+        client=lease_client,
+        store=store,
+        cache_ttl=60,
+        max_last_access_age_seconds=10,
+        probability_factor=1,
+        max_stale_while_revalidate_seconds=10,
+        allowed_prefixes=None,
+        immutable_types=[],
+    )
+    lease_policy = LeasePolicy()
+
+    time.time.return_value = 0
+    assert hot_cache.get_or_lease(key="foo_hot", lease_policy=lease_policy) == 1
+    lease_client.meta_get.reset_mock()
+
+    # The local copy is expired but still within the stale window: the first
+    # caller is elected to refresh (and takes the lease), the second serves
+    # the stale value without hitting the server.
+    time.time.return_value = 65
+
+    assert hot_cache.get_or_lease(key="foo_hot", lease_policy=lease_policy) == 1
+    lease_client.meta_get.assert_called_once_with(key=Key(key="foo_hot"), **LEASE_FLAGS)
+    lease_client.meta_get.reset_mock()
+
+    assert hot_cache.get_or_lease(key="foo_hot", lease_policy=lease_policy) == 1
+    lease_client.meta_get.assert_not_called()
+
+
+def test_get_or_lease_prefixes(
+    time: Mock,
+    lease_client: Mock,
+) -> None:
+    store = {}
+    metrics_collector = PrometheusMetricsCollector(
+        namespace="test", registry=CollectorRegistry()
+    )
+    hot_cache = ProbabilisticHotCache(
+        client=lease_client,
+        store=store,
+        cache_ttl=60,
+        max_last_access_age_seconds=10,
+        probability_factor=1,
+        max_stale_while_revalidate_seconds=10,
+        allowed_prefixes=["allowed:"],
+        metrics_collector=metrics_collector,
+        immutable_types=[],
+    )
+    lease_policy = LeasePolicy()
+
+    time.time.return_value = 0
+
+    assert hot_cache.get_or_lease(key="allowed:foo_hot", lease_policy=lease_policy) == 1
+    assert "allowed:foo_hot" in store
+
+    assert (
+        hot_cache.get_or_lease(key="allowed:foo_cold", lease_policy=lease_policy) == 1
+    )
+    assert "allowed:foo_cold" not in store
+
+    assert hot_cache.get_or_lease(key="other:foo_hot", lease_policy=lease_policy) == 1
+    assert "other:foo_hot" not in store
+
+    assert metrics_collector.get_counters() == {
+        "test_hot_cache_hits": 0,
+        "test_hot_cache_misses": 2,
+        "test_hot_cache_skips": 1,
+        "test_hot_cache_item_count": 1,
+        "test_hot_cache_hot_candidates": 1,
+        "test_hot_cache_hot_skips": 1,
+        "test_hot_cache_candidate_misses": 0,
+    }
+
+
+def test_get_or_lease_cas_bypasses_hot_cache(
+    time: Mock,
+    lease_client: Mock,
+) -> None:
+    store = {}
+    hot_cache = ProbabilisticHotCache(
+        client=lease_client,
+        store=store,
+        cache_ttl=60,
+        max_last_access_age_seconds=10,
+        probability_factor=1,
+        max_stale_while_revalidate_seconds=10,
+        allowed_prefixes=None,
+        immutable_types=[],
+    )
+    lease_policy = LeasePolicy()
+
+    time.time.return_value = 0
+
+    assert hot_cache.get_or_lease(key="foo_hot", lease_policy=lease_policy) == 1
+    assert "foo_hot" in store
+    lease_client.meta_get.reset_mock()
+
+    # A CAS token is only meaningful coming from the server, so the local
+    # copy is not used, same as get_cas().
+    assert hot_cache.get_or_lease_cas(key="foo_hot", lease_policy=lease_policy) == (
+        1,
+        None,
+    )
+    lease_client.meta_get.assert_called_once_with(key=Key(key="foo_hot"), **LEASE_FLAGS)
