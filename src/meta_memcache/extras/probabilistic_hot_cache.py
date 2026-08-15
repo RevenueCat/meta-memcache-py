@@ -167,9 +167,12 @@ class ProbabilisticHotCache(ClientWrapper):
         if not is_hot:
             return
 
-        is_immutable = type(value.value) in self._immutable_types
+        self._store_entry(key, value.value)
+
+    def _store_entry(self, key: Key, value: Any) -> None:
+        is_immutable = type(value) in self._immutable_types
         self._store[key.key] = CachedValue(
-            value=value.value,
+            value=value,
             expiration=int(time.time()) + self._cache_ttl,
             extended=False,
             is_immutable=is_immutable,
