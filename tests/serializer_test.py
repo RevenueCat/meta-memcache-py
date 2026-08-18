@@ -3,7 +3,6 @@ import pytest
 from meta_memcache.serializer import (
     MixedSerializer,
     ZstdSerializer,
-    DictionaryMapping,
     EncodedValue,
 )
 from meta_memcache.compression import ThreadLocalZstdManager
@@ -22,15 +21,6 @@ def default_dictionary() -> zstd.ZstdCompressionDict:
 @pytest.fixture
 def custom_dictionary() -> zstd.ZstdCompressionDict:
     return zstd.train_dictionary(100 * 1024, [b"custom", b"test", b"dictionary"] * 100)
-
-
-@pytest.fixture
-def dictionary_mapping(custom_dictionary):
-    return [
-        DictionaryMapping(
-            dictionary=custom_dictionary.as_bytes(), active_domains=["example"]
-        )
-    ]
 
 
 @pytest.fixture
