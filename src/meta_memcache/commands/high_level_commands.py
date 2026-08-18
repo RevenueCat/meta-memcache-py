@@ -18,6 +18,7 @@ from meta_memcache.interfaces.high_level_commands import HighLevelCommandsProtoc
 from meta_memcache.interfaces.meta_commands import MetaCommandsProtocol
 from meta_memcache.interfaces.router import FailureHandling
 from meta_memcache.protocol import (
+    MA_MODE_DEC,
     Key,
     Miss,
     ReadResponse,
@@ -26,7 +27,6 @@ from meta_memcache.protocol import (
     Success,
     Value,
     WriteResponse,
-    MA_MODE_DEC,
 )
 
 T = TypeVar("T")
@@ -71,6 +71,15 @@ class HighLevelCommandMixinWithMetaCommands(
         set_mode: SetMode = SetMode.SET,
         return_cas_token: bool = False,
     ) -> WriteResponse: ...  # pragma: no cover
+
+    def _get_or_lease(
+        self,
+        key: Union[Key, str],
+        lease_policy: LeasePolicy,
+        touch_ttl: Optional[int] = None,
+        recache_policy: Optional[RecachePolicy] = None,
+        lease_wait_fn: Optional[Callable[[float], None]] = None,
+    ) -> Optional[Value]: ...  # pragma: no cover
 
     def _process_get_result(
         self, key: Union[Key, str], result: ReadResponse
@@ -315,14 +324,14 @@ class HighLevelCommandsMixin:
         ``lease_wait_fn`` is invoked with the number of seconds to wait
         between lease retries. Defaults to ``time.sleep``.
         """
-        value, _ = self.get_or_lease_cas(
+        result = self._get_or_lease(
             key=key,
             lease_policy=lease_policy,
             touch_ttl=touch_ttl,
             recache_policy=recache_policy,
             lease_wait_fn=lease_wait_fn,
         )
-        return value
+        return result.value if result is not None else None
 
     def get_or_lease_cas(
         self: HighLevelCommandMixinWithMetaCommands,
@@ -335,6 +344,35 @@ class HighLevelCommandsMixin:
         """
         Same as get_or_lease(), but also return the CAS token so
         it can be used during writes and detect races
+        """
+        result = self._get_or_lease(
+            key=key,
+            lease_policy=lease_policy,
+            touch_ttl=touch_ttl,
+            recache_policy=recache_policy,
+            lease_wait_fn=lease_wait_fn,
+        )
+        if result is None:
+            return None, None
+        return result.value, result.flags.cas_token
+
+    def _get_or_lease(
+        self: HighLevelCommandMixinWithMetaCommands,
+        key: Union[Key, str],
+        lease_policy: LeasePolicy,
+        touch_ttl: Optional[int] = None,
+        recache_policy: Optional[RecachePolicy] = None,
+        lease_wait_fn: Optional[Callable[[float], None]] = None,
+    ) -> Optional[Value]:
+        """
+        Internal version of get_or_lease() that returns the raw Value, so
+        wrappers can inspect the response flags, i.e. to decide whether the
+        value is worth promoting into a local cache, or read the CAS token.
+
+        `Value.value` is None when the caller must behave as if this was a
+        miss: either it won the lease, or it lost and ran out of retries.
+        The Value itself is still returned in both cases, since the lease
+        winner needs its CAS token to write the value back.
         """
         if lease_policy.miss_retries <= 0:
             raise ValueError(
@@ -361,29 +399,24 @@ class HighLevelCommandsMixin:
                 return_cas_token=True,
             )
 
-            if isinstance(result, Value):
-                # It is a hit.
-                if result.flags.win:
-                    # Win flag present, meaning we got the lease to
-                    # recache/cache the item. We need to mimic a miss.
-                    return None, result.flags.cas_token
-                if result.size == 0 and result.flags.win is False:
-                    # The value is empty, this is a miss lease,
-                    # and we lost, so we must keep retrying and
-                    # wait for the.flags.winner to populate the value.
-                    if i < lease_policy.miss_retries:
-                        continue
-                    else:
-                        # We run out of retries, behave as a miss
-                        return None, result.flags.cas_token
-                else:
-                    # There is data, either the is no lease or
-                    # we lost and should use the stale value.
-                    return result.value, result.flags.cas_token
-            else:
+            if not isinstance(result, Value):
                 # With MISS_LEASE_TTL we should always get a value
                 # because on miss a lease empty value is generated
                 raise MemcacheError(f"Unexpected response: {result} for key {key}")
+
+            if (
+                result.size == 0
+                and result.flags.win is False
+                and i < lease_policy.miss_retries
+            ):
+                # This is a miss lease and we lost, so we must keep retrying
+                # and wait for the winner to populate the value.
+                continue
+
+            # Either there is data, or we got a placeholder: we won the lease,
+            # or we lost and ran out of retries. _process_get_result() already
+            # cleared the value of the placeholders, so both behave as a miss.
+            return result
 
     def get(
         self: HighLevelCommandMixinWithMetaCommands,
@@ -509,6 +542,11 @@ class HighLevelCommandsMixin:
                 # Win flag present, meaning we got the lease to
                 # recache the item. We need to mimic a miss, so
                 # we set the value to None.
+                result.value = None
+            elif result.size == 0 and result.flags.win is False:
+                # An empty value with a lose flag is the placeholder the
+                # server plants on a lease miss, while the winner
+                # repopulates it. There is no value to return either.
                 result.value = None
             return result
         elif isinstance(result, Miss):

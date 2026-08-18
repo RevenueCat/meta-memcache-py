@@ -1,13 +1,13 @@
+import pickle
 import random
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
-import pickle
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
 from marisa_trie import Trie  # type: ignore
 
-from meta_memcache.configuration import RecachePolicy
+from meta_memcache.configuration import LeasePolicy, RecachePolicy
 from meta_memcache.extras.client_wrapper import ClientWrapper
 from meta_memcache.interfaces.cache_api import CacheApi
 from meta_memcache.metrics.base import BaseMetricsCollector, MetricDefinition
@@ -192,6 +192,39 @@ class ProbabilisticHotCache(ClientWrapper):
         touch_ttl: Optional[int] = None,
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Optional[Any]:
+        return self._hot_cache_get(
+            key=key,
+            touch_ttl=touch_ttl,
+            recache_policy=recache_policy,
+        )
+
+    def get_or_lease(
+        self,
+        key: Union[Key, str],
+        lease_policy: LeasePolicy,
+        touch_ttl: Optional[int] = None,
+        recache_policy: Optional[RecachePolicy] = None,
+        lease_wait_fn: Optional[Callable[[float], None]] = None,
+    ) -> Optional[Any]:
+        # A hot cache hit needs no lease: the value is already local and there
+        # is nothing to repopulate. Only the requests that fall through to the
+        # server take part in the lease.
+        return self._hot_cache_get(
+            key=key,
+            touch_ttl=touch_ttl,
+            recache_policy=recache_policy,
+            lease_policy=lease_policy,
+            lease_wait_fn=lease_wait_fn,
+        )
+
+    def _hot_cache_get(
+        self,
+        key: Union[Key, str],
+        touch_ttl: Optional[int] = None,
+        recache_policy: Optional[RecachePolicy] = None,
+        lease_policy: Optional[LeasePolicy] = None,
+        lease_wait_fn: Optional[Callable[[float], None]] = None,
+    ) -> Optional[Any]:
         key = key if isinstance(key, Key) else Key(key)
         if self._allowed_prefixes and not self._allowed_prefixes.prefixes(key.key):
             is_hot = False
@@ -203,12 +236,26 @@ class ProbabilisticHotCache(ClientWrapper):
             if found:
                 return value
 
-        result = self._get(
-            key=key,
-            touch_ttl=touch_ttl,
-            recache_policy=recache_policy,
-            return_cas_token=False,
-        )
+        if lease_policy is not None:
+            result = self._get_or_lease(
+                key=key,
+                lease_policy=lease_policy,
+                touch_ttl=touch_ttl,
+                recache_policy=recache_policy,
+                lease_wait_fn=lease_wait_fn,
+            )
+            if result and result.value is None:
+                # Lease placeholder: we hold the lease, or we lost and ran out
+                # of retries. Behaves as a miss, and nothing worth promoting.
+                result = None
+        else:
+            result = self._get(
+                key=key,
+                touch_ttl=touch_ttl,
+                recache_policy=recache_policy,
+                return_cas_token=False,
+            )
+
         if result is None:
             allowed and self._metrics and self._metrics.metric_inc("candidate_misses")
             is_hot and self._clear_hot_cache_if_necessary(key)
