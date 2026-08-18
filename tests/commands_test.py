@@ -266,6 +266,68 @@ def test_set_cmd(
     ws.assert_wire(b"ms foo 3 I T300 F16 C666\r\n123\r\n")
 
 
+def test_set_cas_cmd(
+    wire_memcache_socket: WireSocket,
+    wire_cache_client: CacheClient,
+) -> None:
+    ws = wire_memcache_socket
+    cache_client = wire_cache_client
+
+    # str key -> c flag requesting the CAS token back
+    cache_client.set_cas(key="foo", value="bar", ttl=300)
+    ws.assert_wire(b"ms foo 3 c T300 F0\r\nbar\r\n")
+
+    # SetMode.ADD -> ME
+    cache_client.set_cas(key=Key("foo"), value=123, ttl=300, set_mode=SetMode.ADD)
+    ws.assert_wire(b"ms foo 3 c T300 F2 ME\r\n123\r\n")
+
+    # cas_token + stale_policy(mark_stale_on_cas_mismatch=True) -> I flag
+    cache_client.set_cas(
+        key=Key("foo"),
+        value=b"123",
+        ttl=300,
+        cas_token=666,
+        stale_policy=StalePolicy(mark_stale_on_cas_mismatch=True),
+    )
+    ws.assert_wire(b"ms foo 3 c I T300 F16 C666\r\n123\r\n")
+
+
+def test_set_cas_returns_token(
+    wire_memcache_socket: WireSocket,
+    wire_cache_client: CacheClient,
+) -> None:
+    ws = wire_memcache_socket
+    cache_client = wire_cache_client
+
+    # Server returns the CAS token of the value just written
+    ws.queue_response(b"HD c123\r\n")
+    assert cache_client.set_cas(key="foo", value="bar", ttl=300) == 123
+
+    # Success without a CAS token (server didn't return it)
+    ws.queue_response(b"HD\r\n")
+    assert cache_client.set_cas(key="foo", value="bar", ttl=300) is None
+
+    # Failed write (NS: not stored, i.e. CAS mismatch or ADD on existing key)
+    ws.queue_response(b"NS\r\n")
+    assert cache_client.set_cas(key="foo", value="bar", ttl=300, cas_token=666) is None
+
+
+def test_set_cas_success_fail(
+    memcache_socket: MemcacheSocket,
+    cache_client: CacheClient,
+) -> None:
+    memcache_socket.meta_set.return_value = Success(
+        flags=ResponseFlags(cas_token=123),
+    )
+    assert cache_client.set_cas(key=Key("foo"), value="bar", ttl=300) == 123
+
+    memcache_socket.meta_set.return_value = Success(flags=ResponseFlags())
+    assert cache_client.set_cas(key=Key("foo"), value="bar", ttl=300) is None
+
+    memcache_socket.meta_set.return_value = NotStored()
+    assert cache_client.set_cas(key=Key("foo"), value="bar", ttl=300) is None
+
+
 def test_set_cmd_1_6_6(
     wire_memcache_socket_1_6_6: WireSocket,
     wire_cache_client_1_6_6: CacheClient,
