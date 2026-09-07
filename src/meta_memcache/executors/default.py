@@ -1,5 +1,5 @@
 import logging
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Literal, Optional, Tuple, Union
 
 from meta_memcache_socket import RequestFlags
 
@@ -22,6 +22,14 @@ from meta_memcache.protocol import (
 )
 
 _log: logging.Logger = logging.getLogger(__name__)
+
+# Commands that write (or attempt to write) a value. These are pipelined one by
+# one, unlike gets, which have dedicated multi-get support in the protocol.
+WriteMetaCommand = Literal[
+    MetaCommand.META_SET,
+    MetaCommand.META_DELETE,
+    MetaCommand.META_ARITHMETIC,
+]
 
 
 class DefaultExecutor:
@@ -202,7 +210,7 @@ class DefaultExecutor:
                 raise
             return {key: Miss() for key in keys}
 
-    def exec_multi_on_pool(  # noqa: C901
+    def exec_multi_on_pool(
         self,
         pool: ConnectionPool,
         command: MetaCommand,
@@ -219,7 +227,24 @@ class DefaultExecutor:
                 track_write_failures,
                 raise_on_server_error,
             )
+        return self._exec_multi_write_on_pool(
+            pool,
+            command,
+            key_values,
+            flags,
+            track_write_failures,
+            raise_on_server_error,
+        )
 
+    def _exec_multi_write_on_pool(
+        self,
+        pool: ConnectionPool,
+        command: WriteMetaCommand,
+        key_values: List[Tuple[Key, MaybeValue]],
+        flags: Optional[RequestFlags],
+        track_write_failures: bool,
+        raise_on_server_error: Optional[bool] = None,
+    ) -> Dict[Key, MemcacheResponse]:
         results: Dict[Key, MemcacheResponse] = {}
         try:
             conn = pool.pop_connection()
@@ -257,7 +282,7 @@ class DefaultExecutor:
             )
             if raise_on_server_error:
                 raise
-            failure_result = Miss() if command == MetaCommand.META_GET else NotStored()
+            failure_result = NotStored()
             for key, _ in key_values:
                 if key not in results:
                     results[key] = failure_result
