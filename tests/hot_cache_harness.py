@@ -15,6 +15,7 @@ from unittest.mock import Mock
 from meta_memcache import CacheClient, Key, Value
 from meta_memcache.extras.probabilistic_hot_cache import (
     CachedValue,
+    HotCacheLookup,
     ProbabilisticHotCache,
 )
 from meta_memcache.extras.probabilistic_hot_cache_sqlite import (
@@ -61,6 +62,18 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "probability_factor": 1,
     "max_stale_while_revalidate_seconds": MAX_STALE_WHILE_REVALIDATE_SECONDS,
 }
+
+
+# The two shapes a hot cache lookup comes back in when it holds something.
+# When it holds nothing at all it returns None.
+def hot(value: Any) -> HotCacheLookup:
+    """Served from the hot cache, no revalidation needed."""
+    return HotCacheLookup(value=value, must_revalidate=False)
+
+
+def revalidating(value: Any) -> HotCacheLookup:
+    """Elected to refresh it, holding `value` to fall back on if that fails."""
+    return HotCacheLookup(value=value, must_revalidate=True)
 
 
 def make_client() -> Mock:
