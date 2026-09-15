@@ -5,9 +5,12 @@ import threading
 import time
 import weakref
 from dataclasses import dataclass
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional
 
-from meta_memcache.extras.probabilistic_hot_cache import ProbabilisticHotCache
+from meta_memcache.extras.probabilistic_hot_cache import (
+    HotCacheLookup,
+    ProbabilisticHotCache,
+)
 from meta_memcache.interfaces.cache_api import CacheApi
 from meta_memcache.metrics.base import BaseMetricsCollector, MetricDefinition
 from meta_memcache.protocol import Key
@@ -236,6 +239,10 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
     waiting on the other workers.
 
     All values are pickled, since they must be shared across processes.
+
+    With extend_on_error the hot values survive a server outage, shared
+    across every worker: the first one to hit an error stores the value
+    back, and the rest are served it without even seeing the failure.
     """
 
     _METRICS = ProbabilisticHotCache._METRICS + (
@@ -259,6 +266,7 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
         metrics_collector: Optional[BaseMetricsCollector] = None,
         purge_interval_seconds: int = 60,
         revalidation_retry_seconds: int = 1,
+        extend_on_error: bool = False,
     ) -> None:
         super().__init__(
             client=client,
@@ -270,6 +278,7 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
             allowed_prefixes=allowed_prefixes,
             metrics_collector=metrics_collector,
             revalidation_retry_seconds=revalidation_retry_seconds,
+            extend_on_error=extend_on_error,
         )
         self._db = db
         self._purge_interval_seconds = purge_interval_seconds
@@ -286,60 +295,47 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
             self._local.next_purge_at = time.time() + self._purge_interval_seconds
         return conn
 
-    def _lookup_hot_cache(
-        self,
-        key: Key,
-    ) -> Tuple[bool, bool, Optional[Any]]:
-        is_found = False
-        is_hot = False
-        value: Optional[Any] = None
+    def _lookup_hot_cache(self, key: Key) -> Optional[HotCacheLookup]:
         try:
             conn = self._get_conn()
             row = conn.execute(_GET, (key.key,)).fetchone()
-            if row is not None:
-                blob, expiration, revalidate_at = row
-                now = int(time.time())
-                is_hot = True
-                if now < expiration:
-                    is_found = True
-                elif now < expiration + self._max_stale_while_revalidate_seconds:
-                    # Expired, but within the grace window: use
-                    # stale-while-revalidate to avoid thundering herds. Only
-                    # one worker wins the atomic update pushing the retry
-                    # clock forward, and gets to refresh the cache by
-                    # mimicking a cache miss. The rest serve the stale value.
-                    # If the winner dies without refreshing, another one is
-                    # elected once the retry clock arrives, until the grace
-                    # window runs out.
-                    won = now >= revalidate_at and (
-                        conn.execute(
-                            _WIN_REVALIDATION,
-                            (
-                                now + self._revalidation_retry_seconds,
-                                key.key,
-                                revalidate_at,
-                            ),
-                        ).rowcount
-                        > 0
-                    )
-                    is_found = not won
-                else:
-                    # Past the grace window: nobody managed to revalidate it,
-                    # so the value is too stale to serve. Drop it and treat
-                    # the key as cold, it has to be detected as hot again.
-                    self._clear_hot_cache_if_necessary(key)
-                    is_hot = False
-                if is_found:
-                    value = pickle.loads(blob)
+            if row is None:
+                return self._miss()
+
+            blob, expiration, revalidate_at = row
+            now = int(time.time())
+            if now >= expiration + self._max_stale_while_revalidate_seconds:
+                # Past the grace window: nobody managed to revalidate it, so
+                # the value is too stale to serve. Drop it and treat the key
+                # as cold, it has to be detected as hot again.
+                self._clear_hot_cache_if_necessary(key)
+                return self._miss()
+
+            must_revalidate = False
+            if now >= expiration and now >= revalidate_at:
+                # Stale, and nobody is refreshing it: use
+                # stale-while-revalidate to avoid thundering herds. Only one
+                # worker wins the atomic update pushing the retry clock
+                # forward and gets to refresh the cache, while the rest serve
+                # the stale value. If the winner dies without refreshing,
+                # another one is elected once the retry clock arrives, until
+                # the grace window runs out.
+                must_revalidate = (
+                    conn.execute(
+                        _WIN_REVALIDATION,
+                        (
+                            now + self._revalidation_retry_seconds,
+                            key.key,
+                            revalidate_at,
+                        ),
+                    ).rowcount
+                    > 0
+                )
+            return self._hit(pickle.loads(blob), must_revalidate)
         except (sqlite3.Error, pickle.PickleError):
             # Best effort: a failing hot cache behaves as a miss.
-            is_found = False
-            is_hot = False
-            value = None
             self._metrics and self._metrics.metric_inc("errors")
-
-        self._metrics and self._metrics.metric_inc("hits" if is_found else "misses")
-        return is_found, is_hot, value
+            return self._miss()
 
     def _store_entry(self, key: Key, value: Any) -> None:
         blob = pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)

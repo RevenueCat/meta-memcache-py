@@ -7,7 +7,7 @@ probabilistic_hot_cache_test.py and probabilistic_hot_cache_sqlite_test.py.
 """
 
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping
 from unittest.mock import Mock
 
 import pytest
@@ -17,8 +17,11 @@ from meta_memcache import Key
 from meta_memcache.configuration import LeasePolicy
 from meta_memcache.errors import MemcacheError
 from meta_memcache.metrics.prometheus import PrometheusMetricsCollector
-from meta_memcache.protocol import Miss, ResponseFlags, Value
+from meta_memcache.interfaces.router import DEFAULT_FAILURE_HANDLING
+from meta_memcache.protocol import MISS_DUE_TO_ERROR, Miss, ResponseFlags, Value
 from tests.hot_cache_harness import (
+    hot,
+    revalidating,
     DEFAULT_FLAGS,
     HARD_DEADLINE,
     LEASE_FLAGS,
@@ -161,6 +164,7 @@ def test_only_allowed_prefixes_are_cached(
         hot_candidates=2,
         hot_skips=1,
         candidate_misses=1,
+        error_extensions=0,
     )
 
 
@@ -203,6 +207,7 @@ def test_multi_get(
         hot_candidates=1,
         hot_skips=2,
         candidate_misses=2,
+        error_extensions=0,
     )
 
 
@@ -239,10 +244,10 @@ def test_a_single_reader_is_elected_to_revalidate(
 
     time.time.return_value = 61  # Stale, within the grace window
     # The first reader is elected: it sees a miss, so it refreshes
-    assert cache._lookup_hot_cache(Key("foo_hot")) == (False, True, None)
+    assert cache._lookup_hot_cache(Key("foo_hot")) == revalidating(1)
     # Everyone else is served the stale value while it does
-    assert cache._lookup_hot_cache(Key("foo_hot")) == (True, True, 1)
-    assert cache._lookup_hot_cache(Key("foo_hot")) == (True, True, 1)
+    assert cache._lookup_hot_cache(Key("foo_hot")) == hot(1)
+    assert cache._lookup_hot_cache(Key("foo_hot")) == hot(1)
 
 
 def test_abandoned_revalidation_is_retried_until_the_deadline(
@@ -253,19 +258,19 @@ def test_abandoned_revalidation_is_retried_until_the_deadline(
 
     time.time.return_value = 61
     # A reader is elected (retry clock set to 64)... and never comes back
-    assert cache._lookup_hot_cache(Key("foo_hot")) == (False, True, None)
-    assert cache._lookup_hot_cache(Key("foo_hot")) == (True, True, 1)
+    assert cache._lookup_hot_cache(Key("foo_hot")) == revalidating(1)
+    assert cache._lookup_hot_cache(Key("foo_hot")) == hot(1)
 
     time.time.return_value = 63  # Not yet: the election still stands
-    assert cache._lookup_hot_cache(Key("foo_hot")) == (True, True, 1)
+    assert cache._lookup_hot_cache(Key("foo_hot")) == hot(1)
 
     time.time.return_value = 64  # Retry clock reached: a new reader is elected
-    assert cache._lookup_hot_cache(Key("foo_hot")) == (False, True, None)
-    assert cache._lookup_hot_cache(Key("foo_hot")) == (True, True, 1)
+    assert cache._lookup_hot_cache(Key("foo_hot")) == revalidating(1)
+    assert cache._lookup_hot_cache(Key("foo_hot")) == hot(1)
 
     # The retries stop at the hard deadline, and the value is dropped
     time.time.return_value = HARD_DEADLINE
-    assert cache._lookup_hot_cache(Key("foo_hot")) == (False, False, None)
+    assert cache._lookup_hot_cache(Key("foo_hot")) is None
     assert harness.count() == 0
 
 
@@ -287,7 +292,7 @@ def test_stale_value_expires_if_it_cannot_be_revalidated(
     time.time.return_value = HARD_DEADLINE
     # Out of grace: the value is dropped rather than served stale forever,
     # and every reader goes back to the (still failing) server
-    assert cache._lookup_hot_cache(Key("foo_hot")) == (False, False, None)
+    assert cache._lookup_hot_cache(Key("foo_hot")) is None
     assert harness.count() == 0
     with pytest.raises(MemcacheError):
         cache.get("foo_hot")
@@ -295,7 +300,7 @@ def test_stale_value_expires_if_it_cannot_be_revalidated(
     # Once the server recovers, the key is detected as hot again
     client.meta_get.side_effect = make_client().meta_get.side_effect
     assert cache.get("foo_hot") == 1
-    assert cache._lookup_hot_cache(Key("foo_hot")) == (True, True, 1)
+    assert cache._lookup_hot_cache(Key("foo_hot")) == hot(1)
 
 
 def test_stale_value_is_not_served_long_past_the_deadline(
@@ -307,7 +312,7 @@ def test_stale_value_is_not_served_long_past_the_deadline(
     # A value nobody read for a while is way past its deadline: it is
     # dropped, rather than revalidated and served to every other reader.
     time.time.return_value = 1000
-    assert cache._lookup_hot_cache(Key("foo_hot")) == (False, False, None)
+    assert cache._lookup_hot_cache(Key("foo_hot")) is None
     assert harness.count() == 0
 
 
@@ -354,9 +359,8 @@ def test_values_are_isolated_between_reads(
     cache._store_entry(Key("k"), {"a": [1, 2]})
 
     # A caller mutating what it got back cannot pollute the hot cache
-    _, _, value = cache._lookup_hot_cache(Key("k"))
-    value["a"].append(3)
-    assert cache._lookup_hot_cache(Key("k")) == (True, True, {"a": [1, 2]})
+    cache._lookup_hot_cache(Key("k")).value["a"].append(3)
+    assert cache._lookup_hot_cache(Key("k")) == hot({"a": [1, 2]})
 
 
 def test_revalidation_retry_seconds_must_be_positive(
@@ -469,3 +473,184 @@ def test_get_or_lease_cas_bypasses_the_hot_cache(
     # copy is not used, same as get_cas().
     assert cache.get_or_lease_cas("foo_hot", lease_policy=LeasePolicy()) == (1, None)
     lease_client.meta_get.assert_called_once_with(key=Key("foo_hot"), **LEASE_FLAGS)
+
+
+@pytest.fixture(params=["a pool that raises", "a pool that does not raise"])
+def break_the_server(request) -> Callable[[Mock], None]:
+    """Both shapes a server failure arrives in.
+
+    A pool with raise_on_server_error raises MemcacheError; one without it
+    answers with a miss flagged as an error. The hot cache has to treat the
+    two the same, and neither as "this key is gone".
+    """
+
+    def apply(client: Mock) -> None:
+        if request.param == "a pool that raises":
+            error = MemcacheError("mimic cache error")
+            client.meta_get.side_effect = error
+            client.meta_multiget.side_effect = error
+        else:
+            client.meta_get.side_effect = lambda *args, **kwargs: MISS_DUE_TO_ERROR
+            client.meta_multiget.side_effect = lambda keys, **kwargs: {
+                key: MISS_DUE_TO_ERROR for key in keys
+            }
+
+    return apply
+
+
+def read(cache, key: str):
+    """What the caller ends up with, whichever way the failure arrived."""
+    try:
+        return cache.get(key)
+    except MemcacheError:
+        return None
+
+
+def test_hot_value_is_served_while_the_server_fails(
+    harness: HotCacheHarness, client: Mock, time: Mock, break_the_server
+) -> None:
+    cache = harness.build(client, extend_on_error=True)
+    assert cache.get("foo_hot") == 1  # Expires at 60, dropped at 70
+
+    break_the_server(client)
+
+    # The caller that hits the failure is served the stale value rather than
+    # being sent to whatever sits behind the cache
+    time.time.return_value = 61
+    assert cache.get("foo_hot") == 1
+
+    # And the value is still there past the deadline it would have died at
+    # (70), because storing it again bought it another cache_ttl
+    client.meta_get.reset_mock()
+    time.time.return_value = 80
+    assert cache.get("foo_hot") == 1
+    client.meta_get.assert_not_called()
+
+    # It goes stale again, and the failure buys it yet another one: an
+    # outage never drains the hot cache
+    time.time.return_value = 122
+    assert cache.get("foo_hot") == 1
+    client.meta_get.assert_called()
+
+    # Once the server answers again it is refreshed for real, and from then
+    # on it expires normally
+    client.meta_get.side_effect = make_client().meta_get.side_effect
+    time.time.return_value = 183
+    assert cache.get("foo_hot") == 1
+    assert cache._lookup_hot_cache(Key("foo_hot")) == hot(1)
+
+
+def test_hot_value_is_not_rescued_without_the_opt_in(
+    harness: HotCacheHarness, client: Mock, time: Mock, break_the_server
+) -> None:
+    cache = harness.build(client)  # extend_on_error_seconds defaults to 0
+
+    assert cache.get("foo_hot") == 1
+    break_the_server(client)
+
+    time.time.return_value = 61
+    assert read(cache, "foo_hot") is None
+
+    # Nothing extended it, so it is gone once the grace window runs out and
+    # every caller goes to the server
+    time.time.return_value = HARD_DEADLINE
+    assert cache._lookup_hot_cache(Key("foo_hot")) is None
+    assert harness.count() == 0
+
+
+def test_a_miss_from_a_server_that_answered_still_drops_the_value(
+    harness: HotCacheHarness, client: Mock, time: Mock
+) -> None:
+    cache = harness.build(client, extend_on_error=True)
+    assert cache.get("foo_hot") == 1
+
+    # A healthy server reporting the key gone is not an outage: extending
+    # on error must not turn a deletion into an immortal value
+    client.meta_get.side_effect = lambda key, **kwargs: Miss()
+    time.time.return_value = 61
+    assert cache.get("foo_hot") is None
+    assert harness.count() == 0
+
+
+def test_multi_get_keeps_the_results_of_the_servers_that_answered(
+    harness: HotCacheHarness, client: Mock, time: Mock
+) -> None:
+    """One server down must not cost us the keys the others answered."""
+    cache = harness.build(client, extend_on_error=True)
+    keys = ["down_hot", "up_hot", "down_cold", "up_cold"]
+    assert cache.multi_get(keys) == {Key(key): 1 for key in keys}
+    assert harness.count() == 2  # Only the hot ones were promoted
+
+    def one_server_down(keys, flags=None, failure_handling=DEFAULT_FAILURE_HANDLING):
+        return {
+            key: (
+                MISS_DUE_TO_ERROR
+                if key.key.startswith("down_")
+                else Value(
+                    size=1, value=2, flags=ResponseFlags(fetched=True, last_access=1)
+                )
+            )
+            for key in keys
+        }
+
+    client.meta_multiget.side_effect = one_server_down
+    time.time.return_value = 61
+
+    assert cache.multi_get(keys) == {
+        Key("down_hot"): 1,  # Stale value kept, rather than dropped
+        Key("down_cold"): None,  # Nothing to fall back on
+        Key("up_hot"): 2,  # The server that answered refreshed it
+        Key("up_cold"): 2,  # ... and this one was never hot
+    }
+
+    # The key behind the failing server was kept, the other one refreshed,
+    # so both outlive the deadline they started with (70)
+    time.time.return_value = 100
+    assert cache._lookup_hot_cache(Key("down_hot")) == hot(1)
+    assert cache._lookup_hot_cache(Key("up_hot")) == hot(2)
+
+
+def test_multi_get_keeps_its_hot_values_when_the_whole_batch_fails(
+    harness: HotCacheHarness, client: Mock, time: Mock
+) -> None:
+    cache = harness.build(client, extend_on_error=True)
+    assert cache.multi_get(["one_hot", "two_hot", "cold"]) == {
+        Key("one_hot"): 1,
+        Key("two_hot"): 1,
+        Key("cold"): 1,
+    }
+
+    # A pool that raises loses the whole batch when any of its servers is
+    # down, so the hot values are all we have left
+    client.meta_multiget.side_effect = MemcacheError("mimic cache error")
+    time.time.return_value = 61
+    assert cache.multi_get(["one_hot", "two_hot", "cold"]) == {
+        Key("one_hot"): 1,
+        Key("two_hot"): 1,
+        Key("cold"): None,
+    }
+
+    time.time.return_value = 100
+    assert cache._lookup_hot_cache(Key("one_hot")) == hot(1)
+
+
+def test_multi_get_raises_when_there_is_nothing_to_rescue(
+    harness: HotCacheHarness, client: Mock, time: Mock
+) -> None:
+    cache = harness.build(client, extend_on_error=True)
+    client.meta_multiget.side_effect = MemcacheError("mimic cache error")
+    with pytest.raises(MemcacheError):
+        cache.multi_get(["cold"])
+
+
+def test_error_extensions_are_counted(
+    harness: HotCacheHarness, client: Mock, time: Mock, metrics: Mock, break_the_server
+) -> None:
+    cache = harness.build(client, extend_on_error=True, metrics_collector=metrics)
+    assert cache.get("foo_hot") == 1
+
+    break_the_server(client)
+    time.time.return_value = 61
+    assert cache.get("foo_hot") == 1
+
+    assert counters(metrics)["test_hot_cache_error_extensions"] == 1
