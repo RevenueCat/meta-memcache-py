@@ -24,13 +24,28 @@ IMMUTABLE_TYPES_RISKY = frozenset(
 
 @dataclass(slots=True)
 class CachedValue:
+    """
+    A hot value, with the two clocks that govern its lifetime.
+
+    `expiration` is when the value goes stale, and is never mutated after
+    the store, so it is also the hard deadline: the value must not be served
+    past expiration + max_stale_while_revalidate_seconds. `revalidate_at` is
+    the separate retry clock the threads race on to elect a single
+    revalidator, and defaults to the expiration: a fresh value is
+    revalidated as soon as it goes stale.
+    """
+
     _value: Any
     expiration: int
-    extended: bool = False
+    revalidate_at: int
     _is_serialized: bool = False
 
     def __init__(
-        self, value: Any, expiration: int, extended: bool, is_immutable: bool = False
+        self,
+        value: Any,
+        expiration: int,
+        revalidate_at: Optional[int] = None,
+        is_immutable: bool = False,
     ):
         self._value = (
             value
@@ -38,7 +53,7 @@ class CachedValue:
             else pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
         )
         self.expiration = expiration
-        self.extended = extended
+        self.revalidate_at = expiration if revalidate_at is None else revalidate_at
         self._is_serialized = not is_immutable
 
     def get_cloned_value(self) -> Any:
@@ -46,6 +61,25 @@ class CachedValue:
 
 
 class ProbabilisticHotCache(ClientWrapper):
+    """
+    Caches locally the values detected as hot, to offload the cache server.
+
+    Keys read often enough (according to the server's last access time) are
+    promoted to the local store with probability 1/probability_factor, and
+    served from there for cache_ttl seconds.
+
+    Once a value goes stale, a single thread is elected to revalidate it
+    while the rest keep being served the stale value, to avoid thundering
+    herds. If the elected thread fails to refresh it, another one is elected
+    revalidation_retry_seconds later.
+
+    Stale values are only served within a bounded grace window: a value is
+    dropped once it is more than max_stale_while_revalidate_seconds past its
+    expiration, regardless of how often it is read. If the server keeps
+    failing to revalidate it, the value expires rather than being served
+    stale forever, and the key has to be detected as hot again.
+    """
+
     # Subclasses extend these with the metrics of their own storage.
     _METRICS: Tuple[MetricDefinition, ...] = (
         MetricDefinition("hits", "Number of hits"),
@@ -74,7 +108,12 @@ class ProbabilisticHotCache(ClientWrapper):
         allowed_prefixes: Optional[List[str]] = None,
         metrics_collector: Optional[BaseMetricsCollector] = None,
         immutable_types: Iterable[type] = IMMUTABLE_TYPES,
+        revalidation_retry_seconds: int = 1,
     ) -> None:
+        if revalidation_retry_seconds < 1:
+            # The winner of the election must move revalidate_at strictly
+            # forward, or every thread racing at the same second wins.
+            raise ValueError("revalidation_retry_seconds must be at least 1")
         super().__init__(client=client)
         self._store = store
         self._lock = threading.Lock()
@@ -82,6 +121,7 @@ class ProbabilisticHotCache(ClientWrapper):
         self._max_last_access_age_seconds = max_last_access_age_seconds
         self._probability_factor = probability_factor
         self._max_stale_while_revalidate_seconds = max_stale_while_revalidate_seconds
+        self._revalidation_retry_seconds = revalidation_retry_seconds
         self._allowed_prefixes: Optional[Trie] = (
             Trie(allowed_prefixes) if allowed_prefixes else None
         )
@@ -104,30 +144,28 @@ class ProbabilisticHotCache(ClientWrapper):
         if found := self._store.get(key.key):
             is_hot = True
             now = int(time.time())
-            ttl = found.expiration - now
-            if ttl > 0:
+            if now < found.expiration:
                 is_found = True
-            elif (
-                not found.extended
-                and abs(ttl) < self._max_stale_while_revalidate_seconds
-            ):
-                # Expired but the value is still fresh enough. We will try to
-                # use stale-while-revalidate to avoid thundering herds. Only
-                # one thread will get to refresh the cache.
+            elif now < found.expiration + self._max_stale_while_revalidate_seconds:
+                # Expired, but within the grace window: the value is still
+                # fresh enough to use stale-while-revalidate and avoid
+                # thundering herds. Only one thread gets to refresh the cache,
+                # by pushing the retry clock forward and mimicking a cache
+                # miss, while the rest serve the stale value. If that thread
+                # fails to refresh it, another one is elected once the retry
+                # clock arrives, until the grace window runs out.
                 is_found = True
-                with self._lock:
-                    # Check again in case another thread refreshed the cache
-                    # while we were waiting for the lock.
-                    if not found.extended:
-                        # We get to refresh the cache.
-                        # We do this by extending the expiration time so other
-                        # threads will use the stale value while we refresh.
-                        # and mimicking a cache miss.
-                        found.expiration += self._max_stale_while_revalidate_seconds
-                        found.extended = True
-                        is_found = False
+                if now >= found.revalidate_at:
+                    with self._lock:
+                        # Check again in case another thread won the election
+                        # while we were waiting for the lock.
+                        if now >= found.revalidate_at:
+                            found.revalidate_at = now + self._revalidation_retry_seconds
+                            is_found = False
             else:
-                # Expired and the value is too stale to use. No longer hot.
+                # Past the grace window: nobody managed to revalidate it, so
+                # the value is too stale to serve. Drop it and treat the key
+                # as cold, it has to be detected as hot again.
                 self._clear_hot_cache_if_necessary(key)
                 is_found = False
                 is_hot = False
@@ -172,14 +210,17 @@ class ProbabilisticHotCache(ClientWrapper):
         self._store[key.key] = CachedValue(
             value=value,
             expiration=int(time.time()) + self._cache_ttl,
-            extended=False,
             is_immutable=is_immutable,
         )
         self._metrics and self._metrics.gauge_set("item_count", len(self._store))
 
     def _clear_hot_cache_if_necessary(self, key: Key) -> bool:
+        # Called when the server missed, and when an entry runs out of grace
+        # window: drop the stale entry. Since expiration is never mutated
+        # after the store, the guard is exact: a fresh value stored by
+        # another thread in the meantime is preserved.
         if found := self._store.get(key.key):
-            if time.time() > found.expiration:
+            if found.expiration <= int(time.time()):
                 del self._store[key.key]
                 self._metrics and self._metrics.gauge_set(
                     "item_count", len(self._store)
