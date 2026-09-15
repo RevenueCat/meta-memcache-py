@@ -24,6 +24,7 @@ from meta_memcache.extras.client_wrapper import ClientWrapper
 from meta_memcache.interfaces.cache_api import CacheApi
 from meta_memcache.interfaces.meta_commands import MetaCommandsProtocol
 from meta_memcache.protocol import (
+    is_error_response,
     MetaCommand,
     Miss,
     NotStored,
@@ -1441,3 +1442,64 @@ def test_conn_send_cmd_unknown_command_raises(
     unknown_command.name = "UNKNOWN"
     with pytest.raises(ValueError, match="Unknown command"):
         executor._conn_send_cmd(memcache_socket, unknown_command, Key("foo"))
+
+
+def test_server_failure_is_reported_as_a_miss_due_to_error(
+    cache_client_not_raise_on_server_error: CacheClient,
+    connection_pool: ConnectionPool,
+) -> None:
+    """A pool that does not raise still says the miss was really a failure."""
+    cache_client = cache_client_not_raise_on_server_error
+    connection_pool.pop_connection.side_effect = MemcacheServerError(
+        server="broken:11211", message="uh-oh"
+    )
+
+    result = cache_client.meta_get(key=Key("foo"))
+    assert isinstance(result, Miss)  # A miss to everything that handles misses
+    assert is_error_response(result)  # ... but callers can tell it apart
+
+    results = cache_client.meta_multiget(keys=[Key("foo"), Key("bar")])
+    assert all(isinstance(r, Miss) for r in results.values())
+    assert all(is_error_response(r) for r in results.values())
+
+
+def test_a_real_miss_is_not_flagged_as_an_error(
+    cache_client: CacheClient, memcache_socket: MagicMock
+) -> None:
+    memcache_socket.meta_get.return_value = Miss()
+    result = cache_client.meta_get(key=Key("foo"))
+    assert isinstance(result, Miss)
+    assert not is_error_response(result)
+
+
+def test_write_server_failure_is_reported_as_a_not_stored_due_to_error(
+    cache_client_not_raise_on_server_error: CacheClient,
+    connection_pool: ConnectionPool,
+) -> None:
+    """A pool that does not raise still says the not-stored was really a failure."""
+    cache_client = cache_client_not_raise_on_server_error
+    connection_pool.pop_connection.side_effect = MemcacheServerError(
+        server="broken:11211", message="uh-oh"
+    )
+
+    for command in (
+        lambda: cache_client.meta_set(key=Key("foo"), value=1, ttl=300),
+        lambda: cache_client.meta_delete(key=Key("foo")),
+        lambda: cache_client.meta_arithmetic(key=Key("foo")),
+    ):
+        result = command()
+        # A not-stored to everything that handles writes...
+        assert isinstance(result, NotStored)
+        assert is_error_response(result)  # ... but callers can tell it apart
+
+
+def test_a_real_not_stored_is_not_flagged_as_an_error(
+    cache_client: CacheClient, memcache_socket: MagicMock
+) -> None:
+    """`ms` with ADD mode on an existing key is a legit NS, not a failure."""
+    memcache_socket.meta_set.return_value = NotStored()
+    result = cache_client.meta_set(
+        key=Key("foo"), value=1, ttl=300, flags=RequestFlags(mode=SetMode.ADD.value)
+    )
+    assert isinstance(result, NotStored)
+    assert not is_error_response(result)

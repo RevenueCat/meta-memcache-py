@@ -9,12 +9,13 @@ from meta_memcache.connection.pool import ConnectionPool
 from meta_memcache.errors import MemcacheServerError, UserDataError
 from meta_memcache.events.write_failure_event import WriteFailureEvent
 from meta_memcache.protocol import (
+    MISS_DUE_TO_ERROR,
+    NOT_STORED_DUE_TO_ERROR,
     Key,
     MaybeValue,
     MemcacheResponse,
     MetaCommand,
     Miss,
-    NotStored,
     ResponseFlags,
     Success,
     Value,
@@ -165,9 +166,9 @@ class DefaultExecutor:
             if raise_on_server_error:
                 raise
             if command == MetaCommand.META_GET:
-                return Miss()
+                return MISS_DUE_TO_ERROR
             else:
-                return NotStored()
+                return NOT_STORED_DUE_TO_ERROR
 
     def _exec_multi_get_on_pool(
         self,
@@ -208,7 +209,7 @@ class DefaultExecutor:
             )
             if raise_on_server_error:
                 raise
-            return {key: Miss() for key in keys}
+            return {key: MISS_DUE_TO_ERROR for key in keys}
 
     def exec_multi_on_pool(
         self,
@@ -282,7 +283,7 @@ class DefaultExecutor:
             )
             if raise_on_server_error:
                 raise
-            failure_result = NotStored()
+            failure_result = NOT_STORED_DUE_TO_ERROR
             for key, _ in key_values:
                 if key not in results:
                     results[key] = failure_result

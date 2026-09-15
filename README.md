@@ -154,6 +154,33 @@ response.
 By mixing and plugging routers and executors is possible to build advanced
 behaviors. Check [`CacheClient`](https://github.com/RevenueCat/meta-memcache-py/blob/main/src/meta_memcache/cache_client.py) and [`extras/`](https://github.com/RevenueCat/meta-memcache-py/blob/main/src/meta_memcache/extrasy) for some examples.
 
+## Recommended configuration:
+We recommend to:
+* Use multiple smaller servers rather than a single large server: 
+  - This will reduce the impact of a single server going down.
+  - Use consistent hashing to distribute keys across servers, so when a server
+    goes down, only a small fraction of keys are affected.
+  - Consistent hashing is a bit more expensive than simple hashing, if
+    you plan to use MigratingCacheClient and allocate new pools when
+    growing your cache pools you can use simple hashing.
+* But don't go too small:
+  - Cloud instances allocate very low network bandwidth for small instances,
+    so you might be limited by network and experience high latency, errors,
+    and timeouts.
+  - The dataset will have hot keys, and with very small servers you will
+    experience more load variance across servers and hot keys can saturate
+    a one server, while other servers are idle. 
+* Disable raise on server errors:
+  - Provide a write failure tracker to invalidate keys that fail to update,
+    and achieve eventual consistency.
+  - This simplifies the code, since you don't have to handle exceptions on
+    each request. Errors will be mapped to a miss or not stored.
+  - You can still tell apart a genuine miss/not stored from a server error
+    by using `is_error_response()` and lower-level methods for advanced use
+    cases.
+* Configure a gutter pool: This will provide some level of caching when a
+  server is down, instead of hitting the backend for each previously cached key.
+
 ## Low level meta commands:
 
 The low-level commands are in
@@ -256,6 +283,28 @@ Which are:
    - `value`: `Any` The value
  * `NotStored`: Not stored, for example "add" on exising key. No arguments.
  * `Conflict`: Not stored, for example due to CAS mismatch. No arguments.
+
+When `raise_on_server_error` is `False`, a server failure is reported as the
+closest negative response: a `Miss` for reads and a `NotStored` for writes, but
+we use special marker instances for them: `MISS_DUE_TO_ERROR` and
+`NOT_STORED_DUE_TO_ERROR`. They behave like an ordinary `Miss`/`NotStored`
+for anything that handles those, but `is_error_response(response)` tells them
+apart from a genuine negative answer from the server:
+
+```python
+from meta_memcache import is_error_response
+
+result = client.meta_get(key)
+if isinstance(result, Miss):
+    if is_error_response(result):
+        ...  # we could not ask the server, don't treat it as "not cached"
+    else:
+        ...  # the server really has no entry for this key
+```
+
+Note the markers are recognized by identity, only a `is` identity check
+that `is_error_response()` does can tell them appart from regular
+`Miss`/`NotStored`.
 
 The `ResponseFlags` contains the all the returned flags. This metadata gives a lot of
 control and posibilities, it is the strength of the meta protocol:
@@ -670,4 +719,3 @@ class PoolCounters(NamedTuple):
     # Total # of connection or socket errors
     total_errors: int
 ```
-
