@@ -11,17 +11,24 @@ import os
 import sqlite3
 import sys
 from pathlib import Path
+from typing import Optional
 from unittest.mock import Mock, call
 
 import pytest
 
 from meta_memcache import Key
+from meta_memcache.errors import MemcacheError
 from meta_memcache.extras.probabilistic_hot_cache_sqlite import (
     HotCacheDBConfig,
     SqliteProbabilisticHotCache,
 )
 from meta_memcache.metrics.base import BaseMetricsCollector
-from tests.hot_cache_harness import DEFAULT_SETTINGS, make_client
+from tests.hot_cache_harness import (
+    hot,
+    revalidating,
+    DEFAULT_SETTINGS,
+    make_client,
+)
 
 
 @pytest.fixture
@@ -136,11 +143,11 @@ def test_single_worker_wins_revalidation(time: Mock, db: HotCacheDBConfig) -> No
 
     time.time.return_value = 61  # Stale, within the grace window
     # The first worker wins the election: it sees a miss so it will refresh
-    assert worker_a._lookup_hot_cache(Key("foo_hot")) == (False, True, None)
+    assert worker_a._lookup_hot_cache(Key("foo_hot")) == revalidating(1)
     # Every other worker is served the stale value while it does, including
     # other lookups from the winner's own process
-    assert worker_b._lookup_hot_cache(Key("foo_hot")) == (True, True, 1)
-    assert worker_a._lookup_hot_cache(Key("foo_hot")) == (True, True, 1)
+    assert worker_b._lookup_hot_cache(Key("foo_hot")) == hot(1)
+    assert worker_a._lookup_hot_cache(Key("foo_hot")) == hot(1)
 
 
 def test_winner_refreshes_the_value_for_everybody(
@@ -175,13 +182,13 @@ def test_revalidation_is_retried_when_a_worker_dies(
 
     time.time.return_value = 61
     # Worker A wins the election (retry clock set to 64)... and dies
-    assert worker_a._lookup_hot_cache(Key("foo_hot")) == (False, True, None)
+    assert worker_a._lookup_hot_cache(Key("foo_hot")) == revalidating(1)
     # Meanwhile everybody else serves the stale value
-    assert worker_b._lookup_hot_cache(Key("foo_hot")) == (True, True, 1)
+    assert worker_b._lookup_hot_cache(Key("foo_hot")) == hot(1)
 
     time.time.return_value = 64  # Retry clock reached: a new worker retries
-    assert worker_b._lookup_hot_cache(Key("foo_hot")) == (False, True, None)
-    assert worker_a._lookup_hot_cache(Key("foo_hot")) == (True, True, 1)
+    assert worker_b._lookup_hot_cache(Key("foo_hot")) == revalidating(1)
+    assert worker_a._lookup_hot_cache(Key("foo_hot")) == hot(1)
 
 
 def test_purge_keeps_the_entries_still_servable(
@@ -200,7 +207,7 @@ def test_purge_keeps_the_entries_still_servable(
     # Past the hard deadline it is purged
     time.time.return_value = 70
     assert cache.get("baz_hot") == 1
-    assert not cache._lookup_hot_cache(Key("foo_hot"))[1]
+    assert cache._lookup_hot_cache(Key("foo_hot")) is None
 
 
 def test_max_size_is_enforced_best_effort(time: Mock, tmp_path: Path) -> None:
@@ -219,7 +226,7 @@ def test_max_size_is_enforced_best_effort(time: Mock, tmp_path: Path) -> None:
     # succeeds again
     time.time.return_value = 100  # Beyond expiration (60) + grace window (10)
     cache._store_entry(Key("fresh"), blob)
-    assert cache._lookup_hot_cache(Key("fresh")) == (True, True, blob)
+    assert cache._lookup_hot_cache(Key("fresh")) == hot(blob)
     assert row_count(db) < stored
 
 
@@ -240,7 +247,7 @@ def test_connections_are_reset_after_fork(time: Mock, db: HotCacheDBConfig) -> N
             # The at-fork handler dropped the parent's connection
             assert getattr(cache._local, "conn", None) is None
             # And the cache still works, lazily reconnecting
-            assert cache._lookup_hot_cache(Key("foo_hot")) == (True, True, 1)
+            assert cache._lookup_hot_cache(Key("foo_hot")) == hot(1)
             os.write(w_fd, b"OK")
         except BaseException as e:  # noqa: BLE001
             os.write(w_fd, f"ERROR:{e}".encode())
@@ -302,7 +309,7 @@ def test_errors_are_counted_and_behave_as_a_miss(
     metrics.metric_inc.reset_mock()
 
     # A lookup that cannot read the db behaves as a miss on a cold key
-    assert cache._lookup_hot_cache(Key("foo_hot")) == (False, False, None)
+    assert cache._lookup_hot_cache(Key("foo_hot")) is None
     # A value that cannot be stored is simply not cached
     cache._store_entry(Key("foo_hot"), 1)
     # And a stale entry that cannot be dropped is reported as not dropped
@@ -369,7 +376,7 @@ def test_a_full_db_is_purged_and_retried(
     monkeypatch.setattr(cache, "_purge_expired", purge)
     cache._store_entry(Key("fresh"), blob)
     purge.assert_called_once()
-    assert cache._lookup_hot_cache(Key("fresh")) == (True, True, blob)
+    assert cache._lookup_hot_cache(Key("fresh")) == hot(blob)
 
 
 def test_purge_runs_on_a_schedule(
@@ -389,7 +396,7 @@ def test_purge_runs_on_a_schedule(
     time.time.return_value = 101
     assert cache.get("baz_hot") == 1
     assert row_count(db) == 2  # bar_hot (expires at 131) and baz_hot
-    assert not cache._lookup_hot_cache(Key("foo_hot"))[1]
+    assert cache._lookup_hot_cache(Key("foo_hot")) is None
 
 
 def test_purge_is_not_repeated_within_the_interval(
@@ -461,3 +468,67 @@ def test_a_busy_checkpoint_does_not_block_the_store(
         assert row_count(db) == 1
     finally:
         reader.close()
+
+
+def expiration_of(db: HotCacheDBConfig, key: str) -> Optional[int]:
+    conn = sqlite3.connect(db.db_path)
+    try:
+        row = conn.execute(
+            "SELECT expiration FROM hot_cache WHERE key = ?", (key,)
+        ).fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def test_one_worker_extends_the_hot_value_for_everybody(
+    time: Mock, db: HotCacheDBConfig
+) -> None:
+    client_a, client_b = make_client(), make_client()
+    worker_a = build_cache(client_a, db, extend_on_error=True)
+    worker_b = build_cache(client_b, db, extend_on_error=True)
+
+    assert worker_a.get("foo_hot") == 1
+
+    # The server starts failing right as the value goes stale
+    client_a.meta_get.side_effect = MemcacheError("mimic cache error")
+    time.time.return_value = 61
+
+    # Worker A hits the error and is served the stale value instead
+    assert worker_a.get("foo_hot") == 1
+    assert expiration_of(db, "foo_hot") == 121  # Stored again: a fresh ttl
+
+    # And worker B, in another process, never even sees the outage: the
+    # extension one worker won is shared with all of them
+    assert worker_b.get("foo_hot") == 1
+    client_b.meta_get.assert_not_called()
+
+
+def test_a_slow_failure_can_overwrite_a_concurrent_refresh(
+    time: Mock, db: HotCacheDBConfig
+) -> None:
+    """Known limitation of storing the stale value back on error.
+
+    A worker whose request fails stores back the value it read before
+    making it, so a refresh another worker landed in the meantime is
+    overwritten with the older one. It is reachable whenever a failing
+    request outlives revalidation_retry_seconds, which during an outage is
+    the normal case, and it costs a cache_ttl of recovery for that key.
+    """
+    client_a = make_client()
+    worker_a = build_cache(client_a, db, extend_on_error=True)
+    worker_b = build_cache(make_client(), db, extend_on_error=True)
+
+    assert worker_a.get("foo_hot") == 1
+
+    def fail_after_a_refresh(key, **kwargs):
+        # Worker B is elected on the retry clock and refreshes the value
+        # while A's request is still in flight
+        worker_b._store_entry(key, 2)
+        raise MemcacheError("mimic cache error")
+
+    client_a.meta_get.side_effect = fail_after_a_refresh
+    time.time.return_value = 61
+
+    assert worker_a.get("foo_hot") == 1  # A serves the value it read
+    assert worker_b._lookup_hot_cache(Key("foo_hot")) == hot(1)  # ... and stored it

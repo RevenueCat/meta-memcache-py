@@ -20,7 +20,12 @@ from meta_memcache.extras.probabilistic_hot_cache import (
 from meta_memcache.interfaces.router import DEFAULT_FAILURE_HANDLING, FailureHandling
 from meta_memcache.metrics.prometheus import PrometheusMetricsCollector
 from meta_memcache.protocol import Miss, ReadResponse, RequestFlags, ResponseFlags
-from tests.hot_cache_harness import DEFAULT_SETTINGS, make_client
+from tests.hot_cache_harness import (
+    hot,
+    revalidating,
+    DEFAULT_SETTINGS,
+    make_client,
+)
 
 
 @pytest.fixture
@@ -61,16 +66,16 @@ def test_entry_clocks_through_the_stale_cycle(client: Mock, time: Mock) -> None:
     # The elected thread pushes the retry clock forward and leaves the
     # expiration, and so the hard deadline, alone
     time.time.return_value = 61
-    assert hot_cache._lookup_hot_cache(Key("foo_hot")) == (False, True, None)
+    assert hot_cache._lookup_hot_cache(Key("foo_hot")) == revalidating(1)
     assert store["foo_hot"] == CachedValue(value=1, expiration=60, revalidate_at=62)
 
     # The threads served the stale value meanwhile do not touch them either
-    assert hot_cache._lookup_hot_cache(Key("foo_hot")) == (True, True, 1)
+    assert hot_cache._lookup_hot_cache(Key("foo_hot")) == hot(1)
     assert store["foo_hot"] == CachedValue(value=1, expiration=60, revalidate_at=62)
 
     # Nobody refreshed it, so it is dropped at the hard deadline (60 + 10)
     time.time.return_value = 70
-    assert hot_cache._lookup_hot_cache(Key("foo_hot")) == (False, False, None)
+    assert hot_cache._lookup_hot_cache(Key("foo_hot")) is None
     assert "foo_hot" not in store
 
     # And a fresh read starts the cycle over
