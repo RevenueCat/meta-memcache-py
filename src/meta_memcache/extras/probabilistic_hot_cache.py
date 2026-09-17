@@ -46,6 +46,23 @@ class CachedValue:
 
 
 class ProbabilisticHotCache(ClientWrapper):
+    # Subclasses extend these with the metrics of their own storage.
+    _METRICS: Tuple[MetricDefinition, ...] = (
+        MetricDefinition("hits", "Number of hits"),
+        MetricDefinition("misses", "Number of misses"),
+        MetricDefinition("skips", "Number of skipped keys (not in allowed prefixes)"),
+        MetricDefinition("hot_skips", "Keys detected hot but not in allowed prefixes"),
+        MetricDefinition(
+            "hot_candidates", "Keys detected hot and candidates to be cached"
+        ),
+        MetricDefinition(
+            "candidate_misses", "Number of misses for keys in allowed prefixes"
+        ),
+    )
+    _GAUGES: Tuple[MetricDefinition, ...] = (
+        MetricDefinition("item_count", "Number of items in the cache"),
+    )
+
     def __init__(
         self,
         client: CacheApi,
@@ -71,27 +88,8 @@ class ProbabilisticHotCache(ClientWrapper):
         if metrics_collector:
             metrics_collector.init_metrics(
                 namespace="hot_cache",
-                metrics=[
-                    MetricDefinition("hits", "Number of hits"),
-                    MetricDefinition("misses", "Number of misses"),
-                    MetricDefinition(
-                        "skips", "Number of skipped keys (not in allowed prefixes)"
-                    ),
-                    MetricDefinition(
-                        "hot_skips", "Keys detected hot but not in allowed prefixes"
-                    ),
-                    MetricDefinition(
-                        "hot_candidates",
-                        "Keys detected hot and candidates to be cached",
-                    ),
-                    MetricDefinition(
-                        "candidate_misses",
-                        "Number of misses for keys in allowed prefixes",
-                    ),
-                ],
-                gauges=[
-                    MetricDefinition("item_count", "Number of items in the cache"),
-                ],
+                metrics=list(self._METRICS),
+                gauges=list(self._GAUGES),
             )
         self._metrics = metrics_collector
         self._immutable_types = immutable_types
@@ -167,9 +165,12 @@ class ProbabilisticHotCache(ClientWrapper):
         if not is_hot:
             return
 
-        is_immutable = type(value.value) in self._immutable_types
+        self._store_entry(key, value.value)
+
+    def _store_entry(self, key: Key, value: Any) -> None:
+        is_immutable = type(value) in self._immutable_types
         self._store[key.key] = CachedValue(
-            value=value.value,
+            value=value,
             expiration=int(time.time()) + self._cache_ttl,
             extended=False,
             is_immutable=is_immutable,
