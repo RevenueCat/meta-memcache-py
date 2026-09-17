@@ -260,11 +260,6 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
         purge_interval_seconds: int = 60,
         revalidation_retry_seconds: int = 1,
     ) -> None:
-        if revalidation_retry_seconds < 1:
-            # The election is a compare-and-swap on revalidate_at, so the
-            # winner must move it strictly forward or several workers racing
-            # at the same second would all win.
-            raise ValueError("revalidation_retry_seconds must be at least 1")
         super().__init__(
             client=client,
             store={},  # Unused: storage is overridden to use sqlite
@@ -274,10 +269,10 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
             max_stale_while_revalidate_seconds=max_stale_while_revalidate_seconds,
             allowed_prefixes=allowed_prefixes,
             metrics_collector=metrics_collector,
+            revalidation_retry_seconds=revalidation_retry_seconds,
         )
         self._db = db
         self._purge_interval_seconds = purge_interval_seconds
-        self._revalidation_retry_seconds = revalidation_retry_seconds
         self._local = threading.local()
         _get_instance_registry().add(self)
 

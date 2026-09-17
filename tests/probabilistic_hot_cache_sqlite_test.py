@@ -1,61 +1,27 @@
+"""Tests specific to the sqlite-backed ProbabilisticHotCache.
+
+The behaviour it shares with the in-memory implementation is covered in
+probabilistic_hot_cache_conformance_test.py. What is left here is what only
+the sqlite store does: the database lifecycle, sharing the hot values (and
+the revalidation election) across workers, the size cap and the purge, and
+surviving a fork.
+"""
+
 import os
 import sqlite3
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
 from unittest.mock import Mock, call
 
 import pytest
 
-from meta_memcache import CacheClient, Key, Value
+from meta_memcache import Key
 from meta_memcache.extras.probabilistic_hot_cache_sqlite import (
     HotCacheDBConfig,
     SqliteProbabilisticHotCache,
 )
-from meta_memcache.interfaces.router import DEFAULT_FAILURE_HANDLING, FailureHandling
 from meta_memcache.metrics.base import BaseMetricsCollector
-from meta_memcache.errors import MemcacheError
-from meta_memcache.protocol import Miss, ReadResponse, RequestFlags, ResponseFlags
-
-
-def make_client() -> Mock:
-    def meta_get(
-        key: Key,
-        flags: Optional[RequestFlags] = None,
-        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
-    ) -> ReadResponse:
-        if key.key.endswith("hot"):
-            return Value(
-                size=1,
-                value=1,
-                flags=ResponseFlags(
-                    fetched=True,
-                    last_access=1,
-                ),
-            )
-        elif key.key.endswith("miss"):
-            return Miss()
-        else:
-            return Value(
-                size=1,
-                value=1,
-                flags=ResponseFlags(
-                    fetched=True,
-                    last_access=9999,
-                ),
-            )
-
-    def meta_multiget(
-        keys: List[Key],
-        flags: Optional[RequestFlags] = None,
-        failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
-    ) -> Dict[Key, ReadResponse]:
-        return {key: meta_get(key=key) for key in keys}
-
-    mock = Mock(spec=CacheClient)
-    mock.meta_get.side_effect = meta_get
-    mock.meta_multiget.side_effect = meta_multiget
-    return mock
+from tests.hot_cache_harness import DEFAULT_SETTINGS, make_client
 
 
 @pytest.fixture
@@ -79,17 +45,15 @@ def db(tmp_path: Path) -> HotCacheDBConfig:
 
 
 def build_cache(
-    client: Mock, db: HotCacheDBConfig, **kwargs
+    client: Mock, db: HotCacheDBConfig, **overrides
 ) -> SqliteProbabilisticHotCache:
-    defaults = dict(
-        cache_ttl=60,
-        max_last_access_age_seconds=10,
-        probability_factor=1,
-        max_stale_while_revalidate_seconds=10,
-        purge_interval_seconds=1 << 30,  # Never, unless a test asks for it
+    return SqliteProbabilisticHotCache(
+        client=client,
+        db=db,
+        # Purging is on a timer: park it unless the test is about the
+        # purge itself.
+        **{**DEFAULT_SETTINGS, "purge_interval_seconds": 1 << 30, **overrides},
     )
-    defaults.update(kwargs)
-    return SqliteProbabilisticHotCache(client=client, db=db, **defaults)
 
 
 def row_count(db: HotCacheDBConfig) -> int:
@@ -136,31 +100,19 @@ def test_config_requires_initialized_db(tmp_path: Path) -> None:
         HotCacheDBConfig(str(db_path))
 
 
+def test_config_rejects_an_outdated_schema(tmp_path: Path) -> None:
+    db_path = tmp_path / "old.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE hot_cache (key TEXT PRIMARY KEY, value BLOB)")
+    conn.commit()
+    conn.close()
+    with pytest.raises(ValueError, match="not initialized"):
+        HotCacheDBConfig(str(db_path))
+
+
 def test_config_validates_initialized_db(db: HotCacheDBConfig) -> None:
     # Workers that didn't run initialize() build the config themselves
     assert HotCacheDBConfig(db.db_path) == HotCacheDBConfig(db.db_path)
-
-
-def test_hot_keys_are_cached(client: Mock, time: Mock, db: HotCacheDBConfig) -> None:
-    cache = build_cache(client, db)
-    assert cache.get("foo_hot") == 1
-    client.meta_get.assert_called_once()
-
-    client.meta_get.reset_mock()
-    assert cache.get("foo_hot") == 1
-    client.meta_get.assert_not_called()
-
-
-def test_cold_keys_are_not_cached(
-    client: Mock, time: Mock, db: HotCacheDBConfig
-) -> None:
-    cache = build_cache(client, db)
-    assert cache.get("foo") == 1
-    assert cache.get("foo_miss") is None
-    client.meta_get.reset_mock()
-    assert cache.get("foo") == 1
-    assert cache.get("foo_miss") is None
-    assert client.meta_get.call_count == 2
 
 
 def test_cache_is_shared_across_workers(time: Mock, db: HotCacheDBConfig) -> None:
@@ -180,136 +132,81 @@ def test_single_worker_wins_revalidation(time: Mock, db: HotCacheDBConfig) -> No
     worker_a = build_cache(make_client(), db)
     worker_b = build_cache(make_client(), db)
 
-    time.time.return_value = 0
     assert worker_a.get("foo_hot") == 1  # Stored, expires at 60
 
-    time.time.return_value = 61  # Expired, within the stale window
-    # First worker wins the revalidation: sees a miss so it will refresh
+    time.time.return_value = 61  # Stale, within the grace window
+    # The first worker wins the election: it sees a miss so it will refresh
     assert worker_a._lookup_hot_cache(Key("foo_hot")) == (False, True, None)
-    # Everyone else is served the stale value while the winner refreshes,
-    # including other lookups from the winner's own process
+    # Every other worker is served the stale value while it does, including
+    # other lookups from the winner's own process
     assert worker_b._lookup_hot_cache(Key("foo_hot")) == (True, True, 1)
     assert worker_a._lookup_hot_cache(Key("foo_hot")) == (True, True, 1)
 
 
-def test_winner_refreshes_the_value(time: Mock, db: HotCacheDBConfig) -> None:
+def test_winner_refreshes_the_value_for_everybody(
+    time: Mock, db: HotCacheDBConfig
+) -> None:
     client_a, client_b = make_client(), make_client()
     worker_a = build_cache(client_a, db)
     worker_b = build_cache(client_b, db)
 
-    time.time.return_value = 0
     assert worker_a.get("foo_hot") == 1
     client_a.meta_get.reset_mock()
 
-    time.time.return_value = 61  # Expired, within the stale window
+    time.time.return_value = 61  # Stale, within the grace window
     assert worker_a.get("foo_hot") == 1  # Wins and refreshes from the server
     client_a.meta_get.assert_called_once()
 
     # The refreshed value is fresh again for everybody: at t=75 the original
-    # entry would be long past its grace window (60 + 10), so a hit without a
+    # entry would be past its hard deadline (60 + 10), so a hit without a
     # new revalidation proves the refresh stored a fresh value
     time.time.return_value = 75
     assert worker_b.get("foo_hot") == 1
     client_b.meta_get.assert_not_called()
 
 
-def test_stale_value_expires_if_not_revalidated(
+def test_revalidation_is_retried_when_a_worker_dies(
     time: Mock, db: HotCacheDBConfig
 ) -> None:
-    client = make_client()
-    cache = build_cache(client, db)
-
-    time.time.return_value = 0
-    assert cache.get("foo_hot") == 1
-
-    # The server starts failing, so nobody manages to revalidate
-    client.meta_get.side_effect = MemcacheError("mimic cache error")
-
-    time.time.return_value = 61  # Expired: a winner is elected...
-    with pytest.raises(MemcacheError):
-        cache.get("foo_hot")  # ... and fails to refresh
-    # The rest keep being served the stale value while the grace window lasts
-    assert cache._lookup_hot_cache(Key("foo_hot")) == (True, True, 1)
-
-    time.time.return_value = 70  # Grace window (60 + 10) is over
-    # The stale value is no longer served, and the key is no longer hot
-    assert cache._lookup_hot_cache(Key("foo_hot")) == (False, False, None)
-    assert row_count(db) == 0
-
-    # Once the server recovers, the key is detected as hot again
-    client.meta_get.side_effect = make_client().meta_get.side_effect
-    assert cache.get("foo_hot") == 1
-    assert cache._lookup_hot_cache(Key("foo_hot")) == (True, True, 1)
-
-
-def test_stale_value_is_not_served_long_past_expiration(
-    client: Mock, time: Mock, db: HotCacheDBConfig
-) -> None:
-    cache = build_cache(client, db)
-
-    time.time.return_value = 0
-    assert cache.get("foo_hot") == 1
-
-    # A key nobody read for a while is way past expiration (60) + grace
-    # window (10): it is dropped rather than served to everyone but the
-    # elected revalidator.
-    time.time.return_value = 1000
-    assert cache._lookup_hot_cache(Key("foo_hot")) == (False, False, None)
-    assert row_count(db) == 0
-
-
-def test_abandoned_revalidation_is_retried(time: Mock, db: HotCacheDBConfig) -> None:
     worker_a = build_cache(make_client(), db, revalidation_retry_seconds=3)
     worker_b = build_cache(make_client(), db, revalidation_retry_seconds=3)
 
-    time.time.return_value = 0
     assert worker_a.get("foo_hot") == 1
 
     time.time.return_value = 61
-    # Worker A wins the revalidation (retry clock set to 64)... and dies
+    # Worker A wins the election (retry clock set to 64)... and dies
     assert worker_a._lookup_hot_cache(Key("foo_hot")) == (False, True, None)
     # Meanwhile everybody else serves the stale value
     assert worker_b._lookup_hot_cache(Key("foo_hot")) == (True, True, 1)
 
-    time.time.return_value = 64  # Retry clock reached: a new winner retries
+    time.time.return_value = 64  # Retry clock reached: a new worker retries
     assert worker_b._lookup_hot_cache(Key("foo_hot")) == (False, True, None)
     assert worker_a._lookup_hot_cache(Key("foo_hot")) == (True, True, 1)
 
-    # The retries stop at the hard deadline: expiration (60) + grace (10)
+
+def test_purge_keeps_the_entries_still_servable(
+    client: Mock, time: Mock, db: HotCacheDBConfig
+) -> None:
+    cache = build_cache(client, db, purge_interval_seconds=0)
+
+    assert cache.get("foo_hot") == 1  # Expires at 60, dropped at 70
+
+    # A store within the grace window purges, but the stale entry is still
+    # servable so it stays
+    time.time.return_value = 69
+    assert cache.get("bar_hot") == 1
+    assert row_count(db) == 2
+
+    # Past the hard deadline it is purged
     time.time.return_value = 70
-    assert worker_a._lookup_hot_cache(Key("foo_hot")) == (False, False, None)
-    assert row_count(db) == 0
-
-
-def test_revalidation_retry_seconds_must_be_positive(
-    client: Mock, db: HotCacheDBConfig
-) -> None:
-    with pytest.raises(ValueError, match="revalidation_retry_seconds"):
-        build_cache(client, db, revalidation_retry_seconds=0)
-
-
-def test_deleted_value_is_dropped_on_revalidation(
-    time: Mock, db: HotCacheDBConfig
-) -> None:
-    client = make_client()
-    cache = build_cache(client, db)
-
-    time.time.return_value = 0
-    assert cache.get("foo_hot") == 1
-
-    # The key gets deleted from the server
-    client.meta_get.side_effect = lambda key, **kwargs: Miss()
-
-    time.time.return_value = 61  # Expired: the winner revalidates
-    assert cache.get("foo_hot") is None  # ... sees the miss
-    assert row_count(db) == 0  # ... and drops the stale entry for everybody
+    assert cache.get("baz_hot") == 1
+    assert not cache._lookup_hot_cache(Key("foo_hot"))[1]
 
 
 def test_max_size_is_enforced_best_effort(time: Mock, tmp_path: Path) -> None:
     db = HotCacheDBConfig.initialize(str(tmp_path / "hot.db"), max_size_bytes=64 * 1024)
     cache = build_cache(make_client(), db)
 
-    time.time.return_value = 0
     blob = b"x" * 4096
     for i in range(50):
         cache._store_entry(Key(f"key_{i}"), blob)  # Never raises when full
@@ -318,33 +215,12 @@ def test_max_size_is_enforced_best_effort(time: Mock, tmp_path: Path) -> None:
     assert 0 < stored < 50  # Capped: some stores were skipped
     assert (tmp_path / "hot.db").stat().st_size <= 64 * 1024
 
-    # Once entries expire, storing purges them and succeeds again
-    time.time.return_value = 100  # Beyond expiration (60) + stale window (10)
+    # Once entries are past their hard deadline, storing purges them and
+    # succeeds again
+    time.time.return_value = 100  # Beyond expiration (60) + grace window (10)
     cache._store_entry(Key("fresh"), blob)
     assert cache._lookup_hot_cache(Key("fresh")) == (True, True, blob)
     assert row_count(db) < stored
-
-
-def test_values_are_isolated_between_reads(time: Mock, db: HotCacheDBConfig) -> None:
-    cache = build_cache(make_client(), db)
-    cache._store_entry(Key("k"), {"a": [1, 2]})
-    _, _, value = cache._lookup_hot_cache(Key("k"))
-    value["a"].append(3)
-    assert cache._lookup_hot_cache(Key("k")) == (True, True, {"a": [1, 2]})
-
-
-def test_multi_get(client: Mock, time: Mock, db: HotCacheDBConfig) -> None:
-    cache = build_cache(client, db)
-    expected = {Key("foo_hot"): 1, Key("foo_miss"): None, Key("foo"): 1}
-    assert cache.multi_get(["foo_hot", "foo_miss", "foo"]) == expected
-
-    client.meta_multiget.reset_mock()
-    assert cache.multi_get(["foo_hot", "foo_miss", "foo"]) == expected
-    # The hot key is served from the hot cache, the rest hit the server
-    requested_keys = client.meta_multiget.call_args.kwargs["keys"]
-    assert Key("foo_hot") not in requested_keys
-    assert Key("foo_miss") in requested_keys
-    assert Key("foo") in requested_keys
 
 
 @pytest.mark.skipif(
@@ -383,21 +259,27 @@ def test_connections_are_reset_after_fork(time: Mock, db: HotCacheDBConfig) -> N
         assert cache._get_conn() is parent_conn
 
 
-def test_metrics(time: Mock, db: HotCacheDBConfig) -> None:
+def test_item_count_gauge_is_updated_on_purge(time: Mock, db: HotCacheDBConfig) -> None:
     metrics = Mock(spec=BaseMetricsCollector)
     cache = build_cache(
         make_client(),
         db,
         metrics_collector=metrics,
-        purge_interval_seconds=0,  # Purge (and update gauges) on every store
+        purge_interval_seconds=0,  # Purge (and update the gauge) on every store
     )
-    assert cache.get("foo_hot") == 1
-    metrics.metric_inc.assert_any_call("misses")
-    metrics.metric_inc.assert_any_call("hot_candidates")
+
+    assert cache.get("foo_hot") == 1  # Expires at 60, dropped at 70
     metrics.gauge_set.assert_called_with("item_count", 1)
 
-    assert cache.get("foo_hot") == 1
-    metrics.metric_inc.assert_any_call("hits")
+    time.time.return_value = 30
+    assert cache.get("bar_hot") == 1  # Expires at 90, dropped at 100
+    metrics.gauge_set.assert_called_with("item_count", 2)
+
+    # The first entry is past its hard deadline and gets purged, the second
+    # one is still servable and stays
+    time.time.return_value = 71
+    assert cache.get("baz_hot") == 1
+    metrics.gauge_set.assert_called_with("item_count", 2)  # bar_hot + baz_hot
 
 
 def break_db(db: HotCacheDBConfig) -> None:
