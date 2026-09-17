@@ -61,9 +61,33 @@ class DefaultRouter:
         """
         Groups keys by destination, gets a connection and executes the commands
         """
+        return self._exec_multi_on_provider(
+            self.pool_provider,
+            command=command,
+            keys=keys,
+            values=values,
+            flags=flags,
+            track_write_failures=failure_handling.track_write_failures,
+            raise_on_server_error=failure_handling.raise_on_server_error,
+        )
+
+    def _exec_multi_on_provider(
+        self,
+        pool_provider: ConnectionPoolProvider,
+        command: MetaCommand,
+        keys: List[Key],
+        values: MaybeValues,
+        flags: Optional[RequestFlags],
+        track_write_failures: bool,
+        raise_on_server_error: Optional[bool],
+    ) -> Dict[Key, MemcacheResponse]:
+        """
+        Groups keys by destination within the given provider and executes the
+        commands. Routers with a fallback tier reuse this for both tiers.
+        """
         results: Dict[Key, MemcacheResponse] = {}
         for pool, key_values in self._exec_multi_prepare_pool_map(
-            self.pool_provider.get_pool, keys, values
+            pool_provider.get_pool, keys, values
         ).items():
             results.update(
                 self.executor.exec_multi_on_pool(
@@ -71,8 +95,8 @@ class DefaultRouter:
                     command=command,
                     key_values=key_values,
                     flags=flags,
-                    track_write_failures=failure_handling.track_write_failures,
-                    raise_on_server_error=failure_handling.raise_on_server_error,
+                    track_write_failures=track_write_failures,
+                    raise_on_server_error=raise_on_server_error,
                 )
             )
         return results

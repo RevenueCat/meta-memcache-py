@@ -68,6 +68,25 @@ class SetMode(Enum):
 
 MemcacheResponse = Union[Value, Success, Miss, NotStored, Conflict]
 
+# Responses the server never actually sent: the request failed and the pool is
+# configured not to raise, so the failure is reported as the closest negative
+# response, a miss for reads and a not-stored for writes.
+#
+# They are a plain Miss/NotStored for every isinstance() check, so nothing that
+# handles those needs to know about them, but code that cares about the
+# difference between "the server said no" and "we could not ask" can tell them
+# apart with is_error_response(). Miss and NotStored come from the rust
+# extension and cannot be subclassed, hence the marker instances.
+#
+# The markers are recognized by identity, with a `is` check.
+MISS_DUE_TO_ERROR: Miss = Miss()
+NOT_STORED_DUE_TO_ERROR: NotStored = NotStored()
+
+
+def is_error_response(response: MemcacheResponse) -> bool:
+    """Whether a response is really a server failure."""
+    return response is MISS_DUE_TO_ERROR or response is NOT_STORED_DUE_TO_ERROR
+
 
 @dataclass
 class ValueContainer:

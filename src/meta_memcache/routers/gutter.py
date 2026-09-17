@@ -1,7 +1,6 @@
 from typing import Dict, List, Optional
 
 from meta_memcache.connection.providers import ConnectionPoolProvider
-from meta_memcache.errors import MemcacheServerError
 from meta_memcache.interfaces.executor import Executor
 from meta_memcache.interfaces.router import DEFAULT_FAILURE_HANDLING, FailureHandling
 from meta_memcache.protocol import (
@@ -11,6 +10,7 @@ from meta_memcache.protocol import (
     MemcacheResponse,
     MetaCommand,
     RequestFlags,
+    is_error_response,
 )
 from meta_memcache.routers.default import DefaultRouter
 from meta_memcache.routers.helpers import adjust_flags_for_max_ttl
@@ -46,35 +46,36 @@ class GutterRouter(DefaultRouter):
         tries in the gutter pool adjusting the TTLs so keys
         expire soon.
         """
-        try:
-            return self.executor.exec_on_pool(
-                pool=self.pool_provider.get_pool(key),
-                command=command,
-                key=key,
-                value=value,
-                flags=flags,
-                # We always want to raise on server errors so we can
-                # try the gutter pool
-                raise_on_server_error=True,
-                # On the regular pool, respect the track_write_failures flag
-                track_write_failures=failure_handling.track_write_failures,
-            )
-        except MemcacheServerError:
-            # Override TTLs > than gutter TTL
-            flags = adjust_flags_for_max_ttl(flags, self._gutter_ttl)
-            return self.executor.exec_on_pool(
-                pool=self.gutter_pool_provider.get_pool(key),
-                command=command,
-                key=key,
-                value=value,
-                flags=flags,
-                # Respect the raise_on_server_error flag if the gutter pool also
-                # fails
-                raise_on_server_error=failure_handling.raise_on_server_error,
-                # On the gutter pool we never need to track write failures, since
-                # it has limited TTL already in place
-                track_write_failures=False,
-            )
+        result = self.executor.exec_on_pool(
+            pool=self.pool_provider.get_pool(key),
+            command=command,
+            key=key,
+            value=value,
+            flags=flags,
+            # We never raise on the regular pool, the failure comes back as a
+            # marker response so we can try the gutter pool
+            raise_on_server_error=False,
+            # On the regular pool, respect the track_write_failures flag
+            track_write_failures=failure_handling.track_write_failures,
+        )
+        if not is_error_response(result):
+            return result
+
+        # Override TTLs > than gutter TTL
+        flags = adjust_flags_for_max_ttl(flags, self._gutter_ttl)
+        return self.executor.exec_on_pool(
+            pool=self.gutter_pool_provider.get_pool(key),
+            command=command,
+            key=key,
+            value=value,
+            flags=flags,
+            # Respect the raise_on_server_error flag if the gutter pool also
+            # fails
+            raise_on_server_error=failure_handling.raise_on_server_error,
+            # On the gutter pool we never need to track write failures, since
+            # it has limited TTL already in place
+            track_write_failures=False,
+        )
 
     def exec_multi(
         self,
@@ -85,51 +86,47 @@ class GutterRouter(DefaultRouter):
         failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> Dict[Key, MemcacheResponse]:
         """
-        Groups keys by destination, gets a connection and executes the commands
+        Implements the gutter logic for multi-key commands
+
+        Tries on the regular pools. The keys that hit a memcache server error
+        are retried on the gutter pools, adjusting the TTLs so they expire
+        soon.
         """
-        results: Dict[Key, MemcacheResponse] = {}
+        results = self._exec_multi_on_provider(
+            self.pool_provider,
+            command=command,
+            keys=keys,
+            values=values,
+            flags=flags,
+            # We never raise on the regular pools, the failures come back as
+            # marker responses so we can try the gutter pools
+            raise_on_server_error=False,
+            # On the regular pools, respect the track_write_failures flag
+            track_write_failures=failure_handling.track_write_failures,
+        )
+
         gutter_keys: List[Key] = []
         gutter_values: MaybeValues = [] if values is not None else None
-        for pool, key_values in self._exec_multi_prepare_pool_map(
-            self.pool_provider.get_pool, keys, values
-        ).items():
-            try:
-                results.update(
-                    self.executor.exec_multi_on_pool(
-                        pool=pool,
-                        command=command,
-                        key_values=key_values,
-                        flags=flags,
-                        # We always want to raise on server errors so we can
-                        # try the gutter pool
-                        raise_on_server_error=True,
-                        # On the regular pool, respect the track_write_failures flag
-                        track_write_failures=failure_handling.track_write_failures,
-                    )
-                )
-            except MemcacheServerError:
-                for key, value in key_values:
-                    gutter_keys.append(key)
-                    if gutter_values is not None and value is not None:
-                        gutter_values.append(value)
+        for i, key in enumerate(keys):
+            if is_error_response(results[key]):
+                gutter_keys.append(key)
+                if gutter_values is not None and values is not None:
+                    gutter_values.append(values[i])
         if gutter_keys:
-            # Override TTLs > than gutter TTL
-            flags = adjust_flags_for_max_ttl(flags, self._gutter_ttl)
-            for pool, key_values in self._exec_multi_prepare_pool_map(
-                self.gutter_pool_provider.get_pool, gutter_keys, gutter_values
-            ).items():
-                results.update(
-                    self.executor.exec_multi_on_pool(
-                        pool=pool,
-                        command=command,
-                        key_values=key_values,
-                        flags=flags,
-                        # Respect the raise_on_server_error flag if the gutter pool also
-                        # fails
-                        raise_on_server_error=failure_handling.raise_on_server_error,
-                        # On the gutter pool we never need to track write failures,
-                        # since # it has limited TTL already in place
-                        track_write_failures=False,
-                    )
+            results.update(
+                self._exec_multi_on_provider(
+                    self.gutter_pool_provider,
+                    command=command,
+                    keys=gutter_keys,
+                    values=gutter_values,
+                    # Override TTLs > than gutter TTL
+                    flags=adjust_flags_for_max_ttl(flags, self._gutter_ttl),
+                    # Respect the raise_on_server_error flag if the gutter pools
+                    # also fail
+                    raise_on_server_error=failure_handling.raise_on_server_error,
+                    # On the gutter pools we never need to track write failures,
+                    # since they have limited TTL already in place
+                    track_write_failures=False,
                 )
+            )
         return results
