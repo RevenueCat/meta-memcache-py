@@ -7,6 +7,7 @@ from typing import (
     Any,
     Callable,
     Dict,
+    FrozenSet,
     Iterable,
     List,
     NamedTuple,
@@ -116,6 +117,13 @@ class ProbabilisticHotCache(ClientWrapper):
     behind the cache, at the cost of serving values that may be arbitrarily
     stale, so it is off by default. A miss from a server that answered is
     still a miss, and still drops the value.
+
+    Keys in hot_keys are known to be hot: they are promoted on their first
+    read, regardless of the server's last access signal and the probability
+    factor, but still only under allowed_prefixes. That signal is unreliable
+    under memcached's segmented LRU, where the last access time tracks LRU
+    activations rather than reads. Replace the list at any time with
+    set_hot_keys().
     """
 
     # Subclasses extend these with the metrics of their own storage.
@@ -123,9 +131,14 @@ class ProbabilisticHotCache(ClientWrapper):
         MetricDefinition("hits", "Number of hits"),
         MetricDefinition("misses", "Number of misses"),
         MetricDefinition("skips", "Number of skipped keys (not in allowed prefixes)"),
-        MetricDefinition("hot_skips", "Keys detected hot but not in allowed prefixes"),
+        MetricDefinition(
+            "hot_skips", "Keys known or detected hot but not in allowed prefixes"
+        ),
         MetricDefinition(
             "hot_candidates", "Keys detected hot and candidates to be cached"
+        ),
+        MetricDefinition(
+            "listed_promotions", "Keys promoted because they are in the hot key list"
         ),
         MetricDefinition(
             "candidate_misses", "Number of misses for keys in allowed prefixes"
@@ -152,6 +165,7 @@ class ProbabilisticHotCache(ClientWrapper):
         immutable_types: Iterable[type] = IMMUTABLE_TYPES,
         revalidation_retry_seconds: int = 1,
         extend_on_error: bool = False,
+        hot_keys: Iterable[str] = (),
     ) -> None:
         if revalidation_retry_seconds < 1:
             # The winner of the election must move revalidate_at strictly
@@ -177,6 +191,15 @@ class ProbabilisticHotCache(ClientWrapper):
         self._metrics = metrics_collector
         self._immutable_types = immutable_types
         self._extend_on_error = extend_on_error
+        self._hot_keys: FrozenSet[str] = frozenset()
+        self.set_hot_keys(hot_keys)
+
+    def set_hot_keys(self, keys: Iterable[str]) -> None:
+        """Replace the hot key list. Atomic: readers see the old set or the new one."""
+        if isinstance(keys, (str, bytes)):
+            # frozenset("abc") is {"a", "b", "c"}
+            raise TypeError("hot_keys must be a collection of keys, not a str")
+        self._hot_keys = frozenset(keys)
 
     def _read_flags(
         self,
@@ -242,19 +265,24 @@ class ProbabilisticHotCache(ClientWrapper):
         allowed: bool,
     ) -> None:
         if not is_hot:
+            listed = key.key in self._hot_keys
             last_read_age = (
                 value.flags.last_access if value.flags.last_access is not None else 9999
             )
-            if (
+            detected = (
                 value.flags.fetched
                 and last_read_age <= self._max_last_access_age_seconds
-            ):
-                # Is detected as hot
-                if allowed:
+            )
+            if listed or detected:
+                if not allowed:
+                    self._metrics and self._metrics.metric_inc("hot_skips")
+                elif listed:
+                    # Known hot: no server signal, no coin.
+                    self._metrics and self._metrics.metric_inc("listed_promotions")
+                    is_hot = True
+                else:
                     self._metrics and self._metrics.metric_inc("hot_candidates")
                     is_hot = random.getrandbits(10) % self._probability_factor == 0
-                else:
-                    self._metrics and self._metrics.metric_inc("hot_skips")
         if not is_hot:
             return
 

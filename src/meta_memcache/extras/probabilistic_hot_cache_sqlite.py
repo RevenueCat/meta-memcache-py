@@ -5,7 +5,7 @@ import threading
 import time
 import weakref
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from typing import Any, Iterable, List, Optional
 
 from meta_memcache.extras.probabilistic_hot_cache import (
     HotCacheLookup,
@@ -267,6 +267,7 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
         purge_interval_seconds: int = 60,
         revalidation_retry_seconds: int = 1,
         extend_on_error: bool = False,
+        hot_keys: Iterable[str] = (),
     ) -> None:
         super().__init__(
             client=client,
@@ -279,6 +280,7 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
             metrics_collector=metrics_collector,
             revalidation_retry_seconds=revalidation_retry_seconds,
             extend_on_error=extend_on_error,
+            hot_keys=hot_keys,
         )
         self._db = db
         self._purge_interval_seconds = purge_interval_seconds

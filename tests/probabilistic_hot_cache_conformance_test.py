@@ -165,6 +165,7 @@ def test_only_allowed_prefixes_are_cached(
         hot_skips=1,
         candidate_misses=1,
         error_extensions=0,
+        listed_promotions=0,
     )
 
 
@@ -208,7 +209,154 @@ def test_multi_get(
         hot_skips=2,
         candidate_misses=2,
         error_extensions=0,
+        listed_promotions=0,
     )
+
+
+def test_listed_keys_are_promoted_on_first_read(
+    harness: HotCacheHarness, client: Mock, time: Mock, random: Mock, metrics: Mock
+) -> None:
+    cache = harness.build(
+        client,
+        hot_keys=["foo", "foo_miss"],
+        probability_factor=100,
+        metrics_collector=metrics,
+    )
+
+    # The server says it was read too long ago to be hot: stored anyway,
+    # and without tossing the coin
+    assert cache.get("foo") == 1
+    assert harness.contains("foo")
+    random.getrandbits.assert_not_called()
+
+    # The second read is served locally
+    client.meta_get.reset_mock()
+    assert cache.get("foo") == 1
+    client.meta_get.assert_not_called()
+
+    # An unlisted key is left to the server's signal
+    assert cache.get("bar") == 1
+    assert not harness.contains("bar")
+
+    # A listed key the server does not have is nothing to store
+    assert cache.get("foo_miss") is None
+    assert not harness.contains("foo_miss")
+
+    assert_counters(
+        metrics,
+        hits=1,
+        misses=3,
+        skips=0,
+        hot_candidates=0,
+        hot_skips=0,
+        candidate_misses=1,
+        error_extensions=0,
+        listed_promotions=1,
+    )
+
+
+def test_listed_keys_still_need_an_allowed_prefix(
+    harness: HotCacheHarness, client: Mock, time: Mock, metrics: Mock
+) -> None:
+    cache = harness.build(
+        client,
+        hot_keys=["foo", "allowed:foo"],
+        allowed_prefixes=["allowed:"],
+        metrics_collector=metrics,
+    )
+
+    assert cache.get("allowed:foo") == 1
+    assert harness.contains("allowed:foo")
+
+    # The list says which keys are hot; allowed_prefixes still says which
+    # keys may be served stale
+    assert cache.get("foo") == 1
+    assert not harness.contains("foo")
+
+    assert_counters(
+        metrics,
+        hits=0,
+        misses=1,
+        skips=1,
+        hot_candidates=0,
+        hot_skips=1,
+        candidate_misses=0,
+        error_extensions=0,
+        listed_promotions=1,
+    )
+
+
+def test_listed_keys_are_promoted_in_multi_get(
+    harness: HotCacheHarness, client: Mock, time: Mock
+) -> None:
+    cache = harness.build(client, hot_keys=["foo"])
+    expected = {Key("foo"): 1, Key("bar"): 1}
+
+    assert cache.multi_get(["foo", "bar"]) == expected
+    assert harness.contains("foo")
+    assert not harness.contains("bar")
+
+    # The listed key is served locally and no longer asked for
+    client.meta_multiget.reset_mock()
+    assert cache.multi_get(["foo", "bar"]) == expected
+    client.meta_multiget.assert_called_once_with(keys=[Key("bar")], **DEFAULT_FLAGS)
+
+
+def test_set_hot_keys_replaces_the_list(
+    harness: HotCacheHarness, client: Mock, time: Mock
+) -> None:
+    cache = harness.build(client, hot_keys=["foo"])
+
+    cache.set_hot_keys(["bar"])
+    assert cache.get("foo") == 1
+    assert cache.get("bar") == 1
+    assert not harness.contains("foo")
+    assert harness.contains("bar")
+
+    cache.set_hot_keys(())
+    assert cache.get("baz") == 1
+    assert harness.count() == 1
+
+
+def test_hot_keys_rejects_a_bare_string(harness: HotCacheHarness, client: Mock) -> None:
+    with pytest.raises(TypeError, match="hot_keys"):
+        harness.build(client, hot_keys="foo")
+
+    cache = harness.build(client)
+    with pytest.raises(TypeError, match="hot_keys"):
+        cache.set_hot_keys("foo")
+
+
+def test_dropped_listed_key_is_promoted_again_on_the_next_read(
+    harness: HotCacheHarness, client: Mock, time: Mock
+) -> None:
+    cache = harness.build(client, hot_keys=["foo"])
+    assert cache.get("foo") == 1
+
+    # The key is gone from the server: the stale value is dropped
+    client.meta_get.side_effect = lambda key, **kwargs: Miss()
+    time.time.return_value = 61
+    assert cache.get("foo") is None
+    assert harness.count() == 0
+
+    # Back on the server: stored again on the very next read, without
+    # waiting for the server to call it hot
+    client.meta_get.side_effect = make_client().meta_get.side_effect
+    assert cache.get("foo") == 1
+    assert harness.contains("foo")
+
+
+def test_get_or_lease_promotes_listed_keys(
+    harness: HotCacheHarness, lease_client: Mock, time: Mock
+) -> None:
+    cache = harness.build(lease_client, hot_keys=["foo_cold", "foo_win"])
+
+    assert cache.get_or_lease("foo_cold", lease_policy=LeasePolicy()) == 1
+    assert harness.contains("foo_cold")
+
+    # A lease placeholder is a miss, listed or not
+    assert cache.get_or_lease("foo_win", lease_policy=LeasePolicy()) is None
+    assert not harness.contains("foo_win")
 
 
 def test_expired_value_is_refreshed(
