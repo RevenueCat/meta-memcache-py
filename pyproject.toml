@@ -19,6 +19,14 @@ metrics = ["prometheus-client >= 0.17.1"]
 [project.urls]
 homepage = "https://github.com/RevenueCat/meta-memcache-py"
 
+# Required: without it uv treats the project as virtual and never installs it.
+[build-system]
+requires = ["setuptools >= 61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [tool.uv]
 # Dependency cooldown: only resolve releases that are at least 7 days old.
 # Mitigates supply-chain risk from compromised fresh package versions.

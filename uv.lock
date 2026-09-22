@@ -215,7 +215,7 @@ wheels = [
 [[package]]
 name = "meta-memcache"
 version = "3.0.1"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "marisa-trie" },
     { name = "meta-memcache-socket" },
