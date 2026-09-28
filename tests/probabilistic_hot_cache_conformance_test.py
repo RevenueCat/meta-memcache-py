@@ -269,7 +269,7 @@ def test_listed_keys_still_need_an_allowed_prefix(
     assert harness.contains("allowed:foo")
 
     # The list says which keys are hot; allowed_prefixes still says which
-    # keys may be served stale
+    # keys may be served stale. Listed keys outside them are dropped.
     assert cache.get("foo") == 1
     assert not harness.contains("foo")
 
@@ -279,7 +279,7 @@ def test_listed_keys_still_need_an_allowed_prefix(
         misses=1,
         skips=1,
         hot_candidates=0,
-        hot_skips=1,
+        hot_skips=0,
         candidate_misses=0,
         error_extensions=0,
         listed_promotions=1,
@@ -302,29 +302,9 @@ def test_listed_keys_are_promoted_in_multi_get(
     client.meta_multiget.assert_called_once_with(keys=[Key("bar")], **DEFAULT_FLAGS)
 
 
-def test_set_hot_keys_replaces_the_list(
-    harness: HotCacheHarness, client: Mock, time: Mock
-) -> None:
-    cache = harness.build(client, hot_keys=["foo"])
-
-    cache.set_hot_keys(["bar"])
-    assert cache.get("foo") == 1
-    assert cache.get("bar") == 1
-    assert not harness.contains("foo")
-    assert harness.contains("bar")
-
-    cache.set_hot_keys(())
-    assert cache.get("baz") == 1
-    assert harness.count() == 1
-
-
 def test_hot_keys_rejects_a_bare_string(harness: HotCacheHarness, client: Mock) -> None:
     with pytest.raises(TypeError, match="hot_keys"):
         harness.build(client, hot_keys="foo")
-
-    cache = harness.build(client)
-    with pytest.raises(TypeError, match="hot_keys"):
-        cache.set_hot_keys("foo")
 
 
 def test_dropped_listed_key_is_promoted_again_on_the_next_read(
@@ -357,6 +337,94 @@ def test_get_or_lease_promotes_listed_keys(
     # A lease placeholder is a miss, listed or not
     assert cache.get_or_lease("foo_win", lease_policy=LeasePolicy()) is None
     assert not harness.contains("foo_win")
+
+
+LISTED_ONLY = {
+    "allowed_prefixes": ["allowed:"],
+    "allowed_hot_key_prefixes": ["listed:"],
+}
+
+
+def test_allowed_hot_key_prefixes_only_admit_listed_keys(
+    harness: HotCacheHarness, client: Mock, time: Mock, metrics: Mock
+) -> None:
+    cache = harness.build(
+        client,
+        hot_keys=["listed:foo", "foo"],
+        metrics_collector=metrics,
+        **LISTED_ONLY,
+    )
+
+    assert cache.get("listed:foo") == 1
+    assert harness.contains("listed:foo")
+    client.meta_get.reset_mock()
+    assert cache.get("listed:foo") == 1
+    client.meta_get.assert_not_called()
+
+    # Detection never promotes under them, or they would bound nothing
+    assert cache.get("listed:bar_hot") == 1
+    assert not harness.contains("listed:bar_hot")
+
+    # Listed, but under neither prefix set
+    assert cache.get("foo") == 1
+    assert not harness.contains("foo")
+
+    assert_counters(
+        metrics,
+        hits=1,
+        misses=1,
+        skips=2,
+        hot_candidates=0,
+        hot_skips=1,
+        candidate_misses=0,
+        error_extensions=0,
+        listed_promotions=1,
+    )
+
+
+def test_allowed_hot_key_prefixes_in_multi_get(
+    harness: HotCacheHarness, client: Mock, time: Mock
+) -> None:
+    cache = harness.build(client, hot_keys=["listed:foo", "foo"], **LISTED_ONLY)
+    keys = ["listed:foo", "listed:bar_hot", "foo"]
+    expected = {Key(key): 1 for key in keys}
+
+    assert cache.multi_get(keys) == expected
+    assert harness.contains("listed:foo")
+    assert harness.count() == 1
+
+    client.meta_multiget.reset_mock()
+    assert cache.multi_get(keys) == expected
+    client.meta_multiget.assert_called_once_with(
+        keys=[Key("listed:bar_hot"), Key("foo")], **DEFAULT_FLAGS
+    )
+
+
+def test_allowed_hot_key_prefixes_in_get_or_lease(
+    harness: HotCacheHarness, lease_client: Mock, time: Mock
+) -> None:
+    cache = harness.build(lease_client, hot_keys=["listed:foo_cold"], **LISTED_ONLY)
+
+    assert cache.get_or_lease("listed:foo_cold", lease_policy=LeasePolicy()) == 1
+    assert harness.contains("listed:foo_cold")
+
+    assert cache.get_or_lease("listed:bar_hot", lease_policy=LeasePolicy()) == 1
+    assert not harness.contains("listed:bar_hot")
+
+
+def test_allowed_hot_key_prefixes_are_ignored_without_allowed_prefixes(
+    harness: HotCacheHarness, client: Mock, time: Mock
+) -> None:
+    cache = harness.build(
+        client, hot_keys=["foo"], allowed_hot_key_prefixes=["listed:"]
+    )
+
+    assert cache.get("foo") == 1
+    assert cache.get("listed:bar_hot") == 1
+    assert cache.get("listed:bar") == 1
+    assert harness.contains("foo")
+    assert harness.contains("listed:bar_hot")
+    assert not harness.contains("listed:bar")
 
 
 def test_expired_value_is_refreshed(
