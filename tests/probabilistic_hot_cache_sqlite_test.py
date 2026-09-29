@@ -18,6 +18,7 @@ import pytest
 
 from meta_memcache import Key
 from meta_memcache.errors import MemcacheError
+from meta_memcache.extras import probabilistic_hot_cache_sqlite as cache_module
 from meta_memcache.extras.probabilistic_hot_cache_sqlite import (
     HotCacheDBConfig,
     SqliteProbabilisticHotCache,
@@ -135,6 +136,41 @@ def test_config_rejects_an_outdated_schema(tmp_path: Path) -> None:
     conn.close()
     with pytest.raises(ValueError, match="not initialized"):
         HotCacheDBConfig(str(db_path))
+
+
+def test_initialize_migrates_an_outdated_schema(tmp_path: Path) -> None:
+    db_path = tmp_path / "old.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "CREATE TABLE hot_cache (key TEXT PRIMARY KEY, value BLOB NOT NULL, "
+        "expiration INTEGER NOT NULL, revalidate_at INTEGER NOT NULL) "
+        "WITHOUT ROWID"
+    )
+    conn.execute("INSERT INTO hot_cache VALUES ('k', x'00', 100, 100)")
+    conn.commit()
+    conn.close()
+
+    db = HotCacheDBConfig.initialize(str(db_path))
+    assert row_count(db) == 0
+    assert HotCacheDBConfig(str(db_path)) == db
+
+
+def test_initialize_migrates_the_4_0_schema(tmp_path: Path) -> None:
+    db_path = tmp_path / "old.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "CREATE TABLE hot_cache (key TEXT PRIMARY KEY, value BLOB NOT NULL, "
+        "expiration INTEGER NOT NULL, revalidate_at INTEGER NOT NULL, "
+        "size INTEGER NOT NULL) WITHOUT ROWID"
+    )
+    conn.execute("INSERT INTO hot_cache VALUES ('k', x'00', 100, 100, 1)")
+    conn.execute("PRAGMA user_version = 1")
+    conn.commit()
+    conn.close()
+
+    db = HotCacheDBConfig.initialize(str(db_path))
+    assert row_count(db) == 0
+    assert HotCacheDBConfig(str(db_path)) == db
 
 
 def test_config_validates_initialized_db(db: HotCacheDBConfig) -> None:
@@ -419,6 +455,22 @@ def test_purge_runs_on_a_schedule(
     assert cache._lookup_hot_cache(Key("foo_hot")) is None
 
 
+def test_an_unchanged_revalidation_runs_the_scheduled_purge(
+    time: Mock, db: HotCacheDBConfig
+) -> None:
+    cache = build_cache(make_client(), db, purge_interval_seconds=100)
+    time.time.return_value = 0
+    cache._store_entry(Key("dead"), "dead value", 1)  # Dropped at 70
+    time.time.return_value = 50
+    cache._store_entry(Key("foo"), "foo value", 1)  # Expires at 110
+
+    time.time.return_value = 111
+    found = cache._lookup_hot_cache(Key("foo"))
+    cache._store_entry(Key("foo"), "foo value", 1, found)
+
+    assert row_count(db) == 1
+
+
 def test_purge_is_not_repeated_within_the_interval(
     client: Mock, time: Mock, db: HotCacheDBConfig, monkeypatch
 ) -> None:
@@ -524,17 +576,9 @@ def test_one_worker_extends_the_hot_value_for_everybody(
     client_b.meta_get.assert_not_called()
 
 
-def test_a_slow_failure_can_overwrite_a_concurrent_refresh(
+def test_a_slow_failure_keeps_a_concurrent_refresh(
     time: Mock, db: HotCacheDBConfig
 ) -> None:
-    """Known limitation of storing the stale value back on error.
-
-    A worker whose request fails stores back the value it read before
-    making it, so a refresh another worker landed in the meantime is
-    overwritten with the older one. It is reachable whenever a failing
-    request outlives revalidation_retry_seconds, which during an outage is
-    the normal case, and it costs a cache_ttl of recovery for that key.
-    """
     client_a = make_client()
     worker_a = build_cache(client_a, db, extend_on_error=True)
     worker_b = build_cache(make_client(), db, extend_on_error=True)
@@ -551,4 +595,116 @@ def test_a_slow_failure_can_overwrite_a_concurrent_refresh(
     time.time.return_value = 61
 
     assert worker_a.get("foo_hot") == 1  # A serves the value it read
-    assert worker_b._lookup_hot_cache(Key("foo_hot")) == hot(1)  # ... and stored it
+    assert worker_b._lookup_hot_cache(Key("foo_hot")) == hot(2)
+
+
+def row_of(db: HotCacheDBConfig, key: str) -> Optional[tuple]:
+    conn = sqlite3.connect(db.db_path)
+    try:
+        return conn.execute(
+            "SELECT id, expiration, revalidate_at FROM hot_cache WHERE key = ?",
+            (key,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+def test_an_unchanged_revalidation_only_moves_the_clocks(
+    time: Mock, db: HotCacheDBConfig
+) -> None:
+    cache = build_cache(make_client(), db)
+    time.time.return_value = 0
+    cache._store_entry(Key("foo"), "foo value", 1)
+    row_id, _, _ = row_of(db, "foo")
+
+    time.time.return_value = 61
+    found = cache._lookup_hot_cache(Key("foo"))
+    assert found == revalidating("foo value")
+    cache._store_entry(Key("foo"), "foo value", 1, found)
+
+    assert row_of(db, "foo") == (row_id, 121, 121)
+
+
+def test_a_changed_revalidation_stores_the_value(
+    time: Mock, db: HotCacheDBConfig
+) -> None:
+    cache = build_cache(make_client(), db)
+    time.time.return_value = 0
+    cache._store_entry(Key("foo"), "foo value", 1)
+    row_id, _, _ = row_of(db, "foo")
+
+    time.time.return_value = 61
+    found = cache._lookup_hot_cache(Key("foo"))
+    cache._store_entry(Key("foo"), "new value", 1, found)
+
+    new_id, expiration, _ = row_of(db, "foo")
+    assert new_id != row_id and expiration == 121
+    assert cache._lookup_hot_cache(Key("foo")) == hot("new value")
+
+
+def test_an_unchanged_revalidation_does_not_bring_back_a_deleted_row(
+    time: Mock, db: HotCacheDBConfig
+) -> None:
+    cache = build_cache(make_client(), db)
+    time.time.return_value = 0
+    cache._store_entry(Key("foo"), "foo value", 1)
+
+    time.time.return_value = 61
+    found = cache._lookup_hot_cache(Key("foo"))
+    # Another worker dropped it
+    assert cache._clear_hot_cache_if_necessary(Key("foo"))
+    cache._store_entry(Key("foo"), "foo value", 1, found)
+
+    assert row_count(db) == 0
+
+
+@pytest.mark.parametrize("inline", [False, True])
+def test_large_values_round_trip(
+    time: Mock, db: HotCacheDBConfig, monkeypatch, inline: bool
+) -> None:
+    if inline:
+        # As on python < 3.11
+        monkeypatch.setattr(cache_module, "_INLINE_MAX_BYTES", sys.maxsize)
+    cache = build_cache(make_client(), db)
+    value = os.urandom(1024 * 1024)
+
+    time.time.return_value = 0
+    cache._store_entry(Key("big"), value, 1)
+    assert cache._lookup_hot_cache(Key("big")) == hot(value)
+
+
+@pytest.mark.skipif(
+    not hasattr(sqlite3.Connection, "blobopen"), reason="blobopen is python 3.11+"
+)
+def test_a_large_value_replaced_between_reads_is_a_miss(
+    time: Mock, db: HotCacheDBConfig, monkeypatch
+) -> None:
+    cache = build_cache(make_client(), db)
+    time.time.return_value = 0
+    cache._store_entry(Key("foo"), os.urandom(300_000), 1)
+    read_large_value = cache_module._read_large_value
+
+    def replace_before_reading(conn: sqlite3.Connection, row_id: int):
+        # Another worker replaces the row
+        worker = build_cache(make_client(), db)
+        worker._store_entry(Key("foo"), os.urandom(300_000), 1)
+        worker._store_entry(Key("bar"), os.urandom(300_000), 1)
+        return read_large_value(conn, row_id)
+
+    monkeypatch.setattr(cache_module, "_read_large_value", replace_before_reading)
+    assert cache._lookup_hot_cache(Key("foo")) is None
+
+
+def test_a_large_value_is_not_read_past_the_grace_window(
+    time: Mock, db: HotCacheDBConfig, monkeypatch
+) -> None:
+    cache = build_cache(make_client(), db)
+    time.time.return_value = 0
+    cache._store_entry(Key("foo"), os.urandom(300_000), 1)
+    read_large_value = Mock(wraps=cache_module._read_large_value)
+    monkeypatch.setattr(cache_module, "_read_large_value", read_large_value)
+
+    time.time.return_value = 71  # Expires at 60, grace window ends at 70
+    assert cache._lookup_hot_cache(Key("foo")) is None
+    read_large_value.assert_not_called()
+    assert row_count(db) == 0

@@ -3,7 +3,7 @@ import pickle
 import random
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import (
     Any,
     Callable,
@@ -11,7 +11,6 @@ from typing import (
     FrozenSet,
     Iterable,
     List,
-    NamedTuple,
     Optional,
     Tuple,
     Union,
@@ -36,7 +35,8 @@ from meta_memcache.stats import (
 _log: logging.Logger = logging.getLogger(__name__)
 
 
-class HotCacheLookup(NamedTuple):
+@dataclass(frozen=True)
+class HotCacheLookup:
     """
     What the hot cache holds for a key, and what the caller has to do.
 
@@ -50,6 +50,8 @@ class HotCacheLookup(NamedTuple):
     value: Any
     must_revalidate: bool
     size: int
+    # Opaque to the base class: the store's record, for _store_entry()
+    stored: Any = field(default=None, compare=False, repr=False)
 
 
 IMMUTABLE_TYPES = frozenset((type(None), bool, int, float, str, bytes))
@@ -296,21 +298,26 @@ class ProbabilisticHotCache(ClientWrapper):
         self._metrics and self._metrics.metric_inc("misses")
         return None
 
-    def _hit(self, value: Any, must_revalidate: bool, size: int) -> HotCacheLookup:
+    def _hit(
+        self, value: Any, must_revalidate: bool, size: int, stored: Any = None
+    ) -> HotCacheLookup:
         # The thread elected to revalidate counts as a miss: it is about to
         # go to the server, the same as if we had held nothing.
         self._metrics and self._metrics.metric_inc(
             "misses" if must_revalidate else "hits"
         )
-        return HotCacheLookup(value=value, must_revalidate=must_revalidate, size=size)
+        return HotCacheLookup(
+            value=value, must_revalidate=must_revalidate, size=size, stored=stored
+        )
 
     def _store_in_hot_cache_if_necessary(
         self,
         key: Key,
         value: Value,
-        is_hot: bool,
+        found: Optional[HotCacheLookup],
         allowed: bool,
     ) -> None:
+        is_hot = found is not None
         if not is_hot:
             listed = key.key in self._hot_keys
             last_read_age = (
@@ -333,9 +340,15 @@ class ProbabilisticHotCache(ClientWrapper):
         if not is_hot:
             return
 
-        self._store_entry(key, value.value, value.size)
+        self._store_entry(key, value.value, value.size, found)
 
-    def _store_entry(self, key: Key, value: Any, size: int) -> None:
+    def _store_entry(
+        self,
+        key: Key,
+        value: Any,
+        size: int,
+        found: Optional[HotCacheLookup] = None,
+    ) -> None:
         is_immutable = type(value) in self._immutable_types
         self._store[key.key] = CachedValue(
             value=value,
@@ -355,7 +368,7 @@ class ProbabilisticHotCache(ClientWrapper):
         values last as long as the outage lasts and no longer. The counter
         is what tells the two apart from the outside.
         """
-        self._store_entry(key, held.value, held.size)
+        self._store_entry(key, held.value, held.size, held)
         self._metrics and self._metrics.metric_inc("error_extensions")
 
     def _serve_stale_on_error(self, key: Key, held: HotCacheLookup) -> Any:
@@ -472,13 +485,12 @@ class ProbabilisticHotCache(ClientWrapper):
                 raise
             return self._serve_stale_on_error(key, rescue)
 
-        is_hot = found is not None
         if result is None:
             allowed and self._metrics and self._metrics.metric_inc("candidate_misses")
-            is_hot and self._clear_hot_cache_if_necessary(key)
+            found is not None and self._clear_hot_cache_if_necessary(key)
             return None
         else:
-            self._store_in_hot_cache_if_necessary(key, result, is_hot, allowed)
+            self._store_in_hot_cache_if_necessary(key, result, found, allowed)
             return result.value
 
     def multi_get(
@@ -538,15 +550,14 @@ class ProbabilisticHotCache(ClientWrapper):
 
             for key, response in responses.items():
                 allowed = key not in ineligible_keys
-                is_hot = key in values if allowed else False
+                found = revalidating.get(key) if allowed else None
                 if is_error_response(response):
                     # Only the servers holding these keys failed; the rest of
                     # the batch answered normally. Nothing here says the key
                     # is gone, so the hot value stays.
-                    held = revalidating.get(key)
                     values[key] = (
-                        self._serve_stale_on_error(key, held)
-                        if held is not None and self._extend_on_error
+                        self._serve_stale_on_error(key, found)
+                        if found is not None and self._extend_on_error
                         else None
                     )
                     continue
@@ -555,10 +566,10 @@ class ProbabilisticHotCache(ClientWrapper):
                     allowed and self._metrics and self._metrics.metric_inc(
                         "candidate_misses"
                     )
-                    is_hot and self._clear_hot_cache_if_necessary(key)
+                    found is not None and self._clear_hot_cache_if_necessary(key)
                     values[key] = None
                 else:
-                    self._store_in_hot_cache_if_necessary(key, result, is_hot, allowed)
+                    self._store_in_hot_cache_if_necessary(key, result, found, allowed)
                     values[key] = result.value
         self._report_served(served_keys, served_size, weight)
         return values
