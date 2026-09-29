@@ -8,6 +8,7 @@ surviving a fork.
 """
 
 import os
+import pickle
 import sqlite3
 import sys
 from pathlib import Path
@@ -18,6 +19,7 @@ import pytest
 
 from meta_memcache import Key
 from meta_memcache.errors import MemcacheError
+from meta_memcache.extras import probabilistic_hot_cache_sqlite as cache_module
 from meta_memcache.extras.probabilistic_hot_cache_sqlite import (
     HotCacheDBConfig,
     SqliteProbabilisticHotCache,
@@ -115,6 +117,23 @@ def test_config_rejects_an_outdated_schema(tmp_path: Path) -> None:
     conn.close()
     with pytest.raises(ValueError, match="not initialized"):
         HotCacheDBConfig(str(db_path))
+
+
+def test_initialize_migrates_an_outdated_schema(tmp_path: Path) -> None:
+    db_path = tmp_path / "old.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "CREATE TABLE hot_cache (key TEXT PRIMARY KEY, value BLOB NOT NULL, "
+        "expiration INTEGER NOT NULL, revalidate_at INTEGER NOT NULL) "
+        "WITHOUT ROWID"
+    )
+    conn.execute("INSERT INTO hot_cache VALUES ('k', x'00', 100, 100)")
+    conn.commit()
+    conn.close()
+
+    db = HotCacheDBConfig.initialize(str(db_path))
+    assert row_count(db) == 0
+    assert HotCacheDBConfig(str(db_path)) == db
 
 
 def test_config_validates_initialized_db(db: HotCacheDBConfig) -> None:
@@ -532,3 +551,60 @@ def test_a_slow_failure_can_overwrite_a_concurrent_refresh(
 
     assert worker_a.get("foo_hot") == 1  # A serves the value it read
     assert worker_b._lookup_hot_cache(Key("foo_hot")) == hot(1)  # ... and stored it
+
+
+@pytest.mark.parametrize("has_blobopen", [True, False])
+def test_large_values_round_trip(
+    time: Mock, db: HotCacheDBConfig, monkeypatch, has_blobopen: bool
+) -> None:
+    if has_blobopen and not hasattr(sqlite3.Connection, "blobopen"):
+        pytest.skip("Connection.blobopen needs python 3.11+")
+    monkeypatch.setattr(
+        "meta_memcache.extras.probabilistic_hot_cache_sqlite._HAS_BLOBOPEN",
+        has_blobopen,
+    )
+    cache = build_cache(make_client(), db)
+    value = os.urandom(1024 * 1024)  # Spans hundreds of overflow pages
+
+    time.time.return_value = 0
+    cache._store_entry(Key("big"), value)
+    assert cache._lookup_hot_cache(Key("big")) == hot(value)
+
+
+def test_the_value_is_read_from_the_same_snapshot_as_its_row(
+    time: Mock, db: HotCacheDBConfig, monkeypatch
+) -> None:
+    cache = build_cache(make_client(), db)
+    time.time.return_value = 0
+    cache._store_entry(Key("foo"), "foo value")
+    read_value = cache_module._read_value
+
+    def replace_before_reading(conn: sqlite3.Connection, rowid: int) -> bytes:
+        # Another worker replaces the row, and its rowid goes to another key
+        other = sqlite3.connect(db.db_path, isolation_level=None)
+        other.execute("DELETE FROM hot_cache WHERE key = 'foo'")
+        other.execute(
+            "INSERT INTO hot_cache (rowid, key, expiration, revalidate_at, value) "
+            "VALUES (?, 'bar', 60, 60, ?)",
+            (rowid, pickle.dumps("bar value")),
+        )
+        other.close()
+        return read_value(conn, rowid)
+
+    monkeypatch.setattr(cache_module, "_read_value", replace_before_reading)
+    assert cache._lookup_hot_cache(Key("foo")) == hot("foo value")
+
+
+def test_the_value_is_not_read_past_the_grace_window(
+    time: Mock, db: HotCacheDBConfig, monkeypatch
+) -> None:
+    cache = build_cache(make_client(), db)
+    time.time.return_value = 0
+    cache._store_entry(Key("foo"), "foo value")
+    read_value = Mock(wraps=cache_module._read_value)
+    monkeypatch.setattr(cache_module, "_read_value", read_value)
+
+    time.time.return_value = 71  # Expires at 60, grace window ends at 70
+    assert cache._lookup_hot_cache(Key("foo")) is None
+    read_value.assert_not_called()
+    assert row_count(db) == 0
