@@ -117,6 +117,23 @@ def test_config_rejects_an_outdated_schema(tmp_path: Path) -> None:
         HotCacheDBConfig(str(db_path))
 
 
+def test_initialize_migrates_an_outdated_schema(tmp_path: Path) -> None:
+    db_path = tmp_path / "old.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "CREATE TABLE hot_cache (key TEXT PRIMARY KEY, value BLOB NOT NULL, "
+        "expiration INTEGER NOT NULL, revalidate_at INTEGER NOT NULL) "
+        "WITHOUT ROWID"
+    )
+    conn.execute("INSERT INTO hot_cache VALUES ('k', x'00', 100, 100)")
+    conn.commit()
+    conn.close()
+
+    db = HotCacheDBConfig.initialize(str(db_path))
+    assert row_count(db) == 0
+    assert HotCacheDBConfig(str(db_path)) == db
+
+
 def test_config_validates_initialized_db(db: HotCacheDBConfig) -> None:
     # Workers that didn't run initialize() build the config themselves
     assert HotCacheDBConfig(db.db_path) == HotCacheDBConfig(db.db_path)
@@ -532,3 +549,12 @@ def test_a_slow_failure_can_overwrite_a_concurrent_refresh(
 
     assert worker_a.get("foo_hot") == 1  # A serves the value it read
     assert worker_b._lookup_hot_cache(Key("foo_hot")) == hot(1)  # ... and stored it
+
+
+def test_large_values_round_trip(time: Mock, db: HotCacheDBConfig) -> None:
+    cache = build_cache(make_client(), db)
+    value = os.urandom(1024 * 1024)  # Spans hundreds of overflow pages
+
+    time.time.return_value = 0
+    cache._store_entry(Key("big"), value)
+    assert cache._lookup_hot_cache(Key("big")) == hot(value)

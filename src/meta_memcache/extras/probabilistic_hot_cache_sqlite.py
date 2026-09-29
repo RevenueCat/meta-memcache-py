@@ -15,9 +15,9 @@ from meta_memcache.interfaces.cache_api import CacheApi
 from meta_memcache.metrics.base import BaseMetricsCollector, MetricDefinition
 from meta_memcache.protocol import Key
 
-# No row id, so the table is layed out following the PK
-# and searching values by key is a single index lookup.
-# No index in expiration, as it will penalize writes and
+# A rowid table: WITHOUT ROWID loads every overflowing record the key search
+# passes, and values here span hundreds of pages. Blob last, so the small
+# columns stay in the leaf. No index in expiration, as it will penalize writes and
 # changes too often, on every revalidation. Scanning the
 # whole table is acceptable for the occasional purge,
 # the table is bounded in size and deletes are likely
@@ -30,11 +30,13 @@ from meta_memcache.protocol import Key
 _TABLE_SCHEMA = (
     "CREATE TABLE IF NOT EXISTS hot_cache ("
     "key TEXT PRIMARY KEY, "
-    "value BLOB NOT NULL, "
     "expiration INTEGER NOT NULL, "
-    "revalidate_at INTEGER NOT NULL"
-    ") WITHOUT ROWID"
+    "revalidate_at INTEGER NOT NULL, "
+    "value BLOB NOT NULL"
+    ")"
 )
+# Stored in PRAGMA user_version; initialize() recreates older tables.
+_SCHEMA_VERSION = 1
 _GET = "SELECT value, expiration, revalidate_at FROM hot_cache WHERE key = ?"
 # The winner of the revalidation race atomically pushes the retry clock
 # forward, so every other worker keeps serving the stale value while the
@@ -146,8 +148,13 @@ class HotCacheDBConfig:
             # don't block each other, which is what makes sharing the cache
             # across workers fast.
             conn.execute("PRAGMA journal_mode = WAL")
-            conn.execute(_TABLE_SCHEMA)
-            conn.commit()
+            conn.isolation_level = None
+            conn.execute("BEGIN IMMEDIATE")
+            if conn.execute("PRAGMA user_version").fetchone()[0] != _SCHEMA_VERSION:
+                conn.execute("DROP TABLE IF EXISTS hot_cache")
+                conn.execute(_TABLE_SCHEMA)
+                conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
+            conn.execute("COMMIT")
         finally:
             conn.close()
         return cls(
@@ -164,6 +171,12 @@ class HotCacheDBConfig:
             )
         conn = sqlite3.connect(self.db_path)
         try:
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            if version != _SCHEMA_VERSION:
+                raise ValueError(
+                    f"Hot cache db {self.db_path} is not initialized: schema "
+                    f"version {version}, expected {_SCHEMA_VERSION}"
+                )
             conn.execute(_GET, ("",)).fetchone()
         except sqlite3.Error as e:
             raise ValueError(
