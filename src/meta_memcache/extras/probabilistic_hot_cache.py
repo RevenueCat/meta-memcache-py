@@ -120,10 +120,12 @@ class ProbabilisticHotCache(ClientWrapper):
 
     Keys in hot_keys are known to be hot: they are promoted on their first
     read, regardless of the server's last access signal and the probability
-    factor, but still only under allowed_prefixes. That signal is unreliable
-    under memcached's segmented LRU, where the last access time tracks LRU
-    activations rather than reads. Replace the list at any time with
-    set_hot_keys().
+    factor, but still only under allowed_prefixes or allowed_hot_key_prefixes.
+    That signal is unreliable under memcached's segmented LRU, where the last
+    access time tracks LRU activations rather than reads.
+    allowed_hot_key_prefixes admit listed keys only: detection never promotes
+    under them, so their cardinality doesn't bound memory. The list is fixed
+    at construction.
     """
 
     # Subclasses extend these with the metrics of their own storage.
@@ -166,6 +168,7 @@ class ProbabilisticHotCache(ClientWrapper):
         revalidation_retry_seconds: int = 1,
         extend_on_error: bool = False,
         hot_keys: Iterable[str] = (),
+        allowed_hot_key_prefixes: Optional[List[str]] = None,
     ) -> None:
         if revalidation_retry_seconds < 1:
             # The winner of the election must move revalidate_at strictly
@@ -191,15 +194,32 @@ class ProbabilisticHotCache(ClientWrapper):
         self._metrics = metrics_collector
         self._immutable_types = immutable_types
         self._extend_on_error = extend_on_error
-        self._hot_keys: FrozenSet[str] = frozenset()
-        self.set_hot_keys(hot_keys)
 
-    def set_hot_keys(self, keys: Iterable[str]) -> None:
-        """Replace the hot key list. Atomic: readers see the old set or the new one."""
-        if isinstance(keys, (str, bytes)):
-            # frozenset("abc") is {"a", "b", "c"}
+        # Explicit hot key list
+        if isinstance(hot_keys, (str, bytes)):
             raise TypeError("hot_keys must be a collection of keys, not a str")
-        self._hot_keys = frozenset(keys)
+        self._allowed_hot_key_prefixes: Optional[Trie] = (
+            Trie(allowed_hot_key_prefixes)
+            if allowed_prefixes and allowed_hot_key_prefixes
+            else None
+        )
+        self._hot_keys: FrozenSet[str] = frozenset(
+            key
+            for key in hot_keys
+            if self._allowed_prefixes is None
+            or self._allowed_prefixes.prefixes(key)
+            or (
+                self._allowed_hot_key_prefixes
+                and self._allowed_hot_key_prefixes.prefixes(key)
+            )
+        )
+
+    def _is_allowed(self, key: Key) -> bool:
+        return (
+            self._allowed_prefixes is None
+            or key.key in self._hot_keys
+            or bool(self._allowed_prefixes.prefixes(key.key))
+        )
 
     def _read_flags(
         self,
@@ -366,7 +386,7 @@ class ProbabilisticHotCache(ClientWrapper):
     ) -> Optional[Any]:
         key = key if isinstance(key, Key) else Key(key)
         found: Optional[HotCacheLookup] = None
-        if self._allowed_prefixes and not self._allowed_prefixes.prefixes(key.key):
+        if not self._is_allowed(key):
             allowed = False
             self._metrics and self._metrics.metric_inc("skips")
         else:
@@ -427,7 +447,7 @@ class ProbabilisticHotCache(ClientWrapper):
         pending_keys: List[Key] = []
         ineligible_keys: List[Key] = []
         for key in _keys:
-            if self._allowed_prefixes and not self._allowed_prefixes.prefixes(key.key):
+            if not self._is_allowed(key):
                 ineligible_keys.append(key)
                 continue
             found = self._lookup_hot_cache(key=key)

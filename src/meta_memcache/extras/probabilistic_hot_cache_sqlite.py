@@ -268,6 +268,7 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
         revalidation_retry_seconds: int = 1,
         extend_on_error: bool = False,
         hot_keys: Iterable[str] = (),
+        allowed_hot_key_prefixes: Optional[List[str]] = None,
     ) -> None:
         super().__init__(
             client=client,
@@ -281,6 +282,7 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
             revalidation_retry_seconds=revalidation_retry_seconds,
             extend_on_error=extend_on_error,
             hot_keys=hot_keys,
+            allowed_hot_key_prefixes=allowed_hot_key_prefixes,
         )
         self._db = db
         self._purge_interval_seconds = purge_interval_seconds
