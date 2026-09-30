@@ -63,6 +63,14 @@ def build_cache(
     )
 
 
+def blob_count(db: HotCacheDBConfig) -> int:
+    conn = sqlite3.connect(db.db_path)
+    try:
+        return conn.execute("SELECT COUNT(*) FROM hot_cache_blobs").fetchone()[0]
+    finally:
+        conn.close()
+
+
 def row_count(db: HotCacheDBConfig) -> int:
     conn = sqlite3.connect(db.db_path)
     try:
@@ -83,9 +91,10 @@ def test_initialize_creates_and_is_idempotent(tmp_path: Path) -> None:
 def test_initialize_recreate_starts_fresh(tmp_path: Path) -> None:
     db = HotCacheDBConfig.initialize(str(tmp_path / "hot.db"))
     conn = sqlite3.connect(db.db_path)
+    conn.execute("INSERT INTO hot_cache_blobs (id, value) VALUES (1, x'00')")
     conn.execute(
-        "INSERT INTO hot_cache (key, value, expiration, revalidate_at) "
-        "VALUES ('k', x'00', 100, 100)"
+        "INSERT INTO hot_cache (key, expiration, revalidate_at, blob_id) "
+        "VALUES ('k', 100, 100, 1)"
     )
     conn.commit()
     conn.close()
@@ -558,3 +567,49 @@ def test_large_values_round_trip(time: Mock, db: HotCacheDBConfig) -> None:
     time.time.return_value = 0
     cache._store_entry(Key("big"), value)
     assert cache._lookup_hot_cache(Key("big")) == hot(value)
+
+
+def test_values_are_freed_with_their_entries(time: Mock, db: HotCacheDBConfig) -> None:
+    cache = build_cache(make_client(), db)
+    time.time.return_value = 0
+    cache._store_entry(Key("a"), "a1")
+    cache._store_entry(Key("b"), "b1")
+    cache._store_entry(Key("a"), "a2")  # Replaced
+    assert (row_count(db), blob_count(db)) == (2, 2)
+    assert cache._lookup_hot_cache(Key("a")) == hot("a2")
+
+    time.time.return_value = 60  # Both stale
+    assert cache._clear_hot_cache_if_necessary(Key("a")) is True
+    assert (row_count(db), blob_count(db)) == (1, 1)
+
+    time.time.return_value = 100  # Past b's hard deadline
+    cache._purge_expired(cache._get_conn())
+    assert (row_count(db), blob_count(db)) == (0, 0)
+
+
+def test_revalidation_does_not_rewrite_the_value(
+    time: Mock, db: HotCacheDBConfig
+) -> None:
+    cache = build_cache(make_client(), db)
+    time.time.return_value = 0
+    cache._store_entry(Key("foo"), b"x" * (1024 * 1024))
+    conn = sqlite3.connect(db.db_path)
+    blob_id = conn.execute("SELECT blob_id FROM hot_cache").fetchone()[0]
+
+    time.time.return_value = 61  # Stale: this lookup wins the election
+    assert cache._lookup_hot_cache(Key("foo")) == revalidating(b"x" * (1024 * 1024))
+    assert conn.execute("SELECT blob_id FROM hot_cache").fetchone()[0] == blob_id
+    conn.close()
+
+
+def test_a_failed_store_leaves_no_value_behind(time: Mock, tmp_path: Path) -> None:
+    db = HotCacheDBConfig.initialize(str(tmp_path / "hot.db"), max_size_bytes=64 * 1024)
+    cache = build_cache(make_client(), db)
+    time.time.return_value = 0
+    cache._store_entry(Key("small"), "small")
+
+    # Too big to ever fit: the store fails, even after the purge and retry
+    cache._store_entry(Key("big"), b"x" * (256 * 1024))
+    assert (row_count(db), blob_count(db)) == (1, 1)
+    assert cache._lookup_hot_cache(Key("big")) is None
+    assert cache._lookup_hot_cache(Key("small")) == hot("small")

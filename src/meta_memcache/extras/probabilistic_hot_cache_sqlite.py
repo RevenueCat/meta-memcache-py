@@ -15,9 +15,10 @@ from meta_memcache.interfaces.cache_api import CacheApi
 from meta_memcache.metrics.base import BaseMetricsCollector, MetricDefinition
 from meta_memcache.protocol import Key
 
-# A rowid table: WITHOUT ROWID loads every overflowing record the key search
-# passes, and values here span hundreds of pages. Blob last, so the small
-# columns stay in the leaf. No index in expiration, as it will penalize writes and
+# Rowid tables: WITHOUT ROWID loads every overflowing record the key search
+# passes, and values here span hundreds of pages. The values live in their own
+# table, so revalidating or dropping an entry never reads its blob, and the
+# triggers free a value once nothing points at it. No index in expiration, as it will penalize writes and
 # changes too often, on every revalidation. Scanning the
 # whole table is acceptable for the occasional purge,
 # the table is bounded in size and deletes are likely
@@ -27,17 +28,31 @@ from meta_memcache.protocol import Key
 # store, so it is also the hard deadline: the entry must not be served past
 # expiration + max_stale_while_revalidate_seconds. `revalidate_at` is the
 # separate retry clock the workers race on to elect a single revalidator.
-_TABLE_SCHEMA = (
+_SCHEMA = (
     "CREATE TABLE IF NOT EXISTS hot_cache ("
     "key TEXT PRIMARY KEY, "
     "expiration INTEGER NOT NULL, "
     "revalidate_at INTEGER NOT NULL, "
+    "blob_id INTEGER NOT NULL"
+    ")",
+    "CREATE TABLE IF NOT EXISTS hot_cache_blobs ("
+    "id INTEGER PRIMARY KEY, "
     "value BLOB NOT NULL"
-    ")"
+    ")",
+    "CREATE TRIGGER IF NOT EXISTS hot_cache_drop_blob "
+    "AFTER DELETE ON hot_cache BEGIN "
+    "DELETE FROM hot_cache_blobs WHERE id = OLD.blob_id; END",
+    "CREATE TRIGGER IF NOT EXISTS hot_cache_swap_blob "
+    "AFTER UPDATE OF blob_id ON hot_cache WHEN OLD.blob_id != NEW.blob_id BEGIN "
+    "DELETE FROM hot_cache_blobs WHERE id = OLD.blob_id; END",
 )
 # Stored in PRAGMA user_version; initialize() recreates older tables.
 _SCHEMA_VERSION = 1
-_GET = "SELECT value, expiration, revalidate_at FROM hot_cache WHERE key = ?"
+# One statement, so the entry and its value come from the same snapshot.
+_GET = (
+    "SELECT b.value, h.expiration, h.revalidate_at FROM hot_cache h "
+    "JOIN hot_cache_blobs b ON b.id = h.blob_id WHERE h.key = ?"
+)
 # The winner of the revalidation race atomically pushes the retry clock
 # forward, so every other worker keeps serving the stale value while the
 # winner refreshes it. The guard is a compare-and-swap: only the worker that
@@ -45,9 +60,16 @@ _GET = "SELECT value, expiration, revalidate_at FROM hot_cache WHERE key = ?"
 _WIN_REVALIDATION = (
     "UPDATE hot_cache SET revalidate_at = ? WHERE key = ? AND revalidate_at = ?"
 )
+_STORE_BLOB = "INSERT INTO hot_cache_blobs (value) VALUES (?)"
+_DROP_BLOB = "DELETE FROM hot_cache_blobs WHERE id = (SELECT blob_id FROM hot_cache WHERE key = ?)"
+# An upsert rather than INSERT OR REPLACE: REPLACE only fires the delete
+# trigger with recursive_triggers on, so the old value would leak.
 _STORE = (
-    "INSERT OR REPLACE INTO hot_cache (key, value, expiration, revalidate_at) "
-    "VALUES (?, ?, ?, ?)"
+    "INSERT INTO hot_cache (key, expiration, revalidate_at, blob_id) "
+    "VALUES (?, ?, ?, ?) ON CONFLICT (key) DO UPDATE SET "
+    "expiration = excluded.expiration, "
+    "revalidate_at = excluded.revalidate_at, "
+    "blob_id = excluded.blob_id"
 )
 _CLEAR = "DELETE FROM hot_cache WHERE key = ? AND expiration <= ?"
 _PURGE_EXPIRED = "DELETE FROM hot_cache WHERE expiration <= ?"
@@ -152,7 +174,9 @@ class HotCacheDBConfig:
             conn.execute("BEGIN IMMEDIATE")
             if conn.execute("PRAGMA user_version").fetchone()[0] != _SCHEMA_VERSION:
                 conn.execute("DROP TABLE IF EXISTS hot_cache")
-                conn.execute(_TABLE_SCHEMA)
+                conn.execute("DROP TABLE IF EXISTS hot_cache_blobs")
+                for statement in _SCHEMA:
+                    conn.execute(statement)
                 conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
             conn.execute("COMMIT")
         finally:
@@ -205,6 +229,24 @@ class HotCacheDBConfig:
         # page cache, which is shared across all workers.
         conn.execute(f"PRAGMA mmap_size = {self.max_size_bytes}")
         return conn
+
+
+def _write_entry(
+    conn: sqlite3.Connection, key: str, blob: bytes, expiration: int
+) -> None:
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        # Free the old value first, so the new one reuses its pages.
+        conn.execute(_DROP_BLOB, (key,))
+        blob_id = conn.execute(_STORE_BLOB, (blob,)).lastrowid
+        # A fresh value is revalidated as soon as it goes stale.
+        conn.execute(_STORE, (key, expiration, expiration, blob_id))
+        conn.execute("COMMIT")
+    except BaseException:
+        # A failed COMMIT (eg: SQLITE_FULL) may already have rolled back.
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
 
 
 class SqliteProbabilisticHotCache(ProbabilisticHotCache):
@@ -354,12 +396,11 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
 
     def _store_entry(self, key: Key, value: Any) -> None:
         blob = pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
-        # A fresh value is revalidated as soon as it goes stale.
         expiration = int(time.time()) + self._cache_ttl
         try:
             conn = self._get_conn()
             try:
-                conn.execute(_STORE, (key.key, blob, expiration, expiration))
+                _write_entry(conn, key.key, blob, expiration)
             except sqlite3.OperationalError as e:
                 if not _is_db_full(e):
                     # A busy or otherwise broken db: not something a purge
@@ -369,7 +410,7 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
                 # deadline and retry once. If there is still no room, the
                 # value is simply not cached.
                 self._purge_expired(conn)
-                conn.execute(_STORE, (key.key, blob, expiration, expiration))
+                _write_entry(conn, key.key, blob, expiration)
             else:
                 # Purge on a fixed schedule so the db doesn't have to fill up
                 # before entries get evicted. On a timer rather than at
