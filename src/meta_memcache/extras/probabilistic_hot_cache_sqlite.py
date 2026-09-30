@@ -5,7 +5,7 @@ import threading
 import time
 import weakref
 from dataclasses import dataclass
-from typing import Any, Iterable, List, Optional, Tuple
+from typing import Any, Iterable, List, Optional
 
 from meta_memcache.extras.probabilistic_hot_cache import (
     HotCacheLookup,
@@ -37,8 +37,7 @@ _TABLE_SCHEMA = (
 )
 # Stored in PRAGMA user_version; initialize() recreates older tables.
 _SCHEMA_VERSION = 1
-_GET = "SELECT rowid, expiration, revalidate_at FROM hot_cache WHERE key = ?"
-_GET_VALUE = "SELECT value FROM hot_cache WHERE rowid = ?"
+_GET = "SELECT value, expiration, revalidate_at FROM hot_cache WHERE key = ?"
 # The winner of the revalidation race atomically pushes the retry clock
 # forward, so every other worker keeps serving the stale value while the
 # winner refreshes it. The guard is a compare-and-swap: only the worker that
@@ -65,8 +64,6 @@ _BUSY_TIMEOUT_MS = 100
 # available from python 3.11: without it we cannot tell a full db from a
 # busy one, so we assume it is full, which is the best we can do.
 _SQLITE_FULL: int = getattr(sqlite3, "SQLITE_FULL", 13)
-# Connection.blobopen is python 3.11+.
-_HAS_BLOBOPEN = hasattr(sqlite3.Connection, "blobopen")
 
 
 def _is_db_full(error: sqlite3.Error) -> bool:
@@ -210,15 +207,6 @@ class HotCacheDBConfig:
         return conn
 
 
-def _read_value(conn: sqlite3.Connection, rowid: int) -> bytes:
-    if _HAS_BLOBOPEN:
-        # Copies straight into the bytes object, and without the GIL.
-        with conn.blobopen("hot_cache", "value", rowid, readonly=True) as blob:
-            return blob.read()
-    value: bytes = conn.execute(_GET_VALUE, (rowid,)).fetchone()[0]
-    return value
-
-
 class SqliteProbabilisticHotCache(ProbabilisticHotCache):
     """
     ProbabilisticHotCache backed by a sqlite file shared across workers.
@@ -322,33 +310,16 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
             self._local.next_purge_at = time.time() + self._purge_interval_seconds
         return conn
 
-    def _read_entry(
-        self, conn: sqlite3.Connection, key: str, now: int
-    ) -> Optional[Tuple[Optional[bytes], int, int]]:
-        # One snapshot for both reads: a concurrent replace can hand the rowid
-        # to another key. The value is None once past the grace window.
-        conn.execute("BEGIN")
-        try:
-            row = conn.execute(_GET, (key,)).fetchone()
-            if row is None:
-                return None
-            rowid, expiration, revalidate_at = row
-            if now >= expiration + self._max_stale_while_revalidate_seconds:
-                return None, expiration, revalidate_at
-            return _read_value(conn, rowid), expiration, revalidate_at
-        finally:
-            conn.execute("ROLLBACK")
-
     def _lookup_hot_cache(self, key: Key) -> Optional[HotCacheLookup]:
         try:
             conn = self._get_conn()
-            now = int(time.time())
-            entry = self._read_entry(conn, key.key, now)
-            if entry is None:
+            row = conn.execute(_GET, (key.key,)).fetchone()
+            if row is None:
                 return self._miss()
 
-            blob, expiration, revalidate_at = entry
-            if blob is None:
+            blob, expiration, revalidate_at = row
+            now = int(time.time())
+            if now >= expiration + self._max_stale_while_revalidate_seconds:
                 # Past the grace window: nobody managed to revalidate it, so
                 # the value is too stale to serve. Drop it and treat the key
                 # as cold, it has to be detected as hot again.
