@@ -3,10 +3,10 @@ Micro-benchmark of the sqlite hot cache get() path: hits, misses,
 revalidations of a stale entry, and stores.
 
 Run against the working tree:
-    uv run python benchmark_hot_cache.py --sizes 100,1000,100000
+    uv run python benchmarks/hot_cache.py --sizes 100,1000,100000
 
 Compare git revisions (each one runs in its own worktree and venv):
-    uv run python benchmark_hot_cache.py --rev main --rev HEAD --rev WORKTREE
+    uv run python benchmarks/hot_cache.py --rev main --rev HEAD --rev WORKTREE
 
 WORKTREE is the uncommitted working tree. Add --python 3.11 to pick the
 interpreter (it also changes the bundled sqlite version).
@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List
 
-REPO = Path(__file__).resolve().parent
+REPO = Path(__file__).resolve().parent.parent
 WORKTREE = "WORKTREE"
 HOT_TTL = 1 << 30
 REVALIDATE_TTL = 1
