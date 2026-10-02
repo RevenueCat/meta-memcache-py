@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import Callable, Dict, List, Literal, Optional, Tuple, Union
 
 from meta_memcache_socket import RequestFlags
@@ -21,6 +22,12 @@ from meta_memcache.protocol import (
     Value,
     ValueContainer,
 )
+from meta_memcache.stats import (
+    CacheStats,
+    StatsCallback,
+    StatsSampler,
+    sample_weight,
+)
 
 _log: logging.Logger = logging.getLogger(__name__)
 
@@ -40,11 +47,15 @@ class DefaultExecutor:
         key_encoder_fn: Optional[Callable[[Key], bytes]] = None,
         raise_on_server_error: bool = True,
         touch_ttl_to_consider_write_failure: Optional[int] = 50,
+        stats_callback: Optional[StatsCallback] = None,
+        stats_sampler: Optional[StatsSampler] = None,
     ) -> None:
         self._serializer = serializer
         self._key_encoder_fn = key_encoder_fn
         self._raise_on_server_error = raise_on_server_error
         self._touch_ttl_to_consider_write_failure = touch_ttl_to_consider_write_failure
+        self._stats_callback = stats_callback
+        self._stats_sampler = stats_sampler
         self.on_write_failure = WriteFailureEvent()
 
     def _prepare_serialized_value_and_flags(
@@ -134,6 +145,64 @@ class DefaultExecutor:
         track_write_failures: bool,
         raise_on_server_error: Optional[bool] = None,
     ) -> MemcacheResponse:
+        callback = self._stats_callback
+        weight = None if callback is None else sample_weight(self._stats_sampler)
+        if weight is None:
+            return self._exec_on_pool(
+                pool,
+                command,
+                key,
+                value,
+                flags,
+                track_write_failures,
+                raise_on_server_error,
+            )
+        start_time_ns = time.time_ns()
+        response: Optional[MemcacheResponse] = None
+        error: Optional[Exception] = None
+        try:
+            response = self._exec_on_pool(
+                pool,
+                command,
+                key,
+                value,
+                flags,
+                track_write_failures,
+                raise_on_server_error,
+            )
+            return response
+        except Exception as e:
+            error = e
+            raise
+        finally:
+            stats = CacheStats(
+                command=command,
+                keys=[key],
+                size=response.size if isinstance(response, Value) else 0,
+                server=pool.server,
+                flags=flags,
+                responses=None if response is None else {key: response},
+                start_time_ns=start_time_ns,
+                duration_ns=time.time_ns() - start_time_ns,
+                error=error,
+                weight=weight,
+            )
+            try:
+                # There is a weight, so there is a callback
+                callback(stats)  # type: ignore[misc]
+            except Exception:
+                _log.warning("Error reporting cache stats", exc_info=True)
+
+    def _exec_on_pool(
+        self,
+        pool: ConnectionPool,
+        command: MetaCommand,
+        key: Key,
+        value: MaybeValue,
+        flags: Optional[RequestFlags],
+        track_write_failures: bool,
+        raise_on_server_error: Optional[bool] = None,
+    ) -> MemcacheResponse:
         cmd_value, flags = (
             (None, flags)
             if value is None
@@ -212,6 +281,65 @@ class DefaultExecutor:
             return {key: MISS_DUE_TO_ERROR for key in keys}
 
     def exec_multi_on_pool(
+        self,
+        pool: ConnectionPool,
+        command: MetaCommand,
+        key_values: List[Tuple[Key, MaybeValue]],
+        flags: Optional[RequestFlags],
+        track_write_failures: bool,
+        raise_on_server_error: Optional[bool] = None,
+    ) -> Dict[Key, MemcacheResponse]:
+        callback = self._stats_callback
+        weight = None if callback is None else sample_weight(self._stats_sampler)
+        if weight is None:
+            return self._exec_multi_on_pool(
+                pool,
+                command,
+                key_values,
+                flags,
+                track_write_failures,
+                raise_on_server_error,
+            )
+        start_time_ns = time.time_ns()
+        responses: Optional[Dict[Key, MemcacheResponse]] = None
+        error: Optional[Exception] = None
+        try:
+            responses = self._exec_multi_on_pool(
+                pool,
+                command,
+                key_values,
+                flags,
+                track_write_failures,
+                raise_on_server_error,
+            )
+            return responses
+        except Exception as e:
+            error = e
+            raise
+        finally:
+            size = 0
+            for response in responses.values() if responses else ():
+                if isinstance(response, Value):
+                    size += response.size
+            stats = CacheStats(
+                command=command,
+                keys=[key for key, _ in key_values],
+                size=size,
+                server=pool.server,
+                flags=flags,
+                responses=responses,
+                start_time_ns=start_time_ns,
+                duration_ns=time.time_ns() - start_time_ns,
+                error=error,
+                weight=weight,
+            )
+            try:
+                # There is a weight, so there is a callback
+                callback(stats)  # type: ignore[misc]
+            except Exception:
+                _log.warning("Error reporting cache stats", exc_info=True)
+
+    def _exec_multi_on_pool(
         self,
         pool: ConnectionPool,
         command: MetaCommand,
