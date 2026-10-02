@@ -1,3 +1,4 @@
+import logging
 import pickle
 import random
 import threading
@@ -25,6 +26,14 @@ from meta_memcache.extras.client_wrapper import ClientWrapper
 from meta_memcache.interfaces.cache_api import CacheApi
 from meta_memcache.metrics.base import BaseMetricsCollector, MetricDefinition
 from meta_memcache.protocol import Key, RequestFlags, Value, is_error_response
+from meta_memcache.stats import (
+    HotCacheStats,
+    HotCacheStatsCallback,
+    StatsSampler,
+    sample_weight,
+)
+
+_log: logging.Logger = logging.getLogger(__name__)
 
 
 class HotCacheLookup(NamedTuple):
@@ -35,11 +44,12 @@ class HotCacheLookup(NamedTuple):
     here for "nothing found": `value` is always something we hold, fresh or
     stale. It is carried even when the caller must revalidate, so a
     revalidation that fails can fall back on it without going back to the
-    store for it.
+    store for it. `size` is what the server sent for it, in bytes.
     """
 
     value: Any
     must_revalidate: bool
+    size: int
 
 
 IMMUTABLE_TYPES = frozenset((type(None), bool, int, float, str, bytes))
@@ -61,12 +71,14 @@ class CachedValue:
     past expiration + max_stale_while_revalidate_seconds. `revalidate_at` is
     the separate retry clock the threads race on to elect a single
     revalidator, and defaults to the expiration: a fresh value is
-    revalidated as soon as it goes stale.
+    revalidated as soon as it goes stale. `size` is what the server sent
+    for the value, in bytes.
     """
 
     _value: Any
     expiration: int
     revalidate_at: int
+    size: int = 0
     _is_serialized: bool = False
 
     def __init__(
@@ -75,6 +87,7 @@ class CachedValue:
         expiration: int,
         revalidate_at: Optional[int] = None,
         is_immutable: bool = False,
+        size: int = 0,
     ):
         self._value = (
             value
@@ -83,6 +96,7 @@ class CachedValue:
         )
         self.expiration = expiration
         self.revalidate_at = expiration if revalidate_at is None else revalidate_at
+        self.size = size
         self._is_serialized = not is_immutable
 
     def get_cloned_value(self) -> Any:
@@ -126,6 +140,13 @@ class ProbabilisticHotCache(ClientWrapper):
     allowed_hot_key_prefixes admit listed keys only: detection never promotes
     under them, so their cardinality doesn't bound memory. The list is fixed
     at construction.
+
+    With a stats_callback, each read reports the keys it served from the
+    hot cache, with the size the server sent for them (see
+    meta_memcache.stats). The keys it fetches are reported by the executor
+    of the client it wraps, so give that executor a stats_callback too. A
+    stats_sampler picks the reads to report, and the weight to report them
+    with, so the rest skip building their stats.
     """
 
     # Subclasses extend these with the metrics of their own storage.
@@ -169,6 +190,8 @@ class ProbabilisticHotCache(ClientWrapper):
         extend_on_error: bool = False,
         hot_keys: Iterable[str] = (),
         allowed_hot_key_prefixes: Optional[List[str]] = None,
+        stats_callback: Optional[HotCacheStatsCallback] = None,
+        stats_sampler: Optional[StatsSampler] = None,
     ) -> None:
         if revalidation_retry_seconds < 1:
             # The winner of the election must move revalidate_at strictly
@@ -194,6 +217,8 @@ class ProbabilisticHotCache(ClientWrapper):
         self._metrics = metrics_collector
         self._immutable_types = immutable_types
         self._extend_on_error = extend_on_error
+        self._stats_callback = stats_callback
+        self._stats_sampler = stats_sampler
 
         # Explicit hot key list
         if isinstance(hot_keys, (str, bytes)):
@@ -262,20 +287,20 @@ class ProbabilisticHotCache(ClientWrapper):
                     found.revalidate_at = now + self._revalidation_retry_seconds
                     must_revalidate = True
 
-        return self._hit(found.get_cloned_value(), must_revalidate)
+        return self._hit(found.get_cloned_value(), must_revalidate, found.size)
 
     def _miss(self) -> Optional[HotCacheLookup]:
         """Count a miss and report that we hold nothing for the key."""
         self._metrics and self._metrics.metric_inc("misses")
         return None
 
-    def _hit(self, value: Any, must_revalidate: bool) -> HotCacheLookup:
+    def _hit(self, value: Any, must_revalidate: bool, size: int) -> HotCacheLookup:
         # The thread elected to revalidate counts as a miss: it is about to
         # go to the server, the same as if we had held nothing.
         self._metrics and self._metrics.metric_inc(
             "misses" if must_revalidate else "hits"
         )
-        return HotCacheLookup(value=value, must_revalidate=must_revalidate)
+        return HotCacheLookup(value=value, must_revalidate=must_revalidate, size=size)
 
     def _store_in_hot_cache_if_necessary(
         self,
@@ -306,18 +331,19 @@ class ProbabilisticHotCache(ClientWrapper):
         if not is_hot:
             return
 
-        self._store_entry(key, value.value)
+        self._store_entry(key, value.value, value.size)
 
-    def _store_entry(self, key: Key, value: Any) -> None:
+    def _store_entry(self, key: Key, value: Any, size: int) -> None:
         is_immutable = type(value) in self._immutable_types
         self._store[key.key] = CachedValue(
             value=value,
             expiration=int(time.time()) + self._cache_ttl,
             is_immutable=is_immutable,
+            size=size,
         )
         self._metrics and self._metrics.gauge_set("item_count", len(self._store))
 
-    def _serve_stale_on_error(self, key: Key, value: Any) -> Any:
+    def _serve_stale_on_error(self, key: Key, held: HotCacheLookup) -> Any:
         """
         Fall back on the value the lookup handed us, since the server failed.
 
@@ -327,9 +353,18 @@ class ProbabilisticHotCache(ClientWrapper):
         values last as long as the outage lasts and no longer. The counter
         is what tells the two apart from the outside.
         """
-        self._store_entry(key, value)
+        self._store_entry(key, held.value, held.size)
         self._metrics and self._metrics.metric_inc("error_extensions")
-        return value
+        return held.value
+
+    def _report_served(self, keys: List[Key], size: int, weight: Optional[int]) -> None:
+        # No weight when the read was not sampled
+        if self._stats_callback is not None and weight is not None and keys:
+            stats = HotCacheStats(keys, size, weight)
+            try:
+                self._stats_callback(stats)
+            except Exception:
+                _log.warning("Error reporting cache stats", exc_info=True)
 
     def _clear_hot_cache_if_necessary(self, key: Key) -> bool:
         # Called when the server missed, and when an entry runs out of grace
@@ -393,6 +428,10 @@ class ProbabilisticHotCache(ClientWrapper):
             allowed = True
             found = self._lookup_hot_cache(key=key)
             if found is not None and not found.must_revalidate:
+                if self._stats_callback is not None:
+                    self._report_served(
+                        [key], found.size, sample_weight(self._stats_sampler)
+                    )
                 return found.value
 
         # A server failure reaches us either as an exception or, on a pool
@@ -420,12 +459,12 @@ class ProbabilisticHotCache(ClientWrapper):
                     key, flags=self._read_flags(touch_ttl, recache_policy)
                 )
                 if rescue is not None and is_error_response(response):
-                    return self._serve_stale_on_error(key, rescue.value)
+                    return self._serve_stale_on_error(key, rescue)
                 result = self._process_get_result(key, response)
         except MemcacheError:
             if rescue is None:
                 raise
-            return self._serve_stale_on_error(key, rescue.value)
+            return self._serve_stale_on_error(key, rescue)
 
         is_hot = found is not None
         if result is None:
@@ -443,7 +482,14 @@ class ProbabilisticHotCache(ClientWrapper):
         recache_policy: Optional[RecachePolicy] = None,
     ) -> Dict[Key, Optional[Any]]:
         _keys: List[Key] = [key if isinstance(key, Key) else Key(key) for key in keys]
+        # Sampled up front, so a read left unreported doesn't gather its stats
+        weight = (
+            None if self._stats_callback is None else sample_weight(self._stats_sampler)
+        )
         values: Dict[Key, Optional[Any]] = {}
+        revalidating: Dict[Key, HotCacheLookup] = {}
+        served_keys: List[Key] = []
+        served_size = 0
         pending_keys: List[Key] = []
         ineligible_keys: List[Key] = []
         for key in _keys:
@@ -458,7 +504,11 @@ class ProbabilisticHotCache(ClientWrapper):
             # that fails can fall back on it.
             values[key] = found.value
             if found.must_revalidate:
+                revalidating[key] = found
                 pending_keys.append(key)
+            elif weight is not None:
+                served_keys.append(key)
+                served_size += found.size
 
         if pending_keys or ineligible_keys:
             if self._metrics and ineligible_keys:
@@ -478,8 +528,9 @@ class ProbabilisticHotCache(ClientWrapper):
                 for key in pending_keys:
                     # Only the ones we were refreshing: a hot value that was
                     # still fresh never reached the failing request.
-                    if key in values:
-                        values[key] = self._serve_stale_on_error(key, values[key])
+                    if (held := revalidating.get(key)) is not None:
+                        values[key] = self._serve_stale_on_error(key, held)
+                self._report_served(served_keys, served_size, weight)
                 return {key: values.get(key) for key in _keys}
 
             for key, response in responses.items():
@@ -489,9 +540,10 @@ class ProbabilisticHotCache(ClientWrapper):
                     # Only the servers holding these keys failed; the rest of
                     # the batch answered normally. Nothing here says the key
                     # is gone, so the hot value stays.
+                    held = revalidating.get(key)
                     values[key] = (
-                        self._serve_stale_on_error(key, values[key])
-                        if is_hot and self._extend_on_error
+                        self._serve_stale_on_error(key, held)
+                        if held is not None and self._extend_on_error
                         else None
                     )
                     continue
@@ -505,4 +557,5 @@ class ProbabilisticHotCache(ClientWrapper):
                 else:
                     self._store_in_hot_cache_if_necessary(key, result, is_hot, allowed)
                     values[key] = result.value
+        self._report_served(served_keys, served_size, weight)
         return values

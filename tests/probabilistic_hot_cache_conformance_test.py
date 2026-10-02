@@ -7,7 +7,7 @@ probabilistic_hot_cache_test.py and probabilistic_hot_cache_sqlite_test.py.
 """
 
 from pathlib import Path
-from typing import Callable, Mapping
+from typing import Callable, List, Mapping, Optional
 from unittest.mock import Mock
 
 import pytest
@@ -19,6 +19,7 @@ from meta_memcache.errors import MemcacheError
 from meta_memcache.metrics.prometheus import PrometheusMetricsCollector
 from meta_memcache.interfaces.router import DEFAULT_FAILURE_HANDLING
 from meta_memcache.protocol import MISS_DUE_TO_ERROR, Miss, ResponseFlags, Value
+from meta_memcache.stats import HotCacheStats
 from tests.hot_cache_harness import (
     hot,
     revalidating,
@@ -572,7 +573,7 @@ def test_values_are_isolated_between_reads(
     harness: HotCacheHarness, client: Mock, time: Mock
 ) -> None:
     cache = harness.build(client)
-    cache._store_entry(Key("k"), {"a": [1, 2]})
+    cache._store_entry(Key("k"), {"a": [1, 2]}, 1)
 
     # A caller mutating what it got back cannot pollute the hot cache
     cache._lookup_hot_cache(Key("k")).value["a"].append(3)
@@ -870,3 +871,126 @@ def test_error_extensions_are_counted(
     assert cache.get("foo_hot") == 1
 
     assert counters(metrics)["test_hot_cache_error_extensions"] == 1
+
+
+def served(*keys: str, weight: int = 1) -> HotCacheStats:
+    """The stats of a read the hot cache served itself, of 1-byte values."""
+    return HotCacheStats(keys=[Key(key) for key in keys], size=len(keys), weight=weight)
+
+
+def test_stats_report_the_reads_served_from_the_hot_cache(
+    harness: HotCacheHarness, client: Mock, time: Mock
+) -> None:
+    stats: List[HotCacheStats] = []
+    cache = harness.build(client, stats_callback=stats.append)
+
+    # Fetched from the server, so it is the executor's to report
+    assert cache.get("foo_hot") == 1
+    assert stats == []
+
+    assert cache.get("foo_hot") == 1
+    assert stats == [served("foo_hot")]
+
+
+def test_stats_report_a_multi_get_once_with_the_keys_served_locally(
+    harness: HotCacheHarness, client: Mock, time: Mock
+) -> None:
+    stats: List[HotCacheStats] = []
+    cache = harness.build(client, stats_callback=stats.append)
+    cache.multi_get(["a_hot", "b_hot"])
+    assert stats == []
+
+    assert cache.multi_get(["a_hot", "cold", "b_hot"]) == {
+        Key("a_hot"): 1,
+        Key("cold"): 1,
+        Key("b_hot"): 1,
+    }
+    assert stats == [served("a_hot", "b_hot")]
+
+
+def test_stats_report_get_or_lease_hits(
+    harness: HotCacheHarness, lease_client: Mock, time: Mock
+) -> None:
+    stats: List[HotCacheStats] = []
+    cache = harness.build(lease_client, stats_callback=stats.append)
+    lease_policy = LeasePolicy()
+
+    assert cache.get_or_lease("foo_hot", lease_policy=lease_policy) == 1
+    assert cache.get_or_lease("foo_hot", lease_policy=lease_policy) == 1
+    assert stats == [served("foo_hot")]
+
+
+def test_stats_leave_revalidations_to_the_executor(
+    harness: HotCacheHarness, client: Mock, time: Mock
+) -> None:
+    stats: List[HotCacheStats] = []
+    cache = harness.build(client, stats_callback=stats.append)
+    cache.get("foo_hot")
+
+    time.time.return_value = 61
+    assert cache.get("foo_hot") == 1  # Elected to refresh it, from the server
+    assert stats == []
+
+    time.time.return_value = 122
+    assert cache._lookup_hot_cache(Key("foo_hot")) == revalidating(1)
+    # Someone else is refreshing it, so this one is served the stale value
+    assert cache.get("foo_hot") == 1
+    assert stats == [served("foo_hot")]
+
+
+def test_stats_leave_stale_values_served_on_errors_to_the_executor(
+    harness: HotCacheHarness, client: Mock, time: Mock
+) -> None:
+    stats: List[HotCacheStats] = []
+    cache = harness.build(client, extend_on_error=True, stats_callback=stats.append)
+    cache.get("foo_hot")
+
+    client.meta_get.side_effect = MemcacheError("mimic cache error")
+    time.time.return_value = 61
+    assert cache.get("foo_hot") == 1  # The server was asked, and failed
+    assert stats == []
+
+
+def test_a_failing_stats_callback_does_not_fail_the_read(
+    harness: HotCacheHarness, client: Mock, time: Mock
+) -> None:
+    def fail(stats: HotCacheStats) -> None:
+        raise RuntimeError("mimic broken callback")
+
+    cache = harness.build(client, stats_callback=fail)
+    cache.get("foo_hot")
+
+    assert cache.get("foo_hot") == 1
+    assert cache.multi_get(["foo_hot"]) == {Key("foo_hot"): 1}
+
+
+def test_a_sampler_skips_the_reads_it_returns_no_weight_for(
+    harness: HotCacheHarness, client: Mock, time: Mock
+) -> None:
+    stats: List[HotCacheStats] = []
+    weights = iter([None, 10, None, 20])
+    cache = harness.build(
+        client, stats_callback=stats.append, stats_sampler=weights.__next__
+    )
+    cache.get("foo_hot")  # From the server: not sampled here at all
+
+    assert cache.get("foo_hot") == 1
+    assert cache.get("foo_hot") == 1
+    assert cache.multi_get(["foo_hot", "cold"]) == {Key("foo_hot"): 1, Key("cold"): 1}
+    assert cache.multi_get(["foo_hot", "cold"]) == {Key("foo_hot"): 1, Key("cold"): 1}
+    assert stats == [served("foo_hot", weight=10), served("foo_hot", weight=20)]
+
+
+def test_a_failing_sampler_skips_the_report_but_not_the_read(
+    harness: HotCacheHarness, client: Mock, time: Mock
+) -> None:
+    def fail() -> Optional[int]:
+        raise RuntimeError("mimic broken sampler")
+
+    stats: List[HotCacheStats] = []
+    cache = harness.build(client, stats_callback=stats.append, stats_sampler=fail)
+    cache.get("foo_hot")
+
+    assert cache.get("foo_hot") == 1
+    assert cache.multi_get(["foo_hot"]) == {Key("foo_hot"): 1}
+    assert stats == []
