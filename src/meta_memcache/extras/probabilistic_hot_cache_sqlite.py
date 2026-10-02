@@ -14,6 +14,7 @@ from meta_memcache.extras.probabilistic_hot_cache import (
 from meta_memcache.interfaces.cache_api import CacheApi
 from meta_memcache.metrics.base import BaseMetricsCollector, MetricDefinition
 from meta_memcache.protocol import Key
+from meta_memcache.stats import HotCacheStatsCallback, StatsSampler
 
 # No row id, so the table is layed out following the PK
 # and searching values by key is a single index lookup.
@@ -32,10 +33,14 @@ _TABLE_SCHEMA = (
     "key TEXT PRIMARY KEY, "
     "value BLOB NOT NULL, "
     "expiration INTEGER NOT NULL, "
-    "revalidate_at INTEGER NOT NULL"
+    "revalidate_at INTEGER NOT NULL, "
+    "size INTEGER NOT NULL"
     ") WITHOUT ROWID"
 )
-_GET = "SELECT value, expiration, revalidate_at FROM hot_cache WHERE key = ?"
+# Bumped whenever the table changes, so initialize() starts over any db that
+# a release laid out differently (user_version is 0 until it is first set).
+_SCHEMA_VERSION = 1
+_GET = "SELECT value, expiration, revalidate_at, size FROM hot_cache WHERE key = ?"
 # The winner of the revalidation race atomically pushes the retry clock
 # forward, so every other worker keeps serving the stale value while the
 # winner refreshes it. The guard is a compare-and-swap: only the worker that
@@ -44,8 +49,8 @@ _WIN_REVALIDATION = (
     "UPDATE hot_cache SET revalidate_at = ? WHERE key = ? AND revalidate_at = ?"
 )
 _STORE = (
-    "INSERT OR REPLACE INTO hot_cache (key, value, expiration, revalidate_at) "
-    "VALUES (?, ?, ?, ?)"
+    "INSERT OR REPLACE INTO hot_cache (key, value, expiration, revalidate_at, size) "
+    "VALUES (?, ?, ?, ?, ?)"
 )
 _CLEAR = "DELETE FROM hot_cache WHERE key = ? AND expiration <= ?"
 _PURGE_EXPIRED = "DELETE FROM hot_cache WHERE expiration <= ?"
@@ -146,7 +151,13 @@ class HotCacheDBConfig:
             # don't block each other, which is what makes sharing the cache
             # across workers fast.
             conn.execute("PRAGMA journal_mode = WAL")
-            conn.execute(_TABLE_SCHEMA)
+            conn.execute("BEGIN IMMEDIATE")
+            if conn.execute("PRAGMA user_version").fetchone()[0] != _SCHEMA_VERSION:
+                # Left behind by a release with another layout, and it is
+                # just a cache: drop it rather than migrate it.
+                conn.execute("DROP TABLE IF EXISTS hot_cache")
+                conn.execute(_TABLE_SCHEMA)
+                conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
             conn.commit()
         finally:
             conn.close()
@@ -269,6 +280,8 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
         extend_on_error: bool = False,
         hot_keys: Iterable[str] = (),
         allowed_hot_key_prefixes: Optional[List[str]] = None,
+        stats_callback: Optional[HotCacheStatsCallback] = None,
+        stats_sampler: Optional[StatsSampler] = None,
     ) -> None:
         super().__init__(
             client=client,
@@ -283,6 +296,8 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
             extend_on_error=extend_on_error,
             hot_keys=hot_keys,
             allowed_hot_key_prefixes=allowed_hot_key_prefixes,
+            stats_callback=stats_callback,
+            stats_sampler=stats_sampler,
         )
         self._db = db
         self._purge_interval_seconds = purge_interval_seconds
@@ -306,7 +321,7 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
             if row is None:
                 return self._miss()
 
-            blob, expiration, revalidate_at = row
+            blob, expiration, revalidate_at, size = row
             now = int(time.time())
             if now >= expiration + self._max_stale_while_revalidate_seconds:
                 # Past the grace window: nobody managed to revalidate it, so
@@ -335,20 +350,20 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
                     ).rowcount
                     > 0
                 )
-            return self._hit(pickle.loads(blob), must_revalidate)
+            return self._hit(pickle.loads(blob), must_revalidate, size)
         except (sqlite3.Error, pickle.PickleError):
             # Best effort: a failing hot cache behaves as a miss.
             self._metrics and self._metrics.metric_inc("errors")
             return self._miss()
 
-    def _store_entry(self, key: Key, value: Any) -> None:
+    def _store_entry(self, key: Key, value: Any, size: int) -> None:
         blob = pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
         # A fresh value is revalidated as soon as it goes stale.
         expiration = int(time.time()) + self._cache_ttl
         try:
             conn = self._get_conn()
             try:
-                conn.execute(_STORE, (key.key, blob, expiration, expiration))
+                conn.execute(_STORE, (key.key, blob, expiration, expiration, size))
             except sqlite3.OperationalError as e:
                 if not _is_db_full(e):
                     # A busy or otherwise broken db: not something a purge
@@ -358,7 +373,7 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
                 # deadline and retry once. If there is still no room, the
                 # value is simply not cached.
                 self._purge_expired(conn)
-                conn.execute(_STORE, (key.key, blob, expiration, expiration))
+                conn.execute(_STORE, (key.key, blob, expiration, expiration, size))
             else:
                 # Purge on a fixed schedule so the db doesn't have to fill up
                 # before entries get evicted. On a timer rather than at

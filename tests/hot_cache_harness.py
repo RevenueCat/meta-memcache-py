@@ -65,15 +65,16 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
 
 
 # The two shapes a hot cache lookup comes back in when it holds something.
-# When it holds nothing at all it returns None.
-def hot(value: Any) -> HotCacheLookup:
+# When it holds nothing at all it returns None. The test clients answer with
+# 1-byte values, so that is the size they come back with by default.
+def hot(value: Any, size: int = 1) -> HotCacheLookup:
     """Served from the hot cache, no revalidation needed."""
-    return HotCacheLookup(value=value, must_revalidate=False)
+    return HotCacheLookup(value=value, must_revalidate=False, size=size)
 
 
-def revalidating(value: Any) -> HotCacheLookup:
+def revalidating(value: Any, size: int = 1) -> HotCacheLookup:
     """Elected to refresh it, holding `value` to fall back on if that fails."""
-    return HotCacheLookup(value=value, must_revalidate=True)
+    return HotCacheLookup(value=value, must_revalidate=True, size=size)
 
 
 def make_client() -> Mock:
