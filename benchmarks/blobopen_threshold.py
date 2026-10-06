@@ -1,6 +1,6 @@
 """
 Hit latency per value size, reading inline vs with blobopen, to pick
-_INLINE_MAX_BYTES. Runs against the checked out code:
+blobopen_threshold_bytes. Runs against the checked out code:
     uv run python benchmarks/blobopen_threshold.py --db-dir /dev/shm
 """
 
@@ -71,8 +71,8 @@ def main() -> None:
 
     from meta_memcache.extras import probabilistic_hot_cache_sqlite as module
 
-    if not hasattr(module, "_INLINE_MAX_BYTES"):
-        sys.exit("This checkout has no blobopen read path (_INLINE_MAX_BYTES)")
+    if not hasattr(module, "DEFAULT_BLOBOPEN_THRESHOLD_BYTES"):
+        sys.exit("This checkout has no blobopen_threshold_bytes")
     if not hasattr(sqlite3.Connection, "blobopen"):
         sys.exit("blobopen needs python 3.11+")
     print(f"python {sys.version.split()[0]}, sqlite {sqlite3.sqlite_version}")
@@ -95,13 +95,15 @@ def main() -> None:
             scenario = Scenario(str(size), [os.urandom(size)])
 
             def measure(limit: int) -> List[float]:
-                module._INLINE_MAX_BYTES = limit
-                cache = fresh_cache(scenario, f"{tmp}/hot.db", args)
+                options = {"blobopen_threshold_bytes": limit}
+                cache = fresh_cache(scenario, f"{tmp}/hot.db", args, **options)
                 if args.checkpoint:
                     cache._get_conn().execute("PRAGMA wal_checkpoint(TRUNCATE)")
                 writer = cache  # Kept open: the last close would empty the WAL
                 if args.reader:
-                    cache = build_cache(cache.client, f"{tmp}/hot.db", recreate=False)
+                    cache = build_cache(
+                        cache.client, f"{tmp}/hot.db", recreate=False, **options
+                    )
                 assert cache.get("hot0") == scenario.values[0]
                 us = 1e6 * time_per_call(
                     lambda: cache.get("hot0"), args.min_seconds, args.repeats

@@ -660,12 +660,11 @@ def test_an_unchanged_revalidation_does_not_bring_back_a_deleted_row(
 
 @pytest.mark.parametrize("inline", [False, True])
 def test_large_values_round_trip(
-    time: Mock, db: HotCacheDBConfig, monkeypatch, inline: bool
+    time: Mock, db: HotCacheDBConfig, inline: bool
 ) -> None:
-    if inline:
-        # As on python < 3.11
-        monkeypatch.setattr(cache_module, "_INLINE_MAX_BYTES", sys.maxsize)
-    cache = build_cache(make_client(), db)
+    # Inline is also what python < 3.11 does
+    threshold = sys.maxsize if inline else 0
+    cache = build_cache(make_client(), db, blobopen_threshold_bytes=threshold)
     value = os.urandom(1024 * 1024)
 
     time.time.return_value = 0

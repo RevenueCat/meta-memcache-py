@@ -76,10 +76,9 @@ _INITIALIZE_BUSY_TIMEOUT_SECONDS = 0.5
 # available from python 3.11: without it we cannot tell a full db from a
 # busy one, so we assume it is full, which is the best we can do.
 _SQLITE_FULL: int = getattr(sqlite3, "SQLITE_FULL", 13)
+DEFAULT_BLOBOPEN_THRESHOLD_BYTES = 256 * 1024
 # Connection.blobopen is python 3.11+: without it every value is read inline.
-_INLINE_MAX_BYTES = (
-    256 * 1024 if hasattr(sqlite3.Connection, "blobopen") else sys.maxsize
-)
+_HAS_BLOBOPEN = hasattr(sqlite3.Connection, "blobopen")
 
 
 def _is_db_full(error: sqlite3.Error) -> bool:
@@ -292,6 +291,8 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
     waiting on the other workers.
 
     All values are pickled, since they must be shared across processes.
+    Values over blobopen_threshold_bytes are read with blobopen (python
+    3.11+), which copies them once and without holding the GIL.
 
     With extend_on_error the hot values survive a server outage, shared
     across every worker: the first one to hit an error stores the value
@@ -324,6 +325,7 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
         allowed_hot_key_prefixes: Optional[List[str]] = None,
         stats_callback: Optional[HotCacheStatsCallback] = None,
         stats_sampler: Optional[StatsSampler] = None,
+        blobopen_threshold_bytes: int = DEFAULT_BLOBOPEN_THRESHOLD_BYTES,
     ) -> None:
         super().__init__(
             client=client,
@@ -343,6 +345,9 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
         )
         self._db = db
         self._purge_interval_seconds = purge_interval_seconds
+        self._inline_max_bytes = (
+            blobopen_threshold_bytes if _HAS_BLOBOPEN else sys.maxsize
+        )
         self._local = threading.local()
         _get_instance_registry().add(self)
 
@@ -359,7 +364,7 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
     def _lookup_hot_cache(self, key: Key) -> Optional[HotCacheLookup]:
         try:
             conn = self._get_conn()
-            row = conn.execute(_GET, (_INLINE_MAX_BYTES, key.key)).fetchone()
+            row = conn.execute(_GET, (self._inline_max_bytes, key.key)).fetchone()
             if row is None:
                 return self._miss()
 
