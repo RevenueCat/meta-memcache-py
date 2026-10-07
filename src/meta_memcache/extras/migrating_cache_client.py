@@ -173,7 +173,6 @@ class MigratingCacheClient(HighLevelCommandsMixin):
         self,
         key: Key,
         value: Any,
-        ttl: int,
         flags: Optional[RequestFlags] = None,
         failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> WriteResponse:
@@ -183,7 +182,6 @@ class MigratingCacheClient(HighLevelCommandsMixin):
             origin_response = self._origin_client.meta_set(
                 key=key,
                 value=value,
-                ttl=ttl,
                 flags=flags,
                 failure_handling=failure_handling,
             )
@@ -191,7 +189,6 @@ class MigratingCacheClient(HighLevelCommandsMixin):
             destination_response = self._destination_client.meta_set(
                 key=key,
                 value=value,
-                ttl=ttl,
                 flags=flags,
                 failure_handling=failure_handling,
             )

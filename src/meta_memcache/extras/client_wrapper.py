@@ -57,14 +57,12 @@ class ClientWrapper(HighLevelCommandsMixin):
         self,
         key: Key,
         value: Any,
-        ttl: int,
         flags: Optional[RequestFlags] = None,
         failure_handling: FailureHandling = DEFAULT_FAILURE_HANDLING,
     ) -> WriteResponse:
         return self.client.meta_set(
             key=key,
             value=value,
-            ttl=ttl,
             flags=flags,
             failure_handling=failure_handling,
         )

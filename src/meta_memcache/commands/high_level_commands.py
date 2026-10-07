@@ -190,7 +190,6 @@ class HighLevelCommandsMixin:
         return self.meta_set(
             key=key,
             value=value,
-            ttl=ttl,
             flags=flags,
         )
 
@@ -227,7 +226,6 @@ class HighLevelCommandsMixin:
         result = self.meta_set(
             key=key,
             value=value,
-            ttl=ttl,
             flags=flags,
             failure_handling=_REFILL_FAILURE_HANDLING,
         )
