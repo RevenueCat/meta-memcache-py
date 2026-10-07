@@ -1,11 +1,12 @@
 import os
 import pickle
 import sqlite3
+import sys
 import threading
 import time
 import weakref
 from dataclasses import dataclass
-from typing import Any, Iterable, List, Optional
+from typing import Any, Iterable, List, NamedTuple, Optional
 
 from meta_memcache.extras.probabilistic_hot_cache import (
     HotCacheLookup,
@@ -16,31 +17,37 @@ from meta_memcache.metrics.base import BaseMetricsCollector, MetricDefinition
 from meta_memcache.protocol import Key
 from meta_memcache.stats import HotCacheStatsCallback, StatsSampler
 
-# No row id, so the table is layed out following the PK
-# and searching values by key is a single index lookup.
+# Rowid table, blob last: WITHOUT ROWID reads overflow pages on key search.
+# AUTOINCREMENT: ids are never reused, so a large value can be read by id.
 # No index in expiration, as it will penalize writes and
 # changes too often, on every revalidation. Scanning the
 # whole table is acceptable for the occasional purge,
 # the table is bounded in size and deletes are likely
 # more costly than the actual scan.
 #
-# `expiration` is when the value goes stale and is never mutated after the
-# store, so it is also the hard deadline: the entry must not be served past
+# `expiration` is when the value goes stale and only moves on a store or
+# refresh, so it is also the hard deadline: the entry must not be served past
 # expiration + max_stale_while_revalidate_seconds. `revalidate_at` is the
 # separate retry clock the workers race on to elect a single revalidator.
 _TABLE_SCHEMA = (
     "CREATE TABLE IF NOT EXISTS hot_cache ("
-    "key TEXT PRIMARY KEY, "
-    "value BLOB NOT NULL, "
+    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+    "key TEXT NOT NULL UNIQUE, "
     "expiration INTEGER NOT NULL, "
     "revalidate_at INTEGER NOT NULL, "
-    "size INTEGER NOT NULL"
-    ") WITHOUT ROWID"
+    "size INTEGER NOT NULL, "
+    "value BLOB NOT NULL"
+    ")"
 )
 # Bumped whenever the table changes, so initialize() starts over any db that
 # a release laid out differently (user_version is 0 until it is first set).
-_SCHEMA_VERSION = 1
-_GET = "SELECT value, expiration, revalidate_at, size FROM hot_cache WHERE key = ?"
+_SCHEMA_VERSION = 2
+# length() skips overflow pages: large values are read with blobopen instead
+_GET = (
+    "SELECT id, expiration, revalidate_at, size, "
+    "CASE WHEN length(value) <= ? THEN value END "
+    "FROM hot_cache WHERE key = ?"
+)
 # The winner of the revalidation race atomically pushes the retry clock
 # forward, so every other worker keeps serving the stale value while the
 # winner refreshes it. The guard is a compare-and-swap: only the worker that
@@ -52,6 +59,7 @@ _STORE = (
     "INSERT OR REPLACE INTO hot_cache (key, value, expiration, revalidate_at, size) "
     "VALUES (?, ?, ?, ?, ?)"
 )
+_REFRESH = "UPDATE hot_cache SET expiration = ?, revalidate_at = ? WHERE id = ?"
 _CLEAR = "DELETE FROM hot_cache WHERE key = ? AND expiration <= ?"
 _PURGE_EXPIRED = "DELETE FROM hot_cache WHERE expiration <= ?"
 _COUNT = "SELECT COUNT(*) FROM hot_cache"
@@ -68,6 +76,9 @@ _INITIALIZE_BUSY_TIMEOUT_SECONDS = 0.5
 # available from python 3.11: without it we cannot tell a full db from a
 # busy one, so we assume it is full, which is the best we can do.
 _SQLITE_FULL: int = getattr(sqlite3, "SQLITE_FULL", 13)
+DEFAULT_BLOBOPEN_THRESHOLD_BYTES = 256 * 1024
+# Connection.blobopen is python 3.11+: without it every value is read inline.
+_HAS_BLOBOPEN = hasattr(sqlite3.Connection, "blobopen")
 
 
 def _is_db_full(error: sqlite3.Error) -> bool:
@@ -183,7 +194,13 @@ class HotCacheDBConfig:
             )
         conn = sqlite3.connect(self.db_path)
         try:
-            conn.execute(_GET, ("",)).fetchone()
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            if version != _SCHEMA_VERSION:
+                raise ValueError(
+                    f"Hot cache db {self.db_path} is not initialized: schema "
+                    f"version {version}, expected {_SCHEMA_VERSION}"
+                )
+            conn.execute(_GET, (0, "")).fetchone()
         except sqlite3.Error as e:
             raise ValueError(
                 f"Hot cache db {self.db_path} is not initialized: {e}"
@@ -211,6 +228,22 @@ class HotCacheDBConfig:
         # page cache, which is shared across all workers.
         conn.execute(f"PRAGMA mmap_size = {self.max_size_bytes}")
         return conn
+
+
+class _StoredRow(NamedTuple):
+    id: int
+    blob: bytes
+
+
+def _read_large_value(conn: sqlite3.Connection, row_id: int) -> Optional[bytes]:
+    try:
+        with conn.blobopen("hot_cache", "value", row_id, readonly=True) as blob:
+            return blob.read()
+    except sqlite3.OperationalError as e:
+        if e.sqlite_errorcode != sqlite3.SQLITE_ERROR:
+            raise
+        # The row was replaced or deleted since we read it
+        return None
 
 
 class SqliteProbabilisticHotCache(ProbabilisticHotCache):
@@ -258,6 +291,8 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
     waiting on the other workers.
 
     All values are pickled, since they must be shared across processes.
+    Values over blobopen_threshold_bytes are read with blobopen (python
+    3.11+), which copies them once and without holding the GIL.
 
     With extend_on_error the hot values survive a server outage, shared
     across every worker: the first one to hit an error stores the value
@@ -290,6 +325,7 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
         allowed_hot_key_prefixes: Optional[List[str]] = None,
         stats_callback: Optional[HotCacheStatsCallback] = None,
         stats_sampler: Optional[StatsSampler] = None,
+        blobopen_threshold_bytes: int = DEFAULT_BLOBOPEN_THRESHOLD_BYTES,
     ) -> None:
         super().__init__(
             client=client,
@@ -309,6 +345,9 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
         )
         self._db = db
         self._purge_interval_seconds = purge_interval_seconds
+        self._inline_max_bytes = (
+            blobopen_threshold_bytes if _HAS_BLOBOPEN else sys.maxsize
+        )
         self._local = threading.local()
         _get_instance_registry().add(self)
 
@@ -325,11 +364,11 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
     def _lookup_hot_cache(self, key: Key) -> Optional[HotCacheLookup]:
         try:
             conn = self._get_conn()
-            row = conn.execute(_GET, (key.key,)).fetchone()
+            row = conn.execute(_GET, (self._inline_max_bytes, key.key)).fetchone()
             if row is None:
                 return self._miss()
 
-            blob, expiration, revalidate_at, size = row
+            row_id, expiration, revalidate_at, size, blob = row
             now = int(time.time())
             if now >= expiration + self._max_stale_while_revalidate_seconds:
                 # Past the grace window: nobody managed to revalidate it, so
@@ -337,6 +376,10 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
                 # as cold, it has to be detected as hot again.
                 self._clear_hot_cache_if_necessary(key)
                 return self._miss()
+            if blob is None:
+                blob = _read_large_value(conn, row_id)
+                if blob is None:
+                    return self._miss()
 
             must_revalidate = False
             if now >= expiration and now >= revalidate_at:
@@ -358,40 +401,52 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
                     ).rowcount
                     > 0
                 )
-            return self._hit(pickle.loads(blob), must_revalidate, size)
+            return self._hit(
+                pickle.loads(blob),
+                must_revalidate,
+                size,
+                _StoredRow(row_id, blob) if must_revalidate else None,
+            )
         except (sqlite3.Error, pickle.PickleError):
             # Best effort: a failing hot cache behaves as a miss.
             self._metrics and self._metrics.metric_inc("errors")
             return self._miss()
 
-    def _store_entry(self, key: Key, value: Any, size: int) -> None:
+    def _store_entry(
+        self,
+        key: Key,
+        value: Any,
+        size: int,
+        found: Optional[HotCacheLookup] = None,
+    ) -> None:
         blob = pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
         # A fresh value is revalidated as soon as it goes stale.
         expiration = int(time.time()) + self._cache_ttl
+        stored: Optional[_StoredRow] = found.stored if found is not None else None
         try:
             conn = self._get_conn()
-            try:
-                conn.execute(_STORE, (key.key, blob, expiration, expiration, size))
-            except sqlite3.OperationalError as e:
-                if not _is_db_full(e):
-                    # A busy or otherwise broken db: not something a purge
-                    # would fix, so don't pay for one.
-                    raise
-                # The db hit its size cap: purge the entries past their hard
-                # deadline and retry once. If there is still no room, the
-                # value is simply not cached.
-                self._purge_expired(conn)
-                conn.execute(_STORE, (key.key, blob, expiration, expiration, size))
+            if stored is not None and stored.blob == blob:
+                # By id: a row replaced since we read it keeps the newer value
+                conn.execute(_REFRESH, (expiration, expiration, stored.id))
             else:
-                # Purge on a fixed schedule so the db doesn't have to fill up
-                # before entries get evicted. On a timer rather than at
-                # random, so the cost (a full table scan for the gauge, plus
-                # a checkpoint) stays the same whatever the write rate is.
-                if time.time() >= self._local.next_purge_at:
-                    self._local.next_purge_at = (
-                        time.time() + self._purge_interval_seconds
-                    )
+                try:
+                    conn.execute(_STORE, (key.key, blob, expiration, expiration, size))
+                except sqlite3.OperationalError as e:
+                    if not _is_db_full(e):
+                        # A busy or otherwise broken db: not something a purge
+                        # would fix, so don't pay for one.
+                        raise
+                    # The db hit its size cap: purge the entries past their
+                    # hard deadline and retry once. If there is still no room,
+                    # the value is simply not cached.
                     self._purge_expired(conn)
+                    conn.execute(_STORE, (key.key, blob, expiration, expiration, size))
+            # Purge on a fixed schedule so the db doesn't have to fill up
+            # before entries get evicted. On a timer rather than at random, so
+            # the cost (a full table scan for the gauge, plus a checkpoint)
+            # stays the same whatever the write rate is.
+            if time.time() >= self._local.next_purge_at:
+                self._purge_expired(conn)
         except sqlite3.Error:
             # Best effort: the value is simply not cached.
             self._metrics and self._metrics.metric_inc("errors")
@@ -399,6 +454,7 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
     def _purge_expired(self, conn: sqlite3.Connection) -> None:
         # Delete the entries past their hard deadline. Those still within
         # the stale-while-revalidate grace window are servable, so they stay.
+        self._local.next_purge_at = time.time() + self._purge_interval_seconds
         bound = int(time.time()) - self._max_stale_while_revalidate_seconds
         conn.execute(_PURGE_EXPIRED, (bound,))
         self._checkpoint(conn)
@@ -419,9 +475,9 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
 
     def _clear_hot_cache_if_necessary(self, key: Key) -> bool:
         # Called when the server missed, and when an entry runs out of grace
-        # window: drop the stale entry. Since expiration is never mutated
-        # after the store, the guard is exact: a fresh value stored by
-        # another worker in the meantime is preserved.
+        # window: drop the stale entry. Since expiration only moves forward
+        # on a store or refresh, the guard is exact: a value another worker
+        # stored or refreshed in the meantime is preserved.
         now = int(time.time())
         try:
             conn = self._get_conn()
