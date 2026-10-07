@@ -56,22 +56,30 @@ def test_entry_clocks_through_the_stale_cycle(client: Mock, time: Mock) -> None:
 
     # A fresh value is revalidated as soon as it goes stale
     assert hot_cache.get("foo_hot") == 1
-    assert store["foo_hot"] == CachedValue(value=1, expiration=60, revalidate_at=60)
+    assert store["foo_hot"] == CachedValue(
+        value=1, expiration=60, revalidate_at=60, size=1
+    )
 
     # Serving it does not touch the clocks
     time.time.return_value = 30
     assert hot_cache.get("foo_hot") == 1
-    assert store["foo_hot"] == CachedValue(value=1, expiration=60, revalidate_at=60)
+    assert store["foo_hot"] == CachedValue(
+        value=1, expiration=60, revalidate_at=60, size=1
+    )
 
     # The elected thread pushes the retry clock forward and leaves the
     # expiration, and so the hard deadline, alone
     time.time.return_value = 61
     assert hot_cache._lookup_hot_cache(Key("foo_hot")) == revalidating(1)
-    assert store["foo_hot"] == CachedValue(value=1, expiration=60, revalidate_at=62)
+    assert store["foo_hot"] == CachedValue(
+        value=1, expiration=60, revalidate_at=62, size=1
+    )
 
     # The threads served the stale value meanwhile do not touch them either
     assert hot_cache._lookup_hot_cache(Key("foo_hot")) == hot(1)
-    assert store["foo_hot"] == CachedValue(value=1, expiration=60, revalidate_at=62)
+    assert store["foo_hot"] == CachedValue(
+        value=1, expiration=60, revalidate_at=62, size=1
+    )
 
     # Nobody refreshed it, so it is dropped at the hard deadline (60 + 10)
     time.time.return_value = 70
@@ -80,7 +88,9 @@ def test_entry_clocks_through_the_stale_cycle(client: Mock, time: Mock) -> None:
 
     # And a fresh read starts the cycle over
     assert hot_cache.get("foo_hot") == 1
-    assert store["foo_hot"] == CachedValue(value=1, expiration=130, revalidate_at=130)
+    assert store["foo_hot"] == CachedValue(
+        value=1, expiration=130, revalidate_at=130, size=1
+    )
 
 
 def test_item_count_gauge_tracks_the_store(client: Mock, time: Mock) -> None:

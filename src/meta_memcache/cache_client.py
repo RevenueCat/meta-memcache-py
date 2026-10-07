@@ -16,6 +16,7 @@ from meta_memcache.routers.gutter import GutterRouter
 from meta_memcache.interfaces.cache_api import CacheApi
 from meta_memcache.protocol import Key
 from meta_memcache.serializer import BaseSerializer, MixedSerializer
+from meta_memcache.stats import StatsCallback, StatsSampler
 
 
 class CacheClient(HighLevelCommandsMixin, MetaCommandsMixin, BaseCacheClient):
@@ -26,11 +27,15 @@ class CacheClient(HighLevelCommandsMixin, MetaCommandsMixin, BaseCacheClient):
         serializer: Optional[BaseSerializer] = None,
         key_encoder_fn: Optional[Callable[[Key], bytes]] = None,
         raise_on_server_error: bool = True,
+        stats_callback: Optional[StatsCallback] = None,
+        stats_sampler: Optional[StatsSampler] = None,
     ) -> CacheApi:
         executor = DefaultExecutor(
             serializer=serializer or MixedSerializer(),
             key_encoder_fn=key_encoder_fn,
             raise_on_server_error=raise_on_server_error,
+            stats_callback=stats_callback,
+            stats_sampler=stats_sampler,
         )
         router = DefaultRouter(
             pool_provider=HashRingConnectionPoolProvider(
@@ -49,11 +54,15 @@ class CacheClient(HighLevelCommandsMixin, MetaCommandsMixin, BaseCacheClient):
         serializer: Optional[BaseSerializer] = None,
         key_encoder_fn: Optional[Callable[[Key], bytes]] = None,
         raise_on_server_error: bool = True,
+        stats_callback: Optional[StatsCallback] = None,
+        stats_sampler: Optional[StatsSampler] = None,
     ) -> CacheApi:
         executor = DefaultExecutor(
             serializer=serializer or MixedSerializer(),
             key_encoder_fn=key_encoder_fn,
             raise_on_server_error=raise_on_server_error,
+            stats_callback=stats_callback,
+            stats_sampler=stats_sampler,
         )
         router = GutterRouter(
             pool_provider=HashRingConnectionPoolProvider(
@@ -77,11 +86,15 @@ class CacheClient(HighLevelCommandsMixin, MetaCommandsMixin, BaseCacheClient):
         serializer: Optional[BaseSerializer] = None,
         key_encoder_fn: Optional[Callable[[Key], bytes]] = None,
         raise_on_server_error: bool = True,
+        stats_callback: Optional[StatsCallback] = None,
+        stats_sampler: Optional[StatsSampler] = None,
     ) -> CacheApi:
         executor = DefaultExecutor(
             serializer=serializer or MixedSerializer(),
             key_encoder_fn=key_encoder_fn,
             raise_on_server_error=raise_on_server_error,
+            stats_callback=stats_callback,
+            stats_sampler=stats_sampler,
         )
         router = EphemeralRouter(
             max_ttl=max_ttl,

@@ -719,3 +719,91 @@ class PoolCounters(NamedTuple):
     # Total # of connection or socket errors
     total_errors: int
 ```
+
+### Stats callback
+`DefaultExecutor`, and the `CacheClient` builders, take a `stats_callback`.
+It is called with a `CacheStats` after every operation sent to a server: the
+command, keys, server, request flags, responses, bytes read, start time and
+duration, and the error if the operation raised.
+
+`ProbabilisticHotCache` and `SqliteProbabilisticHotCache` take one too, called
+with a `HotCacheStats` for each read they serve themselves, without asking the
+server: the keys, and the bytes the server sent for them when they were
+cached. The keys they fetch are reported by the executor of the client they
+wrap, so give both a callback to see every read once:
+
+```python:
+from meta_memcache.stats import CacheStats, HotCacheStats
+
+def on_server_stats(stats: CacheStats) -> None:
+    """
+    Receives every operation sent to cache servers
+   
+    * stats.command: The command sent to the server
+    * stats.keys: The keys sent to the server
+    * stats.size: The bytes of the values read, as the server sent them
+    * stats.server: The server the command was sent to
+    * stats.flags: The request flags sent to the server
+    * stats.responses: The responses received from the server, or None if the
+      operation raised. A failure reported instead of raised
+      (raise_on_server_error=False) is here, as an error marker response,
+      so the callback can tell apart a genuine miss/not stored from a server error
+      by using `is_error_response()`.
+    * stats.start_time_ns: The time the operation started, in nanoseconds
+    * stats.duration_ns: The time the operation took, in nanoseconds
+    * stats.error: The exception raised by the operation, or None if it
+      didn't raise due to raise_on_server_error=False. If the operation raised,
+      stats.responses is None.
+    * stats.weight: How many operations this one stands for, as the
+      stats_sampler returned. 1 without a sampler.
+    """
+
+def on_hot_cache_stats(stats: HotCacheStats) -> None:
+    """
+    Receives every read served from the hot cache
+
+    * stats.keys: The keys served from the hot cache
+    * stats.size: The bytes of the values read, as the server sent them
+    * stats.weight: How many reads this one stands for, as the
+      stats_sampler returned. 1 without a sampler.
+    """
+
+client = CacheClient.cache_client_from_servers(..., stats_callback=on_server_stats)
+hot_cache = ProbabilisticHotCache(
+    client=client, ..., stats_callback=on_hot_cache_stats
+)
+```
+
+The callbacks run inline on every operation, so keep them cheap. Errors they
+raise are logged and ignored: stats never fail the operation.
+
+#### Sampling stats
+Building the stats has a cost of its own on every operation. To pay it only
+on some of them, give a `stats_sampler` alongside the callback, to any of the
+above. It is called with no arguments before each operation and returns:
+* `None`: the operation is not reported. It takes the same path as having no
+  callback at all: no timing, no stats built, no callback.
+* A weight: the operation is reported, with that weight in `stats.weight`, so
+  the callback can scale what it counts by how many operations each sample
+  stands for.
+
+```python:
+import random
+
+def sample_1_pct() -> Optional[int]:
+    return 100 if random.random() < 0.01 else None
+
+def on_server_stats(stats: CacheStats) -> None:
+    requests_counter.labels(stats.server).inc(stats.weight)
+    bytes_counter.labels(stats.server).inc(stats.size * stats.weight)
+
+client = CacheClient.cache_client_from_servers(
+    ...,
+    stats_callback=on_server_stats,
+    stats_sampler=sample_1_pct,
+)
+```
+
+A multi-get is sampled once per server it is sent to, and once on the hot
+cache, for the keys it serves itself. A sampler that raises is logged and the
+operation goes unreported.

@@ -84,8 +84,8 @@ def test_initialize_recreate_starts_fresh(tmp_path: Path) -> None:
     db = HotCacheDBConfig.initialize(str(tmp_path / "hot.db"))
     conn = sqlite3.connect(db.db_path)
     conn.execute(
-        "INSERT INTO hot_cache (key, value, expiration, revalidate_at) "
-        "VALUES ('k', x'00', 100, 100)"
+        "INSERT INTO hot_cache (key, value, expiration, revalidate_at, size) "
+        "VALUES ('k', x'00', 100, 100, 1)"
     )
     conn.commit()
     conn.close()
@@ -93,6 +93,26 @@ def test_initialize_recreate_starts_fresh(tmp_path: Path) -> None:
 
     db = HotCacheDBConfig.initialize(db.db_path, recreate=True)
     assert row_count(db) == 0
+
+
+def test_initialize_starts_over_a_db_laid_out_by_another_release(
+    tmp_path: Path,
+) -> None:
+    db_path = str(tmp_path / "hot.db")
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE hot_cache (key TEXT PRIMARY KEY, value BLOB NOT NULL, "
+        "expiration INTEGER NOT NULL, revalidate_at INTEGER NOT NULL) WITHOUT ROWID"
+    )
+    conn.execute("INSERT INTO hot_cache VALUES ('k', x'00', 100, 100)")
+    conn.commit()
+    conn.close()
+    with pytest.raises(ValueError, match="not initialized"):
+        HotCacheDBConfig(db_path)
+
+    db = HotCacheDBConfig.initialize(db_path)
+    assert row_count(db) == 0
+    HotCacheDBConfig(db_path)  # Ready for the workers
 
 
 def test_config_requires_existing_db(tmp_path: Path) -> None:
@@ -216,7 +236,7 @@ def test_max_size_is_enforced_best_effort(time: Mock, tmp_path: Path) -> None:
 
     blob = b"x" * 4096
     for i in range(50):
-        cache._store_entry(Key(f"key_{i}"), blob)  # Never raises when full
+        cache._store_entry(Key(f"key_{i}"), blob, len(blob))  # Never raises when full
 
     stored = row_count(db)
     assert 0 < stored < 50  # Capped: some stores were skipped
@@ -225,8 +245,8 @@ def test_max_size_is_enforced_best_effort(time: Mock, tmp_path: Path) -> None:
     # Once entries are past their hard deadline, storing purges them and
     # succeeds again
     time.time.return_value = 100  # Beyond expiration (60) + grace window (10)
-    cache._store_entry(Key("fresh"), blob)
-    assert cache._lookup_hot_cache(Key("fresh")) == hot(blob)
+    cache._store_entry(Key("fresh"), blob, len(blob))
+    assert cache._lookup_hot_cache(Key("fresh")) == hot(blob, size=len(blob))
     assert row_count(db) < stored
 
 
@@ -311,7 +331,7 @@ def test_errors_are_counted_and_behave_as_a_miss(
     # A lookup that cannot read the db behaves as a miss on a cold key
     assert cache._lookup_hot_cache(Key("foo_hot")) is None
     # A value that cannot be stored is simply not cached
-    cache._store_entry(Key("foo_hot"), 1)
+    cache._store_entry(Key("foo_hot"), 1, 1)
     # And a stale entry that cannot be dropped is reported as not dropped
     assert cache._clear_hot_cache_if_necessary(Key("foo_hot")) is False
 
@@ -354,7 +374,7 @@ def test_only_a_full_db_is_purged(
 
     # "no such table" is SQLITE_ERROR, not SQLITE_FULL: purging would not
     # make room for anything, so it is not even attempted.
-    cache._store_entry(Key("foo_hot"), 1)
+    cache._store_entry(Key("foo_hot"), 1, 1)
     purge.assert_not_called()
 
 
@@ -367,16 +387,16 @@ def test_a_full_db_is_purged_and_retried(
     time.time.return_value = 0
     blob = b"x" * 4096
     for i in range(50):  # Fill it up
-        cache._store_entry(Key(f"key_{i}"), blob)
+        cache._store_entry(Key(f"key_{i}"), blob, len(blob))
 
     # Past the hard deadline, the next store hits SQLITE_FULL, purges, and
     # succeeds on the retry
     time.time.return_value = 100
     purge = Mock(wraps=cache._purge_expired)
     monkeypatch.setattr(cache, "_purge_expired", purge)
-    cache._store_entry(Key("fresh"), blob)
+    cache._store_entry(Key("fresh"), blob, len(blob))
     purge.assert_called_once()
-    assert cache._lookup_hot_cache(Key("fresh")) == hot(blob)
+    assert cache._lookup_hot_cache(Key("fresh")) == hot(blob, size=len(blob))
 
 
 def test_purge_runs_on_a_schedule(
@@ -427,7 +447,7 @@ def test_purge_truncates_the_write_ahead_log(time: Mock, tmp_path: Path) -> None
 
     time.time.return_value = 0
     for i in range(100):
-        cache._store_entry(Key(f"key_{i}"), b"x" * 4096)
+        cache._store_entry(Key(f"key_{i}"), b"x" * 4096, 4096)
     assert wal.stat().st_size > 0  # The writes are sitting in the log
 
     # Purging hands the pages back to the db file and truncates the log
@@ -524,7 +544,7 @@ def test_a_slow_failure_can_overwrite_a_concurrent_refresh(
     def fail_after_a_refresh(key, **kwargs):
         # Worker B is elected on the retry clock and refreshes the value
         # while A's request is still in flight
-        worker_b._store_entry(key, 2)
+        worker_b._store_entry(key, 2, 1)
         raise MemcacheError("mimic cache error")
 
     client_a.meta_get.side_effect = fail_after_a_refresh
