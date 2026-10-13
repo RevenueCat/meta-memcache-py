@@ -6,7 +6,7 @@ import threading
 import time
 import weakref
 from dataclasses import dataclass
-from typing import Any, Iterable, List, NamedTuple, Optional
+from typing import Any, Iterable, List, NamedTuple, Optional, Tuple
 
 from meta_memcache.extras.probabilistic_hot_cache import (
     HotCacheLookup,
@@ -57,6 +57,10 @@ _WIN_REVALIDATION = (
 )
 _STORE = (
     "INSERT OR REPLACE INTO hot_cache (key, value, expiration, revalidate_at, size) "
+    "VALUES (?, ?, ?, ?, ?)"
+)
+_STORE_IF_ABSENT = (
+    "INSERT OR IGNORE INTO hot_cache (key, value, expiration, revalidate_at, size) "
     "VALUES (?, ?, ?, ?, ?)"
 )
 _REFRESH = "UPDATE hot_cache SET expiration = ?, revalidate_at = ? WHERE id = ?"
@@ -425,29 +429,37 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
         stored: Optional[_StoredRow] = found.stored if found is not None else None
         try:
             conn = self._get_conn()
-            # By id; a row deleted or replaced since we read it is stored again
-            refreshed = (
-                stored is not None
-                and stored.blob == blob
-                and conn.execute(_REFRESH, (expiration, expiration, stored.id)).rowcount
-            )
-            if not refreshed:
-                try:
-                    conn.execute(_STORE, (key.key, blob, expiration, expiration, size))
-                except sqlite3.OperationalError as e:
-                    if not _is_db_full(e):
-                        # A busy or otherwise broken db: not something a purge
-                        # would fix, so don't pay for one.
-                        raise
-                    # The db hit its size cap: purge the entries past their
-                    # hard deadline and retry once. If there is still no room,
-                    # the value is simply not cached.
-                    self._purge_expired(conn)
-                    conn.execute(_STORE, (key.key, blob, expiration, expiration, size))
+            statement: Optional[str] = _STORE
+            if stored is not None and stored.blob == blob:
+                # By id. A row deleted since we read it is put back, but one
+                # another worker replaced keeps its newer value.
+                refresh = (expiration, expiration, stored.id)
+                refreshed = conn.execute(_REFRESH, refresh).rowcount
+                statement = None if refreshed else _STORE_IF_ABSENT
+            if statement:
+                self._insert(
+                    conn, statement, (key.key, blob, expiration, expiration, size)
+                )
             self._purge_if_due(conn)
         except sqlite3.Error:
             # Best effort: the value is simply not cached.
             self._metrics and self._metrics.metric_inc("errors")
+
+    def _insert(
+        self, conn: sqlite3.Connection, statement: str, params: Tuple[Any, ...]
+    ) -> None:
+        try:
+            conn.execute(statement, params)
+        except sqlite3.OperationalError as e:
+            if not _is_db_full(e):
+                # A busy or otherwise broken db: not something a purge
+                # would fix, so don't pay for one.
+                raise
+            # The db hit its size cap: purge the entries past their hard
+            # deadline and retry once. If there is still no room, the
+            # value is simply not cached.
+            self._purge_expired(conn)
+            conn.execute(statement, params)
 
     def _refresh_entry(self, key: Key, held: HotCacheLookup) -> None:
         stored: Optional[_StoredRow] = held.stored

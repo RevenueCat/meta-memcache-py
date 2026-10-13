@@ -675,6 +675,22 @@ def test_an_unchanged_revalidation_stores_a_deleted_row_again(
     assert cache._lookup_hot_cache(Key("foo")) == hot("foo value")
 
 
+def test_an_unchanged_revalidation_keeps_a_newer_row(
+    time: Mock, db: HotCacheDBConfig
+) -> None:
+    cache = build_cache(make_client(), db)
+    time.time.return_value = 0
+    cache._store_entry(Key("foo"), "foo value", 1)
+
+    time.time.return_value = 61
+    found = cache._lookup_hot_cache(Key("foo"))
+    # Another worker refreshed it with a new value meanwhile
+    build_cache(make_client(), db)._store_entry(Key("foo"), "new value", 1)
+    cache._store_entry(Key("foo"), "foo value", 1, found)
+
+    assert cache._lookup_hot_cache(Key("foo")) == hot("new value")
+
+
 def test_an_error_extension_does_not_bring_back_a_deleted_row(
     time: Mock, db: HotCacheDBConfig
 ) -> None:
