@@ -425,10 +425,13 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
         stored: Optional[_StoredRow] = found.stored if found is not None else None
         try:
             conn = self._get_conn()
-            if stored is not None and stored.blob == blob:
-                # By id: a row replaced since we read it keeps the newer value
-                conn.execute(_REFRESH, (expiration, expiration, stored.id))
-            else:
+            # By id; a row deleted or replaced since we read it is stored again
+            refreshed = (
+                stored is not None
+                and stored.blob == blob
+                and conn.execute(_REFRESH, (expiration, expiration, stored.id)).rowcount
+            )
+            if not refreshed:
                 try:
                     conn.execute(_STORE, (key.key, blob, expiration, expiration, size))
                 except sqlite3.OperationalError as e:
