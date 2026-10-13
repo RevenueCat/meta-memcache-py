@@ -441,15 +441,32 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
                     # the value is simply not cached.
                     self._purge_expired(conn)
                     conn.execute(_STORE, (key.key, blob, expiration, expiration, size))
-            # Purge on a fixed schedule so the db doesn't have to fill up
-            # before entries get evicted. On a timer rather than at random, so
-            # the cost (a full table scan for the gauge, plus a checkpoint)
-            # stays the same whatever the write rate is.
-            if time.time() >= self._local.next_purge_at:
-                self._purge_expired(conn)
+            self._purge_if_due(conn)
         except sqlite3.Error:
             # Best effort: the value is simply not cached.
             self._metrics and self._metrics.metric_inc("errors")
+
+    def _refresh_entry(self, key: Key, held: HotCacheLookup) -> None:
+        stored: Optional[_StoredRow] = held.stored
+        if stored is None:
+            return super()._refresh_entry(key, held)
+        # No pickle compare: pickles aren't stable across processes (eg: sets),
+        # and a mismatch would store the stale value over a newer one
+        expiration = int(time.time()) + self._cache_ttl
+        try:
+            conn = self._get_conn()
+            conn.execute(_REFRESH, (expiration, expiration, stored.id))
+            self._purge_if_due(conn)
+        except sqlite3.Error:
+            self._metrics and self._metrics.metric_inc("errors")
+
+    def _purge_if_due(self, conn: sqlite3.Connection) -> None:
+        # Purge on a fixed schedule so the db doesn't have to fill up
+        # before entries get evicted. On a timer rather than at random, so
+        # the cost (a full table scan for the gauge, plus a checkpoint)
+        # stays the same whatever the write rate is.
+        if time.time() >= self._local.next_purge_at:
+            self._purge_expired(conn)
 
     def _purge_expired(self, conn: sqlite3.Connection) -> None:
         # Delete the entries past their hard deadline. Those still within

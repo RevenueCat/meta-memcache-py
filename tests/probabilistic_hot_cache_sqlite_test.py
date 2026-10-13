@@ -625,6 +625,23 @@ def test_an_unchanged_revalidation_only_moves_the_clocks(
     assert row_of(db, "foo") == (row_id, 121, 121)
 
 
+def test_an_error_extension_refreshes_without_comparing_pickles(
+    time: Mock, db: HotCacheDBConfig, monkeypatch
+) -> None:
+    cache = build_cache(make_client(), db)
+    time.time.return_value = 0
+    cache._store_entry(Key("foo"), "foo value", 1)
+    row_id, _, _ = row_of(db, "foo")
+
+    time.time.return_value = 61
+    found = cache._lookup_hot_cache(Key("foo"))
+    dumps = Mock(side_effect=AssertionError("pickled"))
+    monkeypatch.setattr(cache_module.pickle, "dumps", dumps)
+    cache._keep_on_error(Key("foo"), found)
+
+    assert row_of(db, "foo") == (row_id, 121, 121)
+
+
 def test_a_changed_revalidation_stores_the_value(
     time: Mock, db: HotCacheDBConfig
 ) -> None:

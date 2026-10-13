@@ -368,8 +368,11 @@ class ProbabilisticHotCache(ClientWrapper):
         values last as long as the outage lasts and no longer. The counter
         is what tells the two apart from the outside.
         """
-        self._store_entry(key, held.value, held.size, held)
+        self._refresh_entry(key, held)
         self._metrics and self._metrics.metric_inc("error_extensions")
+
+    def _refresh_entry(self, key: Key, held: HotCacheLookup) -> None:
+        self._store_entry(key, held.value, held.size, held)
 
     def _serve_stale_on_error(self, key: Key, held: HotCacheLookup) -> Any:
         """Fall back on the value the lookup handed us, since the server failed."""
