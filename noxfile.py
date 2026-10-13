@@ -4,7 +4,7 @@ from nox import session, Session
 
 package = "meta_memcache"
 nox.options.sessions = "lint", "format", "check_version", "types", "tests"
-locations = "src", "tests", "noxfile.py", "benchmark.py"
+locations = "src", "tests", "noxfile.py", "benchmarks"
 DEFAULT_VERSION = "3.14"
 DEFAULT_BENCHMARK_VERSIONS = ["3.14"]
 VERSIONS = ["3.14", "3.13", "3.12", "3.11", "3.10"]
@@ -83,4 +83,4 @@ def benchmark(session: Session) -> None:
     args = session.posargs
     session.install("click", ".")
     session.run("python", "--version")
-    session.run("python", "benchmark.py", *args)
+    session.run("python", "benchmarks/client.py", *args)

@@ -297,3 +297,32 @@ def test_cache_pollution_multi_get(
         "a": 1,
         "b": 2,
     }  # Not {"a": 1, "b": 2, "c": 3}
+
+
+def test_a_slow_failure_keeps_a_concurrent_refresh(client: Mock, time: Mock) -> None:
+    hot_cache = build_cache(client, {})
+    assert hot_cache.get("foo_hot") == 1  # Expires at 60
+
+    time.time.return_value = 61
+    found = hot_cache._lookup_hot_cache(Key("foo_hot"))
+    assert found == revalidating(1)
+    # Another thread is elected on the retry clock and refreshes it, while
+    # this one's request is still in flight and then fails
+    hot_cache._store_entry(Key("foo_hot"), 2, 1)
+    hot_cache._keep_on_error(Key("foo_hot"), found)
+
+    assert hot_cache._lookup_hot_cache(Key("foo_hot")) == hot(2)
+
+
+def test_an_error_extension_renews_the_entry_it_read(client: Mock, time: Mock) -> None:
+    store: Dict[str, CachedValue] = {}
+    hot_cache = build_cache(client, store)
+    assert hot_cache.get("foo_hot") == 1
+    entry = store["foo_hot"]
+
+    time.time.return_value = 61
+    found = hot_cache._lookup_hot_cache(Key("foo_hot"))
+    hot_cache._keep_on_error(Key("foo_hot"), found)
+
+    assert store["foo_hot"] is entry
+    assert (entry.expiration, entry.revalidate_at) == (121, 121)
