@@ -68,8 +68,8 @@ class CachedValue:
     """
     A hot value, with the two clocks that govern its lifetime.
 
-    `expiration` is when the value goes stale, and is never mutated after
-    the store, so it is also the hard deadline: the value must not be served
+    `expiration` is when the value goes stale, and only moves on a store or
+    a refresh, so it is also the hard deadline: the value must not be served
     past expiration + max_stale_while_revalidate_seconds. `revalidate_at` is
     the separate retry clock the threads race on to elect a single
     revalidator, and defaults to the expiration: a fresh value is
@@ -291,7 +291,12 @@ class ProbabilisticHotCache(ClientWrapper):
                     found.revalidate_at = now + self._revalidation_retry_seconds
                     must_revalidate = True
 
-        return self._hit(found.get_cloned_value(), must_revalidate, found.size)
+        return self._hit(
+            found.get_cloned_value(),
+            must_revalidate,
+            found.size,
+            found if must_revalidate else None,
+        )
 
     def _miss(self) -> Optional[HotCacheLookup]:
         """Count a miss and report that we hold nothing for the key."""
@@ -372,7 +377,15 @@ class ProbabilisticHotCache(ClientWrapper):
         self._metrics and self._metrics.metric_inc("error_extensions")
 
     def _refresh_entry(self, key: Key, held: HotCacheLookup) -> None:
-        self._store_entry(key, held.value, held.size, held)
+        if held.stored is None:
+            self._store_entry(key, held.value, held.size, held)
+            return
+        with self._lock:
+            entry = self._store.get(key.key)
+            # Only the entry we read: a newer one stored meanwhile stays
+            if entry is not None and entry is held.stored:
+                entry.expiration = int(time.time()) + self._cache_ttl
+                entry.revalidate_at = entry.expiration
 
     def _serve_stale_on_error(self, key: Key, held: HotCacheLookup) -> Any:
         """Fall back on the value the lookup handed us, since the server failed."""
@@ -390,9 +403,9 @@ class ProbabilisticHotCache(ClientWrapper):
 
     def _clear_hot_cache_if_necessary(self, key: Key) -> bool:
         # Called when the server missed, and when an entry runs out of grace
-        # window: drop the stale entry. Since expiration is never mutated
-        # after the store, the guard is exact: a fresh value stored by
-        # another thread in the meantime is preserved.
+        # window: drop the stale entry. Since expiration only moves forward
+        # on a store or refresh, the guard is exact: a value another thread
+        # stored or refreshed in the meantime is preserved.
         if found := self._store.get(key.key):
             if found.expiration <= int(time.time()):
                 del self._store[key.key]
