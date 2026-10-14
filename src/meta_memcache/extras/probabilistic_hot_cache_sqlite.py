@@ -55,15 +55,30 @@ _GET = (
 _WIN_REVALIDATION = (
     "UPDATE hot_cache SET revalidate_at = ? WHERE key = ? AND revalidate_at = ?"
 )
+# An upsert, not INSERT OR REPLACE, which deletes the row and inserts it
+# again: updated in place, sqlite only rewrites the pages that changed.
+# Upserts need sqlite 3.24+.
 _STORE = (
-    "INSERT OR REPLACE INTO hot_cache (key, value, expiration, revalidate_at, size) "
-    "VALUES (?, ?, ?, ?, ?)"
+    "INSERT INTO hot_cache "
+    "(key, value, expiration, revalidate_at, size) "
+    "VALUES (?, ?, ?, ?, ?) "
+    "ON CONFLICT (key) DO UPDATE SET "
+    "value = excluded.value, "
+    "expiration = excluded.expiration, "
+    "revalidate_at = excluded.revalidate_at, "
+    "size = excluded.size"
 )
+_MIN_SQLITE_VERSION = (3, 24, 0)
 _STORE_IF_ABSENT = (
     "INSERT OR IGNORE INTO hot_cache (key, value, expiration, revalidate_at, size) "
     "VALUES (?, ?, ?, ?, ?)"
 )
-_REFRESH = "UPDATE hot_cache SET expiration = ?, revalidate_at = ? WHERE id = ?"
+# A store keeps the row's id, so the guard is the expiration we read: every
+# store or refresh moves it past that stale one.
+_REFRESH = (
+    "UPDATE hot_cache SET expiration = ?, revalidate_at = ? "
+    "WHERE id = ? AND expiration = ?"
+)
 _CLEAR = "DELETE FROM hot_cache WHERE key = ? AND expiration <= ?"
 _PURGE_EXPIRED = "DELETE FROM hot_cache WHERE expiration <= ?"
 _COUNT = "SELECT COUNT(*) FROM hot_cache"
@@ -191,6 +206,13 @@ class HotCacheDBConfig:
         )
 
     def __post_init__(self) -> None:
+        if sqlite3.sqlite_version_info < _MIN_SQLITE_VERSION:
+            # Checked up front: every store would fail, and the hot cache
+            # swallows its errors, so it would quietly never cache anything.
+            raise ValueError(
+                f"The hot cache needs sqlite {'.'.join(map(str, _MIN_SQLITE_VERSION))}"
+                f"+, found {sqlite3.sqlite_version}"
+            )
         if not os.path.exists(self.db_path):
             raise ValueError(
                 f"Hot cache db {self.db_path} does not exist. Create it "
@@ -236,6 +258,7 @@ class HotCacheDBConfig:
 
 class _StoredRow(NamedTuple):
     id: int
+    expiration: int
     blob: bytes
 
 
@@ -246,7 +269,7 @@ def _read_large_value(conn: sqlite3.Connection, row_id: int) -> Optional[bytes]:
     except sqlite3.OperationalError as e:
         if e.sqlite_errorcode != sqlite3.SQLITE_ERROR:
             raise
-        # The row was replaced or deleted since we read it
+        # The row was deleted since we read it
         return None
 
 
@@ -381,6 +404,9 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
                 self._clear_hot_cache_if_necessary(key)
                 return self._miss()
             if blob is None:
+                # A store since we read the row updated it in place, so this
+                # may be its newer value: fine to serve, and the election
+                # below fails, since that store moved revalidate_at.
                 blob = _read_large_value(conn, row_id)
                 if blob is None:
                     return self._miss()
@@ -409,7 +435,7 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
                 pickle.loads(blob),
                 must_revalidate,
                 size,
-                _StoredRow(row_id, blob) if must_revalidate else None,
+                _StoredRow(row_id, expiration, blob) if must_revalidate else None,
             )
         except (sqlite3.Error, pickle.PickleError):
             # Best effort: a failing hot cache behaves as a miss.
@@ -431,9 +457,9 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
             conn = self._get_conn()
             statement: Optional[str] = _STORE
             if stored is not None and stored.blob == blob:
-                # By id. A row deleted since we read it is put back, but one
-                # another worker replaced keeps its newer value.
-                refresh = (expiration, expiration, stored.id)
+                # Only the row we read. A row deleted since is put back, but
+                # one another worker stored or refreshed keeps its own.
+                refresh = (expiration, expiration, stored.id, stored.expiration)
                 refreshed = conn.execute(_REFRESH, refresh).rowcount
                 statement = None if refreshed else _STORE_IF_ABSENT
             if statement:
@@ -470,7 +496,8 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
         expiration = int(time.time()) + self._cache_ttl
         try:
             conn = self._get_conn()
-            conn.execute(_REFRESH, (expiration, expiration, stored.id))
+            refresh = (expiration, expiration, stored.id, stored.expiration)
+            conn.execute(_REFRESH, refresh)
             self._purge_if_due(conn)
         except sqlite3.Error:
             self._metrics and self._metrics.metric_inc("errors")

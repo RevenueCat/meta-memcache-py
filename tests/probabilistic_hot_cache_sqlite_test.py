@@ -178,6 +178,39 @@ def test_config_validates_initialized_db(db: HotCacheDBConfig) -> None:
     assert HotCacheDBConfig(db.db_path) == HotCacheDBConfig(db.db_path)
 
 
+def test_config_requires_a_sqlite_with_upserts(
+    db: HotCacheDBConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Every store would fail otherwise, and that is swallowed as best effort
+    monkeypatch.setattr(sqlite3, "sqlite_version_info", (3, 23, 1))
+    with pytest.raises(ValueError, match="needs sqlite 3.24.0"):
+        HotCacheDBConfig(db.db_path)
+
+
+def test_storing_again_updates_the_row_in_place(
+    time: Mock, db: HotCacheDBConfig
+) -> None:
+    """An upsert, not a delete and insert: what lets sqlite skip unchanged pages."""
+    cache = build_cache(make_client(), db)
+    assert cache.get("foo_hot") == 1
+
+    def rowid() -> int:
+        conn = sqlite3.connect(db.db_path)
+        try:
+            return conn.execute(
+                "SELECT rowid FROM hot_cache WHERE key = 'foo_hot'"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+    stored_at = rowid()
+    time.time.return_value = 30
+    cache._store_entry(Key("foo_hot"), 2, 1)
+    assert rowid() == stored_at
+    assert cache._lookup_hot_cache(Key("foo_hot")) == hot(2)
+    assert expiration_of(db, "foo_hot") == 90
+
+
 def test_cache_is_shared_across_workers(time: Mock, db: HotCacheDBConfig) -> None:
     client_a, client_b = make_client(), make_client()
     worker_a = build_cache(client_a, db)
@@ -654,8 +687,7 @@ def test_a_changed_revalidation_stores_the_value(
     found = cache._lookup_hot_cache(Key("foo"))
     cache._store_entry(Key("foo"), "new value", 1, found)
 
-    new_id, expiration, _ = row_of(db, "foo")
-    assert new_id != row_id and expiration == 121
+    assert row_of(db, "foo") == (row_id, 121, 121)  # Updated in place
     assert cache._lookup_hot_cache(Key("foo")) == hot("new value")
 
 
@@ -686,9 +718,28 @@ def test_an_unchanged_revalidation_keeps_a_newer_row(
     found = cache._lookup_hot_cache(Key("foo"))
     # Another worker refreshed it with a new value meanwhile
     build_cache(make_client(), db)._store_entry(Key("foo"), "new value", 1)
+    newer = row_of(db, "foo")
+    time.time.return_value = 70
     cache._store_entry(Key("foo"), "foo value", 1, found)
 
+    assert row_of(db, "foo") == newer
     assert cache._lookup_hot_cache(Key("foo")) == hot("new value")
+
+
+def test_an_error_extension_keeps_a_newer_row(time: Mock, db: HotCacheDBConfig) -> None:
+    cache = build_cache(make_client(), db)
+    time.time.return_value = 0
+    cache._store_entry(Key("foo"), "foo value", 1)
+
+    time.time.return_value = 61
+    found = cache._lookup_hot_cache(Key("foo"))
+    # Stored in place: the row keeps its id, only its expiration moves
+    build_cache(make_client(), db)._store_entry(Key("foo"), "new value", 1)
+    newer = row_of(db, "foo")
+    time.time.return_value = 70
+    cache._keep_on_error(Key("foo"), found)
+
+    assert row_of(db, "foo") == newer
 
 
 def test_an_error_extension_does_not_bring_back_a_deleted_row(
@@ -723,7 +774,30 @@ def test_large_values_round_trip(
 @pytest.mark.skipif(
     not hasattr(sqlite3.Connection, "blobopen"), reason="blobopen is python 3.11+"
 )
-def test_a_large_value_replaced_between_reads_is_a_miss(
+def test_a_large_value_stored_between_reads_is_served_new(
+    time: Mock, db: HotCacheDBConfig, monkeypatch
+) -> None:
+    cache = build_cache(make_client(), db)
+    time.time.return_value = 0
+    cache._store_entry(Key("foo"), os.urandom(300_000), 1)
+    newer = os.urandom(300_000)
+    read_large_value = cache_module._read_large_value
+
+    def store_before_reading(conn: sqlite3.Connection, row_id: int):
+        # Another worker revalidates it, in place
+        build_cache(make_client(), db)._store_entry(Key("foo"), newer, 1)
+        return read_large_value(conn, row_id)
+
+    monkeypatch.setattr(cache_module, "_read_large_value", store_before_reading)
+    time.time.return_value = 61
+    # Stale when we read the row, but that store won the election already
+    assert cache._lookup_hot_cache(Key("foo")) == hot(newer)
+
+
+@pytest.mark.skipif(
+    not hasattr(sqlite3.Connection, "blobopen"), reason="blobopen is python 3.11+"
+)
+def test_a_large_value_deleted_between_reads_is_a_miss(
     time: Mock, db: HotCacheDBConfig, monkeypatch
 ) -> None:
     cache = build_cache(make_client(), db)
@@ -731,14 +805,15 @@ def test_a_large_value_replaced_between_reads_is_a_miss(
     cache._store_entry(Key("foo"), os.urandom(300_000), 1)
     read_large_value = cache_module._read_large_value
 
-    def replace_before_reading(conn: sqlite3.Connection, row_id: int):
-        # Another worker replaces the row
+    def delete_before_reading(conn: sqlite3.Connection, row_id: int):
+        # Another worker drops it, then stores it again under a new id
         worker = build_cache(make_client(), db)
+        assert worker._clear_hot_cache_if_necessary(Key("foo"))
         worker._store_entry(Key("foo"), os.urandom(300_000), 1)
-        worker._store_entry(Key("bar"), os.urandom(300_000), 1)
         return read_large_value(conn, row_id)
 
-    monkeypatch.setattr(cache_module, "_read_large_value", replace_before_reading)
+    monkeypatch.setattr(cache_module, "_read_large_value", delete_before_reading)
+    time.time.return_value = 61
     assert cache._lookup_hot_cache(Key("foo")) is None
 
 
