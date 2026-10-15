@@ -37,6 +37,7 @@ def client() -> Mock:
 def time(monkeypatch) -> Mock:
     time_mock = Mock()
     time_mock.time.return_value = 0
+    time_mock.time_ns.return_value = 0
     monkeypatch.setattr("meta_memcache.extras.probabilistic_hot_cache.time", time_mock)
     return time_mock
 

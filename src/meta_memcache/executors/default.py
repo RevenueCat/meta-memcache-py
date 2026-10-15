@@ -40,6 +40,55 @@ WriteMetaCommand = Literal[
 ]
 
 
+class _OperationTimes:
+    """
+    Where a sampled operation spent its time, for its stats. The clock starts
+    when it is created, and each phase is a lap: the time since the previous
+    one, so the phases share their reads of the clock and add up to the
+    operation.
+    """
+
+    __slots__ = (
+        "start_ns",
+        "serialize_ns",
+        "pool_ns",
+        "network_ns",
+        "deserialize_ns",
+        "_lap_start_ns",
+    )
+
+    def __init__(self) -> None:
+        self.start_ns = self._lap_start_ns = time.time_ns()
+        self.serialize_ns = 0
+        self.pool_ns = 0
+        self.network_ns = 0
+        self.deserialize_ns = 0
+
+    # They return the lap so they can be short-circuited on an unsampled
+    # operation: `times and times.lap_pool()`
+    def lap_serialize(self) -> int:
+        self.serialize_ns = self._lap_ns()
+        return self.serialize_ns
+
+    def lap_pool(self) -> int:
+        self.pool_ns = self._lap_ns()
+        return self.pool_ns
+
+    def lap_network(self) -> int:
+        self.network_ns = self._lap_ns()
+        return self.network_ns
+
+    def lap_deserialize(self) -> int:
+        self.deserialize_ns = self._lap_ns()
+        return self.deserialize_ns
+
+    def _lap_ns(self) -> int:
+        now_ns = time.time_ns()
+        lap_ns = now_ns - self._lap_start_ns
+        self._lap_start_ns = now_ns
+        return lap_ns
+
+
 class DefaultExecutor:
     def __init__(
         self,
@@ -99,6 +148,8 @@ class DefaultExecutor:
         """
         Execute a blocking command on a connection (send + recv).
         The blocking meta_* methods handle no_reply internally.
+        The response is left for the caller to process, once the
+        connection is back in the pool.
         """
         wire_key: Union[str, bytes] = (
             self._key_encoder_fn(key) if self._key_encoder_fn else key.key
@@ -114,7 +165,7 @@ class DefaultExecutor:
             result = conn.meta_arithmetic(wire_key, flags)
         else:
             raise ValueError(f"Unknown command: {command}")
-        return self._process_response(result)
+        return result
 
     def _process_response(self, result: MemcacheResponse) -> MemcacheResponse:
         if isinstance(result, Value):
@@ -157,7 +208,7 @@ class DefaultExecutor:
                 track_write_failures,
                 raise_on_server_error,
             )
-        start_time_ns = time.time_ns()
+        times = _OperationTimes()
         response: Optional[MemcacheResponse] = None
         error: Optional[Exception] = None
         try:
@@ -169,6 +220,7 @@ class DefaultExecutor:
                 flags,
                 track_write_failures,
                 raise_on_server_error,
+                times,
             )
             return response
         except Exception as e:
@@ -182,10 +234,14 @@ class DefaultExecutor:
                 server=pool.server,
                 flags=flags,
                 responses=None if response is None else {key: response},
-                start_time_ns=start_time_ns,
-                duration_ns=time.time_ns() - start_time_ns,
+                start_time_ns=times.start_ns,
+                duration_ns=time.time_ns() - times.start_ns,
                 error=error,
                 weight=weight,
+                serialize_duration_ns=times.serialize_ns,
+                pool_duration_ns=times.pool_ns,
+                network_duration_ns=times.network_ns,
+                deserialize_duration_ns=times.deserialize_ns,
             )
             try:
                 # There is a weight, so there is a callback
@@ -202,17 +258,20 @@ class DefaultExecutor:
         flags: Optional[RequestFlags],
         track_write_failures: bool,
         raise_on_server_error: Optional[bool] = None,
+        times: Optional[_OperationTimes] = None,
     ) -> MemcacheResponse:
-        cmd_value, flags = (
-            (None, flags)
-            if value is None
-            else self._prepare_serialized_value_and_flags(key, value, flags)
-        )
+        cmd_value: Optional[bytes] = None
+        if value is not None:
+            cmd_value, flags = self._prepare_serialized_value_and_flags(
+                key, value, flags
+            )
+            times and times.lap_serialize()
         try:
             conn = pool.pop_connection()
+            times and times.lap_pool()
             error = False
             try:
-                return self._conn_exec_cmd(
+                response = self._conn_exec_cmd(
                     conn,
                     command=command,
                     key=key,
@@ -224,6 +283,7 @@ class DefaultExecutor:
                 raise MemcacheServerError(pool.server, "Memcache error") from e
             finally:
                 pool.release_connection(conn, error=error)
+                times and times.lap_network()
         except MemcacheServerError:
             if track_write_failures and self._is_a_write_failure(command, flags):
                 self.on_write_failure(key)
@@ -239,6 +299,10 @@ class DefaultExecutor:
             else:
                 return NOT_STORED_DUE_TO_ERROR
 
+        response = self._process_response(response)
+        times and times.lap_deserialize()
+        return response
+
     def _exec_multi_get_on_pool(
         self,
         pool: ConnectionPool,
@@ -246,13 +310,16 @@ class DefaultExecutor:
         flags: Optional[RequestFlags],
         track_write_failures: bool,
         raise_on_server_error: Optional[bool] = None,
+        times: Optional[_OperationTimes] = None,
     ) -> Dict[Key, MemcacheResponse]:
         wire_keys: List[Union[bytes, str]] = [
             self._key_encoder_fn(key) if self._key_encoder_fn else key.key
             for key in keys
         ]
+        times and times.lap_serialize()
         try:
             conn = pool.pop_connection()
+            times and times.lap_pool()
             error = False
             try:
                 responses = conn.meta_multiget(wire_keys, request_flags=flags)
@@ -261,10 +328,7 @@ class DefaultExecutor:
                 raise MemcacheServerError(pool.server, "Memcache error") from e
             finally:
                 pool.release_connection(conn, error=error)
-            return {
-                key: self._process_response(response)
-                for key, response in zip(keys, responses, strict=True)
-            }
+                times and times.lap_network()
         except MemcacheServerError:
             if track_write_failures and self._is_a_write_failure(
                 MetaCommand.META_GET, flags
@@ -279,6 +343,13 @@ class DefaultExecutor:
             if raise_on_server_error:
                 raise
             return {key: MISS_DUE_TO_ERROR for key in keys}
+
+        processed = {
+            key: self._process_response(response)
+            for key, response in zip(keys, responses, strict=True)
+        }
+        times and times.lap_deserialize()
+        return processed
 
     def exec_multi_on_pool(
         self,
@@ -300,7 +371,7 @@ class DefaultExecutor:
                 track_write_failures,
                 raise_on_server_error,
             )
-        start_time_ns = time.time_ns()
+        times = _OperationTimes()
         responses: Optional[Dict[Key, MemcacheResponse]] = None
         error: Optional[Exception] = None
         try:
@@ -311,6 +382,7 @@ class DefaultExecutor:
                 flags,
                 track_write_failures,
                 raise_on_server_error,
+                times,
             )
             return responses
         except Exception as e:
@@ -328,10 +400,14 @@ class DefaultExecutor:
                 server=pool.server,
                 flags=flags,
                 responses=responses,
-                start_time_ns=start_time_ns,
-                duration_ns=time.time_ns() - start_time_ns,
+                start_time_ns=times.start_ns,
+                duration_ns=time.time_ns() - times.start_ns,
                 error=error,
                 weight=weight,
+                serialize_duration_ns=times.serialize_ns,
+                pool_duration_ns=times.pool_ns,
+                network_duration_ns=times.network_ns,
+                deserialize_duration_ns=times.deserialize_ns,
             )
             try:
                 # There is a weight, so there is a callback
@@ -347,6 +423,7 @@ class DefaultExecutor:
         flags: Optional[RequestFlags],
         track_write_failures: bool,
         raise_on_server_error: Optional[bool] = None,
+        times: Optional[_OperationTimes] = None,
     ) -> Dict[Key, MemcacheResponse]:
         if command == MetaCommand.META_GET:
             return self._exec_multi_get_on_pool(
@@ -355,6 +432,7 @@ class DefaultExecutor:
                 flags,
                 track_write_failures,
                 raise_on_server_error,
+                times,
             )
         return self._exec_multi_write_on_pool(
             pool,
@@ -363,6 +441,7 @@ class DefaultExecutor:
             flags,
             track_write_failures,
             raise_on_server_error,
+            times,
         )
 
     def _exec_multi_write_on_pool(
@@ -373,33 +452,47 @@ class DefaultExecutor:
         flags: Optional[RequestFlags],
         track_write_failures: bool,
         raise_on_server_error: Optional[bool] = None,
+        times: Optional[_OperationTimes] = None,
     ) -> Dict[Key, MemcacheResponse]:
+        commands: List[Tuple[Key, Optional[bytes], Optional[RequestFlags]]] = []
+        for key, value in key_values:
+            if value is None:
+                commands.append((key, None, flags))
+            else:
+                cmd_value, cmd_flags = self._prepare_serialized_value_and_flags(
+                    key, value, flags
+                )
+                commands.append((key, cmd_value, cmd_flags))
+        times and times.lap_serialize()
+
         results: Dict[Key, MemcacheResponse] = {}
         try:
             conn = pool.pop_connection()
+            times and times.lap_pool()
             error = False
             try:
-                for key, value in key_values:
-                    cmd_value, flags = (
-                        (None, flags)
-                        if value is None
-                        else self._prepare_serialized_value_and_flags(key, value, flags)
-                    )
-
+                for key, data, key_flags in commands:
                     self._conn_send_cmd(
                         conn,
                         command=command,
                         key=key,
-                        value=cmd_value,
-                        flags=flags,
+                        value=data,
+                        flags=key_flags,
                     )
-                for key, _ in key_values:
-                    results[key] = self._conn_recv_response(conn, flags=flags)
+                # With no_reply there is nothing to read back
+                no_reply = flags is not None and flags.no_reply
+                for key, _, _ in commands:
+                    results[key] = (
+                        Success(flags=ResponseFlags())
+                        if no_reply
+                        else conn.get_response()
+                    )
             except Exception as e:
                 error = True
                 raise MemcacheServerError(pool.server, "Memcache error") from e
             finally:
                 pool.release_connection(conn, error=error)
+                times and times.lap_network()
         except MemcacheServerError:
             if track_write_failures and self._is_a_write_failure(command, flags):
                 for key, _ in key_values:
@@ -416,7 +509,11 @@ class DefaultExecutor:
                 if key not in results:
                     results[key] = failure_result
 
-        return results
+        processed = {
+            key: self._process_response(response) for key, response in results.items()
+        }
+        times and times.lap_deserialize()
+        return processed
 
     def _conn_send_cmd(
         self,
@@ -444,15 +541,3 @@ class DefaultExecutor:
             conn.send_meta_arithmetic(wire_key, flags)
         else:
             raise ValueError(f"Unknown command: {command}")
-
-    def _conn_recv_response(
-        self,
-        conn: MemcacheSocket,
-        flags: Optional[RequestFlags] = None,
-    ) -> MemcacheResponse:
-        """
-        Read response on a connection (for pipelining).
-        """
-        if flags and flags.no_reply:
-            return Success(flags=ResponseFlags())
-        return self._process_response(conn.get_response())
