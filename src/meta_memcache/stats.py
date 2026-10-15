@@ -27,6 +27,15 @@ class CacheStats(NamedTuple):
     # How many operations this one stands for, as the stats_sampler said.
     # 1 without a sampler.
     weight: int
+    # Where duration_ns went: serializing the request (the values written, or
+    # a multi-get's keys), taking a connection from the pool (waiting for one,
+    # or connecting), the round trip to the server until the connection is
+    # given back, and processing the responses, which unserializes the values
+    # read. The network time is kept for a round trip that fails.
+    serialize_duration_ns: int = 0
+    pool_duration_ns: int = 0
+    network_duration_ns: int = 0
+    deserialize_duration_ns: int = 0
 
 
 class HotCacheStats(NamedTuple):
@@ -42,6 +51,11 @@ class HotCacheStats(NamedTuple):
     # How many reads this one stands for, as the stats_sampler said.
     # 1 without a sampler.
     weight: int
+    # The time the read spent looking keys up in the hot cache, the ones it
+    # didn't hold included, and of that, unserializing the values it held.
+    start_time_ns: int = 0
+    duration_ns: int = 0
+    deserialize_duration_ns: int = 0
 
 
 # Called inline after every operation. Stats are best effort: whatever a
