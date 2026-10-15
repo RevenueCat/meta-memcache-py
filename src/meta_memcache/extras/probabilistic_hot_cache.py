@@ -52,6 +52,8 @@ class HotCacheLookup:
     size: int
     # Opaque to the base class: the store's record, for _store_entry()
     stored: Any = field(default=None, compare=False, repr=False)
+    # Spent unserializing the value, when the lookup was timed
+    deserialize_duration_ns: int = field(default=0, compare=False)
 
 
 IMMUTABLE_TYPES = frozenset((type(None), bool, int, float, str, bytes))
@@ -150,7 +152,9 @@ class ProbabilisticHotCache(ClientWrapper):
     meta_memcache.stats). The keys it fetches are reported by the executor
     of the client it wraps, so give that executor a stats_callback too. A
     stats_sampler picks the reads to report, and the weight to report them
-    with, so the rest skip building their stats.
+    with, so the rest skip building their stats and timing their lookups.
+    It is asked before the lookup, so it is also asked for the reads that
+    end up going to the server.
     """
 
     # Subclasses extend these with the metrics of their own storage.
@@ -263,7 +267,9 @@ class ProbabilisticHotCache(ClientWrapper):
             cache_ttl=touch_ttl if touch_ttl is not None and touch_ttl >= 0 else None,
         )
 
-    def _lookup_hot_cache(self, key: Key) -> Optional[HotCacheLookup]:
+    def _lookup_hot_cache(
+        self, key: Key, timed: bool = False
+    ) -> Optional[HotCacheLookup]:
         found = self._store.get(key.key)
         if found is None:
             return self._miss()
@@ -291,11 +297,14 @@ class ProbabilisticHotCache(ClientWrapper):
                     found.revalidate_at = now + self._revalidation_retry_seconds
                     must_revalidate = True
 
+        start_ns = time.time_ns() if timed else 0
+        value = found.get_cloned_value()
         return self._hit(
-            found.get_cloned_value(),
+            value,
             must_revalidate,
             found.size,
             found if must_revalidate else None,
+            time.time_ns() - start_ns if timed else 0,
         )
 
     def _miss(self) -> Optional[HotCacheLookup]:
@@ -304,7 +313,12 @@ class ProbabilisticHotCache(ClientWrapper):
         return None
 
     def _hit(
-        self, value: Any, must_revalidate: bool, size: int, stored: Any = None
+        self,
+        value: Any,
+        must_revalidate: bool,
+        size: int,
+        stored: Any = None,
+        deserialize_duration_ns: int = 0,
     ) -> HotCacheLookup:
         # The thread elected to revalidate counts as a miss: it is about to
         # go to the server, the same as if we had held nothing.
@@ -312,7 +326,11 @@ class ProbabilisticHotCache(ClientWrapper):
             "misses" if must_revalidate else "hits"
         )
         return HotCacheLookup(
-            value=value, must_revalidate=must_revalidate, size=size, stored=stored
+            value=value,
+            must_revalidate=must_revalidate,
+            size=size,
+            stored=stored,
+            deserialize_duration_ns=deserialize_duration_ns,
         )
 
     def _store_in_hot_cache_if_necessary(
@@ -392,10 +410,25 @@ class ProbabilisticHotCache(ClientWrapper):
         self._keep_on_error(key, held)
         return held.value
 
-    def _report_served(self, keys: List[Key], size: int, weight: Optional[int]) -> None:
+    def _report_served(
+        self,
+        keys: List[Key],
+        size: int,
+        weight: Optional[int],
+        start_time_ns: int,
+        duration_ns: int,
+        deserialize_duration_ns: int,
+    ) -> None:
         # No weight when the read was not sampled
         if self._stats_callback is not None and weight is not None and keys:
-            stats = HotCacheStats(keys, size, weight)
+            stats = HotCacheStats(
+                keys=keys,
+                size=size,
+                weight=weight,
+                start_time_ns=start_time_ns,
+                duration_ns=duration_ns,
+                deserialize_duration_ns=deserialize_duration_ns,
+            )
             try:
                 self._stats_callback(stats)
             except Exception:
@@ -461,11 +494,23 @@ class ProbabilisticHotCache(ClientWrapper):
             self._metrics and self._metrics.metric_inc("skips")
         else:
             allowed = True
-            found = self._lookup_hot_cache(key=key)
+            # Sampled up front, so a read left unreported doesn't time its lookup
+            weight = (
+                None
+                if self._stats_callback is None
+                else sample_weight(self._stats_sampler)
+            )
+            start_time_ns = 0 if weight is None else time.time_ns()
+            found = self._lookup_hot_cache(key=key, timed=weight is not None)
             if found is not None and not found.must_revalidate:
-                if self._stats_callback is not None:
+                if weight is not None:
                     self._report_served(
-                        [key], found.size, sample_weight(self._stats_sampler)
+                        [key],
+                        found.size,
+                        weight,
+                        start_time_ns,
+                        time.time_ns() - start_time_ns,
+                        found.deserialize_duration_ns,
                     )
                 return found.value
 
@@ -520,6 +565,9 @@ class ProbabilisticHotCache(ClientWrapper):
         weight = (
             None if self._stats_callback is None else sample_weight(self._stats_sampler)
         )
+        timed = weight is not None
+        start_time_ns = time.time_ns() if timed else 0
+        deserialize_duration_ns = 0
         values: Dict[Key, Optional[Any]] = {}
         revalidating: Dict[Key, HotCacheLookup] = {}
         served_keys: List[Key] = []
@@ -530,10 +578,11 @@ class ProbabilisticHotCache(ClientWrapper):
             if not self._is_allowed(key):
                 ineligible_keys.append(key)
                 continue
-            found = self._lookup_hot_cache(key=key)
+            found = self._lookup_hot_cache(key=key, timed=timed)
             if found is None:
                 pending_keys.append(key)
                 continue
+            deserialize_duration_ns += found.deserialize_duration_ns
             # Held even when it has to be revalidated, so a revalidation
             # that fails can fall back on it.
             values[key] = found.value
@@ -543,6 +592,8 @@ class ProbabilisticHotCache(ClientWrapper):
             elif weight is not None:
                 served_keys.append(key)
                 served_size += found.size
+        # The time in the hot cache, not what the server takes after it
+        lookup_duration_ns = time.time_ns() - start_time_ns if timed else 0
 
         if pending_keys or ineligible_keys:
             if self._metrics and ineligible_keys:
@@ -587,5 +638,12 @@ class ProbabilisticHotCache(ClientWrapper):
                 else:
                     self._store_in_hot_cache_if_necessary(key, result, found, allowed)
                     values[key] = result.value
-        self._report_served(served_keys, served_size, weight)
+        self._report_served(
+            served_keys,
+            served_size,
+            weight,
+            start_time_ns,
+            lookup_duration_ns,
+            deserialize_duration_ns,
+        )
         return values

@@ -1,7 +1,7 @@
 import pickle
 import zlib
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable, List
 from unittest.mock import MagicMock, call
 from meta_memcache.interfaces.router import FailureHandling
 
@@ -33,6 +33,7 @@ from meta_memcache.protocol import (
     ServerVersion,
     Success,
     Value,
+    ValueContainer,
 )
 from meta_memcache.routers.default import DefaultRouter
 from meta_memcache.serializer import MixedSerializer
@@ -1440,6 +1441,63 @@ def test_conn_send_cmd_unknown_command_raises(
     unknown_command.name = "UNKNOWN"
     with pytest.raises(ValueError, match="Unknown command"):
         executor._conn_send_cmd(memcache_socket, unknown_command, Key("foo"))
+
+
+def test_values_read_are_unserialized_after_releasing_the_connection(
+    memcache_socket: MagicMock,
+    connection_pool: MagicMock,
+) -> None:
+    released_when_unserializing: List[bool] = []
+
+    class CheckingSerializer(MixedSerializer):
+        def unserialize(self, data: bytes, encoding_id: int) -> Any:
+            released_when_unserializing.append(
+                connection_pool.release_connection.called
+            )
+            return super().unserialize(data, encoding_id)
+
+    value = Value(
+        size=3, value=b"bar", flags=ResponseFlags(client_flag=MixedSerializer.BINARY)
+    )
+    memcache_socket.meta_get.return_value = value
+    memcache_socket.meta_multiget.return_value = [value]
+    executor = DefaultExecutor(serializer=CheckingSerializer())
+
+    executor.exec_on_pool(
+        connection_pool, MetaCommand.META_GET, Key("a"), None, None, False
+    )
+    connection_pool.release_connection.reset_mock()
+    executor.exec_multi_on_pool(
+        connection_pool, MetaCommand.META_GET, [(Key("b"), None)], None, False
+    )
+
+    assert released_when_unserializing == [True, True]
+
+
+def test_pipelined_writes_are_serialized_before_taking_a_connection(
+    memcache_socket: MagicMock,
+    connection_pool: MagicMock,
+) -> None:
+    taken_when_serializing: List[bool] = []
+
+    class CheckingSerializer(MixedSerializer):
+        def serialize(self, key: Key, value: Any) -> EncodedValue:
+            taken_when_serializing.append(connection_pool.pop_connection.called)
+            return super().serialize(key, value)
+
+    memcache_socket.get_response.return_value = Success(flags=ResponseFlags())
+    executor = DefaultExecutor(serializer=CheckingSerializer())
+
+    results = executor.exec_multi_on_pool(
+        connection_pool,
+        MetaCommand.META_SET,
+        [(Key("a"), ValueContainer(b"1")), (Key("b"), ValueContainer(b"2"))],
+        None,
+        False,
+    )
+
+    assert taken_when_serializing == [False, False]
+    assert all(isinstance(result, Success) for result in results.values())
 
 
 def test_server_failure_is_reported_as_a_miss_due_to_error(
