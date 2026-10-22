@@ -1,4 +1,4 @@
-__version__ = "4.2.0"
+__version__ = "4.3.0"
 
 from meta_memcache.cache_client import CacheClient
 from meta_memcache.configuration import (
