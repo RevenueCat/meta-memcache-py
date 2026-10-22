@@ -322,7 +322,7 @@ def test_connections_are_reset_after_fork(time: Mock, db: HotCacheDBConfig) -> N
         assert cache._get_conn() is parent_conn
 
 
-def test_item_count_gauge_is_updated_on_purge(time: Mock, db: HotCacheDBConfig) -> None:
+def test_item_gauges_are_updated_on_purge(time: Mock, db: HotCacheDBConfig) -> None:
     metrics = Mock(spec=BaseMetricsCollector)
     cache = build_cache(
         make_client(),
@@ -331,18 +331,32 @@ def test_item_count_gauge_is_updated_on_purge(time: Mock, db: HotCacheDBConfig) 
         purge_interval_seconds=0,  # Purge (and update the gauge) on every store
     )
 
+    # Each value the client returns has a wire size of 1
     assert cache.get("foo_hot") == 1  # Expires at 60, dropped at 70
     assert last_gauge(metrics, "item_count") == 1
+    assert last_gauge(metrics, "item_size_bytes") == 1
 
     time.time.return_value = 30
     assert cache.get("bar_hot") == 1  # Expires at 90, dropped at 100
     assert last_gauge(metrics, "item_count") == 2
+    assert last_gauge(metrics, "item_size_bytes") == 2
 
     # The first entry is past its hard deadline and gets purged, the second
     # one is still servable and stays
     time.time.return_value = 71
     assert cache.get("baz_hot") == 1
     assert last_gauge(metrics, "item_count") == 2  # bar_hot + baz_hot
+    assert last_gauge(metrics, "item_size_bytes") == 2
+
+    conn = cache._get_conn()
+    cache._store_entry(Key("big_hot"), b"x", 250)
+    cache._purge_expired(conn)
+    assert last_gauge(metrics, "item_size_bytes") == 252
+
+    time.time.return_value = 1000  # Everything is past its hard deadline
+    cache._purge_expired(conn)
+    assert last_gauge(metrics, "item_count") == 0
+    assert last_gauge(metrics, "item_size_bytes") == 0
 
 
 def test_db_used_bytes_gauge_is_updated_on_purge(

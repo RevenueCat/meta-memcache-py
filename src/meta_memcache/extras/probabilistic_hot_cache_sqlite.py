@@ -66,7 +66,7 @@ _STORE_IF_ABSENT = (
 _REFRESH = "UPDATE hot_cache SET expiration = ?, revalidate_at = ? WHERE id = ?"
 _CLEAR = "DELETE FROM hot_cache WHERE key = ? AND expiration <= ?"
 _PURGE_EXPIRED = "DELETE FROM hot_cache WHERE expiration <= ?"
-_COUNT = "SELECT COUNT(*) FROM hot_cache"
+_COUNT_AND_SIZE = "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM hot_cache"
 # Freed pages stay in the file (no auto_vacuum) and are reused before it grows.
 _USED_BYTES = (
     "SELECT (page_count - freelist_count) * page_size "
@@ -318,6 +318,11 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
     )
     _GAUGES = ProbabilisticHotCache._GAUGES + (
         MetricDefinition(
+            "item_size_bytes",
+            "Wire bytes memcache sent for the stored items. "
+            "db_used_bytes / item_size_bytes is the storage overhead factor",
+        ),
+        MetricDefinition(
             "db_used_bytes",
             "Bytes of db pages in use, capped at db.max_size_bytes. The "
             "write-ahead log is not included",
@@ -503,7 +508,9 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
         conn.execute(_PURGE_EXPIRED, (bound,))
         self._checkpoint(conn)
         if self._metrics:
-            self._metrics.gauge_set("item_count", conn.execute(_COUNT).fetchone()[0])
+            count, size = conn.execute(_COUNT_AND_SIZE).fetchone()
+            self._metrics.gauge_set("item_count", count)
+            self._metrics.gauge_set("item_size_bytes", size)
             self._metrics.gauge_set(
                 "db_used_bytes", conn.execute(_USED_BYTES).fetchone()[0]
             )
