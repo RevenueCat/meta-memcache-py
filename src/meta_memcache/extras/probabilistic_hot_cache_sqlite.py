@@ -382,7 +382,9 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
             self._local.next_purge_at = time.time() + self._purge_interval_seconds
         return conn
 
-    def _lookup_hot_cache(self, key: Key) -> Optional[HotCacheLookup]:
+    def _lookup_hot_cache(
+        self, key: Key, timed: bool = False
+    ) -> Optional[HotCacheLookup]:
         try:
             conn = self._get_conn()
             row = conn.execute(_GET, (self._inline_max_bytes, key.key)).fetchone()
@@ -422,11 +424,14 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
                     ).rowcount
                     > 0
                 )
+            start_ns = time.time_ns() if timed else 0
+            value = pickle.loads(blob)
             return self._hit(
-                pickle.loads(blob),
+                value,
                 must_revalidate,
                 size,
                 _StoredRow(row_id, blob) if must_revalidate else None,
+                time.time_ns() - start_ns if timed else 0,
             )
         except (sqlite3.Error, pickle.PickleError):
             # Best effort: a failing hot cache behaves as a miss.
