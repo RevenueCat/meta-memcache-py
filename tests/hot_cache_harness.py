@@ -222,8 +222,8 @@ def sqlite_harness(db_path: str) -> HotCacheHarness:
 # Metrics each implementation keeps on its own terms, so they are not part
 # of the shared contract: the item_count gauge is updated on every store in
 # memory but only on the periodic purge in sqlite, and only the sqlite store
-# can fail in ways that are swallowed and counted as errors.
-NOT_SHARED_METRICS = ("item_count", "errors")
+# has a db size and can fail in ways that are swallowed and counted as errors.
+NOT_SHARED_METRICS = ("item_count", "db_used_bytes", "errors")
 
 
 def counters(metrics_collector: BaseMetricsCollector) -> Dict[str, int]:

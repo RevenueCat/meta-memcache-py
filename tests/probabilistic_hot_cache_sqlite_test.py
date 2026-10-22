@@ -332,17 +332,43 @@ def test_item_count_gauge_is_updated_on_purge(time: Mock, db: HotCacheDBConfig) 
     )
 
     assert cache.get("foo_hot") == 1  # Expires at 60, dropped at 70
-    metrics.gauge_set.assert_called_with("item_count", 1)
+    assert last_gauge(metrics, "item_count") == 1
 
     time.time.return_value = 30
     assert cache.get("bar_hot") == 1  # Expires at 90, dropped at 100
-    metrics.gauge_set.assert_called_with("item_count", 2)
+    assert last_gauge(metrics, "item_count") == 2
 
     # The first entry is past its hard deadline and gets purged, the second
     # one is still servable and stays
     time.time.return_value = 71
     assert cache.get("baz_hot") == 1
-    metrics.gauge_set.assert_called_with("item_count", 2)  # bar_hot + baz_hot
+    assert last_gauge(metrics, "item_count") == 2  # bar_hot + baz_hot
+
+
+def test_db_used_bytes_gauge_is_updated_on_purge(
+    time: Mock, db: HotCacheDBConfig
+) -> None:
+    metrics = Mock(spec=BaseMetricsCollector)
+    cache = build_cache(make_client(), db, metrics_collector=metrics)
+    conn = cache._get_conn()
+    time.time.return_value = 0
+    cache._purge_expired(conn)
+    empty = last_gauge(metrics, "db_used_bytes")
+
+    for i in range(100):
+        cache._store_entry(Key(f"key_{i}"), b"x" * 4096, 4096)
+    cache._purge_expired(conn)
+    assert last_gauge(metrics, "db_used_bytes") >= empty + 100 * 4096
+
+    # The purged pages stay in the file, but no longer count
+    time.time.return_value = 100  # Everything is past its hard deadline
+    cache._purge_expired(conn)
+    assert last_gauge(metrics, "db_used_bytes") == empty
+
+
+def last_gauge(metrics: Mock, name: str) -> int:
+    calls = metrics.gauge_set.call_args_list
+    return [c.args[1] for c in calls if c.args[0] == name][-1]
 
 
 def break_db(db: HotCacheDBConfig) -> None:

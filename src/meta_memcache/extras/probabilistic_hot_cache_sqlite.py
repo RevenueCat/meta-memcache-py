@@ -67,6 +67,11 @@ _REFRESH = "UPDATE hot_cache SET expiration = ?, revalidate_at = ? WHERE id = ?"
 _CLEAR = "DELETE FROM hot_cache WHERE key = ? AND expiration <= ?"
 _PURGE_EXPIRED = "DELETE FROM hot_cache WHERE expiration <= ?"
 _COUNT = "SELECT COUNT(*) FROM hot_cache"
+# Freed pages stay in the file (no auto_vacuum) and are reused before it grows.
+_USED_BYTES = (
+    "SELECT (page_count - freelist_count) * page_size "
+    "FROM pragma_page_count(), pragma_freelist_count(), pragma_page_size()"
+)
 
 DEFAULT_MAX_SIZE_BYTES = 64 * 1024 * 1024
 # The write-ahead log lives next to the db file and is not covered by
@@ -311,6 +316,13 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
             "value that cannot be stored is simply not cached",
         ),
     )
+    _GAUGES = ProbabilisticHotCache._GAUGES + (
+        MetricDefinition(
+            "db_used_bytes",
+            "Bytes of db pages in use, capped at db.max_size_bytes. The "
+            "write-ahead log is not included",
+        ),
+    )
 
     def __init__(
         self,
@@ -492,6 +504,9 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
         self._checkpoint(conn)
         if self._metrics:
             self._metrics.gauge_set("item_count", conn.execute(_COUNT).fetchone()[0])
+            self._metrics.gauge_set(
+                "db_used_bytes", conn.execute(_USED_BYTES).fetchone()[0]
+            )
 
     def _checkpoint(self, conn: sqlite3.Connection) -> None:
         # Hand the pages the purge just freed back to the db file and
