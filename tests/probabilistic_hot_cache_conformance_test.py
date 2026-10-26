@@ -6,6 +6,7 @@ being served. Tests that only make sense for one of them live in
 probabilistic_hot_cache_test.py and probabilistic_hot_cache_sqlite_test.py.
 """
 
+import itertools
 from pathlib import Path
 from typing import Callable, List, Mapping, Optional
 from unittest.mock import Mock
@@ -47,6 +48,7 @@ def time(monkeypatch) -> Mock:
     # Both implementations read the clock from their own module.
     time_mock = Mock()
     time_mock.time.return_value = 0
+    time_mock.time_ns.return_value = 0
     for module in ("", "_sqlite"):
         monkeypatch.setattr(
             f"meta_memcache.extras.probabilistic_hot_cache{module}.time", time_mock
@@ -975,17 +977,64 @@ def test_a_sampler_skips_the_reads_it_returns_no_weight_for(
     harness: HotCacheHarness, client: Mock, time: Mock
 ) -> None:
     stats: List[HotCacheStats] = []
-    weights = iter([None, 10, None, 20])
+    weights = iter([None, None, 10, None, 20])
     cache = harness.build(
         client, stats_callback=stats.append, stats_sampler=weights.__next__
     )
-    cache.get("foo_hot")  # From the server: not sampled here at all
+    cache.get("foo_hot")  # From the server: sampled, but nothing to report
 
     assert cache.get("foo_hot") == 1
     assert cache.get("foo_hot") == 1
     assert cache.multi_get(["foo_hot", "cold"]) == {Key("foo_hot"): 1, Key("cold"): 1}
     assert cache.multi_get(["foo_hot", "cold"]) == {Key("foo_hot"): 1, Key("cold"): 1}
     assert stats == [served("foo_hot", weight=10), served("foo_hot", weight=20)]
+
+
+def test_stats_time_the_lookup_and_the_unserializing_of_a_hit(
+    harness: HotCacheHarness, client: Mock, time: Mock
+) -> None:
+    stats: List[HotCacheStats] = []
+    cache = harness.build(client, stats_callback=stats.append)
+    cache.get("foo_hot")
+
+    # Each read of the clock is 10ns after the previous one
+    time.time_ns.side_effect = itertools.count(0, 10)
+    assert cache.get("foo_hot") == 1
+
+    [reported] = stats
+    # Starts at 0, unserializes from 10 to 20, and ends at 30
+    assert reported.start_time_ns == 0
+    assert reported.duration_ns == 30
+    assert reported.deserialize_duration_ns == 10
+
+
+def test_stats_time_the_lookups_of_a_multi_get_without_the_server(
+    harness: HotCacheHarness, client: Mock, time: Mock
+) -> None:
+    stats: List[HotCacheStats] = []
+    cache = harness.build(client, stats_callback=stats.append)
+    cache.multi_get(["a_hot", "b_hot"])
+
+    time.time_ns.side_effect = itertools.count(0, 10)
+    cache.multi_get(["a_hot", "cold", "b_hot"])
+
+    [reported] = stats
+    # a_hot unserializes from 10 to 20, b_hot from 30 to 40, and the lookups
+    # end at 50, before asking the server for cold
+    assert reported.start_time_ns == 0
+    assert reported.duration_ns == 50
+    assert reported.deserialize_duration_ns == 20
+
+
+def test_unsampled_reads_do_not_read_the_clock(
+    harness: HotCacheHarness, client: Mock, time: Mock
+) -> None:
+    cache = harness.build(client, stats_callback=Mock(), stats_sampler=lambda: None)
+    cache.get("foo_hot")
+
+    assert cache.get("foo_hot") == 1
+    assert cache.multi_get(["foo_hot", "cold"]) == {Key("foo_hot"): 1, Key("cold"): 1}
+    time.time_ns.assert_not_called()
 
 
 def test_a_failing_sampler_skips_the_report_but_not_the_read(
