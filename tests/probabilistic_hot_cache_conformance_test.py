@@ -848,7 +848,31 @@ def test_get_or_lease_keeps_a_recache_won_by_the_plain_read(
     time.time.return_value = 61
     assert cache.get_or_lease("foo_hot", lease_policy=lease_policy) is None
     lease_client.meta_get.assert_called_once()
-    assert not harness.contains("foo_hot")
+
+    # The others keep serving the held copy while we repopulate
+    lease_client.meta_get.reset_mock()
+    assert cache.get_or_lease("foo_hot", lease_policy=lease_policy) == 1
+    lease_client.meta_get.assert_not_called()
+
+
+def test_get_or_lease_keeps_the_held_copy_on_a_recache_won_by_a_lease_read(
+    harness: HotCacheHarness, lease_client: Mock, time: Mock
+) -> None:
+    cache = harness.build(lease_client)
+    lease_policy = LeasePolicy()
+    assert cache.get_or_lease("foo_hot", lease_policy=lease_policy) == 1
+
+    lease_client.meta_get.side_effect = lambda key, **kwargs: Value(
+        size=1, value=1, flags=ResponseFlags(win=True)
+    )
+    lease_client.meta_get.reset_mock()
+    time.time.return_value = 61
+    assert cache.get_or_lease("foo_hot", lease_policy=lease_policy) is None
+    lease_client.meta_get.assert_called_once_with(key=Key("foo_hot"), **LEASE_FLAGS)
+
+    lease_client.meta_get.reset_mock()
+    assert cache.get_or_lease("foo_hot", lease_policy=lease_policy) == 1
+    lease_client.meta_get.assert_not_called()
 
 
 def test_hot_values_outlast_an_outage_behind_a_gutter(

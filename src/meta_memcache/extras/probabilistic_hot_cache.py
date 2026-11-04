@@ -544,6 +544,9 @@ class ProbabilisticHotCache(ClientWrapper):
                         lease_wait_fn=lease_wait_fn,
                     )
                 if result and result.value is None:
+                    if result.flags.win and result.size > 0:
+                        # A recache we won: the others keep serving the held copy
+                        return None
                     # Lease placeholder: we hold the lease, or we lost and ran
                     # out of retries. Behaves as a miss, and nothing worth
                     # promoting.
