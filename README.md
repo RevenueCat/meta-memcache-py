@@ -305,6 +305,9 @@ Note the markers are recognized by identity, only a `is` identity check
 that `is_error_response()` does can tell them appart from regular
 `Miss`/`NotStored`.
 
+A gutter pool reports its misses as `MISS_DUE_TO_ERROR` too, since the
+server owning the key never answered.
+
 The `ResponseFlags` contains the all the returned flags. This metadata gives a lot of
 control and posibilities, it is the strength of the meta protocol:
  * `cas_token`: Compare-And-Swap token (integer value) or `None` if not returned

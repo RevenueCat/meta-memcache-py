@@ -134,7 +134,8 @@ class ProbabilisticHotCache(ClientWrapper):
     as the server answers again. That keeps the traffic off whatever sits
     behind the cache, at the cost of serving values that may be arbitrarily
     stale, so it is off by default. A miss from a server that answered is
-    still a miss, and still drops the value. A multi_get on a pool that
+    still a miss, and still drops the value, but a gutter's miss counts as
+    a failure (see GutterRouter). A multi_get on a pool that
     raises still raises: the hot values it was refreshing are kept alive,
     but the caller doesn't get a partial result the pool would not give.
 
@@ -520,8 +521,20 @@ class ProbabilisticHotCache(ClientWrapper):
         # nothing held there is nothing to decide, and the failure is the
         # caller's to handle.
         rescue = found if self._extend_on_error else None
+        # A value we can rescue is checked with a plain read before taking the
+        # lease: behind a gutter, a lease read vivifies instead of failing
+        check_before_lease = lease_policy is not None and rescue is not None
+        result: Optional[Value] = None
         try:
-            if lease_policy is not None:
+            if lease_policy is None or check_before_lease:
+                response = self.meta_get(
+                    key, flags=self._read_flags(touch_ttl, recache_policy)
+                )
+                if rescue is not None and is_error_response(response):
+                    return self._serve_stale_on_error(key, rescue)
+                result = self._process_get_result(key, response)
+            # A None value is another caller's lease placeholder
+            if lease_policy is not None and (result is None or result.value is None):
                 result = self._get_or_lease(
                     key=key,
                     lease_policy=lease_policy,
@@ -534,13 +547,6 @@ class ProbabilisticHotCache(ClientWrapper):
                     # out of retries. Behaves as a miss, and nothing worth
                     # promoting.
                     result = None
-            else:
-                response = self.meta_get(
-                    key, flags=self._read_flags(touch_ttl, recache_policy)
-                )
-                if rescue is not None and is_error_response(response):
-                    return self._serve_stale_on_error(key, rescue)
-                result = self._process_get_result(key, response)
         except MemcacheError:
             if rescue is None:
                 raise
