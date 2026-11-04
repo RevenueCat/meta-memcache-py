@@ -833,6 +833,24 @@ def test_get_or_lease_revalidates_a_rescuable_value_with_a_plain_read(
     assert not harness.contains("foo_hot")
 
 
+def test_get_or_lease_keeps_a_recache_won_by_the_plain_read(
+    harness: HotCacheHarness, lease_client: Mock, time: Mock
+) -> None:
+    """The win is ours: a second read would lose the token to ourselves."""
+    cache = harness.build(lease_client, extend_on_error=True)
+    lease_policy = LeasePolicy()
+    assert cache.get_or_lease("foo_hot", lease_policy=lease_policy) == 1
+
+    lease_client.meta_get.side_effect = lambda key, **kwargs: Value(
+        size=0, value=None, flags=ResponseFlags(win=True)
+    )
+    lease_client.meta_get.reset_mock()
+    time.time.return_value = 61
+    assert cache.get_or_lease("foo_hot", lease_policy=lease_policy) is None
+    lease_client.meta_get.assert_called_once()
+    assert not harness.contains("foo_hot")
+
+
 def test_hot_values_outlast_an_outage_behind_a_gutter(
     harness: HotCacheHarness, time: Mock
 ) -> None:
