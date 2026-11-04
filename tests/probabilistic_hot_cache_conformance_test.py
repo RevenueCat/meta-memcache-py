@@ -842,7 +842,7 @@ def test_get_or_lease_keeps_a_recache_won_by_the_plain_read(
     assert cache.get_or_lease("foo_hot", lease_policy=lease_policy) == 1
 
     lease_client.meta_get.side_effect = lambda key, **kwargs: Value(
-        size=0, value=None, flags=ResponseFlags(win=True)
+        size=1, value=1, flags=ResponseFlags(win=True)
     )
     lease_client.meta_get.reset_mock()
     time.time.return_value = 61

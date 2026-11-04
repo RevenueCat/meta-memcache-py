@@ -534,9 +534,7 @@ class ProbabilisticHotCache(ClientWrapper):
                     return self._serve_stale_on_error(key, rescue)
                 result = self._process_get_result(key, response)
             if lease_policy is not None:
-                # A miss, or another caller's lease placeholder, takes the
-                # lease. A recache we already won stays won: asking again
-                # would lose the token to ourselves.
+                # Lease on a miss or a placeholder, not on a recache we won
                 if result is None or (result.value is None and not result.flags.win):
                     result = self._get_or_lease(
                         key=key,
