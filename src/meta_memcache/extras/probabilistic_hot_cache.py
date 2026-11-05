@@ -533,16 +533,20 @@ class ProbabilisticHotCache(ClientWrapper):
                 if rescue is not None and is_error_response(response):
                     return self._serve_stale_on_error(key, rescue)
                 result = self._process_get_result(key, response)
-            # A None value is another caller's lease placeholder
-            if lease_policy is not None and (result is None or result.value is None):
-                result = self._get_or_lease(
-                    key=key,
-                    lease_policy=lease_policy,
-                    touch_ttl=touch_ttl,
-                    recache_policy=recache_policy,
-                    lease_wait_fn=lease_wait_fn,
-                )
+            if lease_policy is not None:
+                # Lease on a miss or a placeholder, not on a recache we won
+                if result is None or (result.value is None and not result.flags.win):
+                    result = self._get_or_lease(
+                        key=key,
+                        lease_policy=lease_policy,
+                        touch_ttl=touch_ttl,
+                        recache_policy=recache_policy,
+                        lease_wait_fn=lease_wait_fn,
+                    )
                 if result and result.value is None:
+                    if result.flags.win and result.size > 0:
+                        # A recache we won: the others keep serving the held copy
+                        return None
                     # Lease placeholder: we hold the lease, or we lost and ran
                     # out of retries. Behaves as a miss, and nothing worth
                     # promoting.
