@@ -14,12 +14,23 @@ from unittest.mock import Mock
 import pytest
 from prometheus_client import CollectorRegistry
 
-from meta_memcache import Key
-from meta_memcache.configuration import LeasePolicy, RecachePolicy
+from meta_memcache import CacheClient, Key
+from meta_memcache.configuration import LeasePolicy, RecachePolicy, ServerAddress
+from meta_memcache.connection.pool import ConnectionPool
+from meta_memcache.connection.providers import HostConnectionPoolProvider
 from meta_memcache.errors import MemcacheError
+from meta_memcache.interfaces.executor import Executor
 from meta_memcache.metrics.prometheus import PrometheusMetricsCollector
 from meta_memcache.interfaces.router import DEFAULT_FAILURE_HANDLING
-from meta_memcache.protocol import MISS_DUE_TO_ERROR, Miss, ResponseFlags, Value
+from meta_memcache.protocol import (
+    MISS_DUE_TO_ERROR,
+    Miss,
+    ReadResponse,
+    RequestFlags,
+    ResponseFlags,
+    Value,
+)
+from meta_memcache.routers.gutter import GutterRouter
 from meta_memcache.stats import HotCacheStats
 from tests.hot_cache_harness import (
     hot,
@@ -831,6 +842,134 @@ def test_a_miss_from_a_server_that_answered_still_drops_the_value(
     time.time.return_value = 61
     assert cache.get("foo_hot") is None
     assert harness.count() == 0
+
+
+def test_get_or_lease_revalidates_a_rescuable_value_with_a_plain_read(
+    harness: HotCacheHarness, lease_client: Mock, time: Mock
+) -> None:
+    """
+    On a gutter, a lease read vivifies the placeholder instead of reporting
+    the failure, so a value we could rescue is checked with a plain read: a
+    hit needs no lease, and a miss still takes it.
+    """
+    cache = harness.build(lease_client, extend_on_error=True)
+    lease_policy = LeasePolicy()
+    assert cache.get_or_lease("foo_hot", lease_policy=lease_policy) == 1
+
+    lease_client.meta_get.reset_mock()
+    time.time.return_value = 61
+    assert cache.get_or_lease("foo_hot", lease_policy=lease_policy) == 1
+    lease_client.meta_get.assert_called_once_with(key=Key("foo_hot"), **DEFAULT_FLAGS)
+
+    # The server says the key is gone: the plain read misses, the lease is
+    # taken and won, and the local copy is dropped
+    responses = [Miss(), Value(size=0, value=None, flags=ResponseFlags(win=True))]
+    lease_client.meta_get.side_effect = lambda key, **kwargs: responses.pop(0)
+    lease_client.meta_get.reset_mock()
+    time.time.return_value = 122
+    assert cache.get_or_lease("foo_hot", lease_policy=lease_policy) is None
+    assert [c.kwargs["flags"] for c in lease_client.meta_get.call_args_list] == [
+        DEFAULT_FLAGS["flags"],
+        LEASE_FLAGS["flags"],
+    ]
+    assert not harness.contains("foo_hot")
+
+
+def test_get_or_lease_keeps_a_recache_won_by_the_plain_read(
+    harness: HotCacheHarness, lease_client: Mock, time: Mock
+) -> None:
+    """The win is ours: a second read would lose the token to ourselves."""
+    cache = harness.build(lease_client, extend_on_error=True)
+    lease_policy = LeasePolicy()
+    assert cache.get_or_lease("foo_hot", lease_policy=lease_policy) == 1
+
+    lease_client.meta_get.side_effect = lambda key, **kwargs: Value(
+        size=1, value=1, flags=ResponseFlags(win=True)
+    )
+    lease_client.meta_get.reset_mock()
+    time.time.return_value = 61
+    assert cache.get_or_lease("foo_hot", lease_policy=lease_policy) is None
+    lease_client.meta_get.assert_called_once()
+
+    # The others keep serving the held copy while we repopulate
+    lease_client.meta_get.reset_mock()
+    assert cache.get_or_lease("foo_hot", lease_policy=lease_policy) == 1
+    lease_client.meta_get.assert_not_called()
+
+
+def test_get_or_lease_keeps_the_held_copy_on_a_recache_won_by_a_lease_read(
+    harness: HotCacheHarness, lease_client: Mock, time: Mock
+) -> None:
+    cache = harness.build(lease_client)
+    lease_policy = LeasePolicy()
+    assert cache.get_or_lease("foo_hot", lease_policy=lease_policy) == 1
+
+    lease_client.meta_get.side_effect = lambda key, **kwargs: Value(
+        size=1, value=1, flags=ResponseFlags(win=True)
+    )
+    lease_client.meta_get.reset_mock()
+    time.time.return_value = 61
+    assert cache.get_or_lease("foo_hot", lease_policy=lease_policy) is None
+    lease_client.meta_get.assert_called_once_with(key=Key("foo_hot"), **LEASE_FLAGS)
+
+    lease_client.meta_get.reset_mock()
+    assert cache.get_or_lease("foo_hot", lease_policy=lease_policy) == 1
+    lease_client.meta_get.assert_not_called()
+
+
+def test_hot_values_outlast_an_outage_behind_a_gutter(
+    harness: HotCacheHarness, time: Mock
+) -> None:
+    """End to end, through a real GutterRouter whose gutter is cold."""
+    regular_pool, gutter_pool = Mock(spec=ConnectionPool), Mock(spec=ConnectionPool)
+    executor = Mock(spec=Executor)
+    client = CacheClient(
+        router=GutterRouter(
+            pool_provider=HostConnectionPoolProvider(
+                ServerAddress("regular", 11211), regular_pool
+            ),
+            gutter_pool_provider=HostConnectionPoolProvider(
+                ServerAddress("gutter", 11211), gutter_pool
+            ),
+            gutter_ttl=60,
+            executor=executor,
+        )
+    )
+    hot_value = Value(size=1, value=1, flags=ResponseFlags(fetched=True, last_access=1))
+    executor.exec_on_pool.return_value = hot_value
+    executor.exec_multi_on_pool.side_effect = lambda key_values, **kwargs: {
+        key: hot_value for key, _ in key_values
+    }
+    cache = harness.build(client, extend_on_error=True)
+    lease_policy = LeasePolicy()
+    assert cache.get("foo_hot") == 1
+    assert cache.multi_get(["bar_hot"]) == {Key("bar_hot"): 1}
+    assert cache.get_or_lease("baz_hot", lease_policy=lease_policy) == 1
+
+    # The server goes down and the gutter has nothing: a plain read misses,
+    # a lease read vivifies the placeholder and wins the lease
+    def answer(pool: ConnectionPool, flags: RequestFlags) -> ReadResponse:
+        if pool is regular_pool:
+            return MISS_DUE_TO_ERROR
+        if flags.vivify_on_miss_ttl:
+            return Value(size=0, value=None, flags=ResponseFlags(win=True))
+        return Miss()
+
+    executor.exec_on_pool.side_effect = lambda pool, flags, **kwargs: answer(
+        pool, flags
+    )
+    executor.exec_multi_on_pool.side_effect = lambda pool, key_values, flags, **kw: {
+        key: answer(pool, flags) for key, _ in key_values
+    }
+    time.time.return_value = 61
+    assert cache.get("foo_hot") == 1
+    assert cache.multi_get(["bar_hot"]) == {Key("bar_hot"): 1}
+    assert cache.get_or_lease("baz_hot", lease_policy=lease_policy) == 1
+
+    # All of them outlive the deadline they started with (70)
+    time.time.return_value = 100
+    for key in ("foo_hot", "bar_hot", "baz_hot"):
+        assert cache._lookup_hot_cache(Key(key)) == hot(1)
 
 
 def test_multi_get_keeps_the_results_of_the_servers_that_answered(

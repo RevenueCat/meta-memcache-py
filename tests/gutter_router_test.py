@@ -24,9 +24,12 @@ from meta_memcache.protocol import (
     MaybeValue,
     MemcacheResponse,
     MetaCommand,
+    Miss,
+    NotStored,
     RequestFlags,
     ResponseFlags,
     Success,
+    Value,
     ValueContainer,
 )
 from meta_memcache.routers.gutter import GutterRouter
@@ -116,12 +119,40 @@ def test_marker_response_fails_over_to_the_gutter_pool(
     assert gutter_call.kwargs["track_write_failures"] is False
 
 
+def test_a_gutter_miss_after_a_primary_failure_is_still_an_error(
+    router: GutterRouter, executor: MagicMock
+) -> None:
+    """The gutter is cold by design: its miss is not the owning server's answer."""
+    executor.exec_on_pool.side_effect = [MISS_DUE_TO_ERROR, Miss()]
+
+    assert router.exec(command=MetaCommand.META_GET, key=Key("foo")) is (
+        MISS_DUE_TO_ERROR
+    )
+
+
+def test_a_gutter_hit_after_a_primary_failure_is_returned_as_is(
+    router: GutterRouter, executor: MagicMock
+) -> None:
+    value = Value(size=1, value=1, flags=ResponseFlags())
+    executor.exec_on_pool.side_effect = [MISS_DUE_TO_ERROR, value]
+
+    assert router.exec(command=MetaCommand.META_GET, key=Key("foo")) is value
+
+
+def test_a_gutter_not_stored_after_a_primary_failure_is_a_real_answer(
+    router: GutterRouter, executor: MagicMock
+) -> None:
+    """Only misses are rewritten: what a not-stored means depends on the mode."""
+    not_stored = NotStored()
+    executor.exec_on_pool.side_effect = [NOT_STORED_DUE_TO_ERROR, not_stored]
+
+    assert router.exec(command=MetaCommand.META_SET, key=Key("foo")) is not_stored
+
+
 def test_ordinary_negative_responses_do_not_fail_over(
     router: GutterRouter, executor: MagicMock
 ) -> None:
     """A real miss/not-stored is the server's answer, not a reason to fail over."""
-    from meta_memcache.protocol import Miss, NotStored
-
     for response in (Miss(), NotStored()):
         executor.reset_mock()
         executor.exec_on_pool.return_value = response
@@ -180,6 +211,37 @@ def test_multi_only_retries_the_keys_that_actually_failed(
         3,
     ]
     assert gutter_call.kwargs["flags"].cache_ttl == 60
+
+
+def test_multi_reports_gutter_misses_as_errors_only_for_the_failed_keys(
+    router: GutterRouter,
+    executor: MagicMock,
+    pools: Tuple[ConnectionPool, ConnectionPool],
+) -> None:
+    regular_pool, gutter_pool = pools
+    hit = Value(size=1, value=1, flags=ResponseFlags())
+    miss = Miss()
+
+    def exec_multi_on_pool(
+        pool: ConnectionPool,
+        key_values: List[Tuple[Key, MaybeValue]],
+        **kwargs: object,
+    ) -> Dict[Key, MemcacheResponse]:
+        if pool is gutter_pool:
+            return {key: Miss() for key, _ in key_values}
+        return {Key("a"): hit, Key("b"): miss, Key("c"): MISS_DUE_TO_ERROR}
+
+    executor.exec_multi_on_pool.side_effect = exec_multi_on_pool
+
+    results = router.exec_multi(
+        command=MetaCommand.META_GET, keys=[Key("a"), Key("b"), Key("c")]
+    )
+
+    assert results[Key("a")] is hit
+    # The server answered for "b": a genuine miss stays a genuine miss
+    assert results[Key("b")] is miss
+    # ... while the gutter's miss for "c" is not its server's answer
+    assert results[Key("c")] is MISS_DUE_TO_ERROR
 
 
 def test_multi_does_not_touch_the_gutter_when_nothing_failed(
