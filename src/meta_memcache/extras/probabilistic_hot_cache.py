@@ -341,6 +341,11 @@ class ProbabilisticHotCache(ClientWrapper):
         found: Optional[HotCacheLookup],
         allowed: bool,
     ) -> None:
+        if value.flags.win or (value.size == 0 and value.flags.win is False):
+            # A won lease or recache, or the placeholder of a lease another
+            # client holds: _process_get_result() cleared the value, so
+            # there is nothing worth promoting.
+            return
         is_hot = found is not None
         if not is_hot:
             listed = key.key in self._hot_keys

@@ -15,7 +15,7 @@ import pytest
 from prometheus_client import CollectorRegistry
 
 from meta_memcache import CacheClient, Key
-from meta_memcache.configuration import LeasePolicy, ServerAddress
+from meta_memcache.configuration import LeasePolicy, RecachePolicy, ServerAddress
 from meta_memcache.connection.pool import ConnectionPool
 from meta_memcache.connection.providers import HostConnectionPoolProvider
 from meta_memcache.errors import MemcacheError
@@ -667,6 +667,48 @@ def test_get_or_lease_does_not_promote_lease_placeholders(
     assert not harness.contains("foo_lost")
     assert lease_client.meta_get.call_count == 2
     wait.assert_called_once_with(1.0)
+
+
+def test_get_does_not_promote_lease_placeholders(
+    harness: HotCacheHarness, lease_client: Mock, time: Mock
+) -> None:
+    cache = harness.build(lease_client)
+
+    # Another client holds the lease: a plain read gets its placeholder,
+    # which looks hot but has no value to cache.
+    assert cache.get("foo_lost") is None
+    assert not harness.contains("foo_lost")
+
+
+def test_won_recaches_are_not_promoted(
+    harness: HotCacheHarness, client: Mock, time: Mock
+) -> None:
+    def won() -> Value:
+        return Value(
+            size=1,
+            value=2,
+            flags=ResponseFlags(win=True, fetched=True, last_access=1),
+        )
+
+    cache = harness.build(client)
+    assert cache.get("foo_hot") == 1
+    client.meta_get.side_effect = lambda key, **kwargs: won()
+    client.meta_multiget.side_effect = lambda keys, **kwargs: {
+        key: won() for key in keys
+    }
+
+    # Stale: the reader elected to revalidate wins the recache, so it gets a
+    # miss and has to repopulate the key...
+    time.time.return_value = 60
+    assert cache.get("foo_hot", recache_policy=RecachePolicy()) is None
+    # ... while the other readers keep getting the value held, not a miss
+    assert cache.get("foo_hot") == 1
+
+    # A key read for the first time is not promoted either
+    assert cache.multi_get(["bar_hot"], recache_policy=RecachePolicy()) == {
+        Key("bar_hot"): None
+    }
+    assert not harness.contains("bar_hot")
 
 
 def test_get_or_lease_elects_a_single_refresher(
