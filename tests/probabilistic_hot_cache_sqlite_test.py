@@ -650,10 +650,13 @@ def row_of(db: HotCacheDBConfig, key: str) -> Optional[tuple]:
         conn.close()
 
 
+@pytest.mark.parametrize("inline", [False, True])
 def test_an_unchanged_revalidation_only_moves_the_clocks(
-    time: Mock, db: HotCacheDBConfig
+    time: Mock, db: HotCacheDBConfig, inline: bool
 ) -> None:
-    cache = build_cache(make_client(), db)
+    # Not inline, the value is read with blobopen (python 3.11+)
+    threshold = sys.maxsize if inline else 0
+    cache = build_cache(make_client(), db, blobopen_threshold_bytes=threshold)
     time.time.return_value = 0
     cache._store_entry(Key("foo"), "foo value", 1)
     row_id, _, _ = row_of(db, "foo")
