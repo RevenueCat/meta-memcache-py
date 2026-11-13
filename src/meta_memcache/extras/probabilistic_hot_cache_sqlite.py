@@ -6,7 +6,7 @@ import threading
 import time
 import weakref
 from dataclasses import dataclass
-from typing import Any, Iterable, List, NamedTuple, Optional, Tuple
+from typing import Any, Iterable, List, Optional, Tuple
 
 from meta_memcache.extras.probabilistic_hot_cache import (
     HotCacheLookup,
@@ -239,7 +239,8 @@ class HotCacheDBConfig:
         return conn
 
 
-class _StoredRow(NamedTuple):
+@dataclass(slots=True)
+class _StoredRow:
     id: int
     blob: bytes
 
@@ -430,7 +431,7 @@ class SqliteProbabilisticHotCache(ProbabilisticHotCache):
                 value,
                 must_revalidate,
                 size,
-                _StoredRow(row_id, blob) if must_revalidate else None,
+                _StoredRow(row_id, blob),
                 time.time_ns() - start_ns if timed else 0,
             )
         except (sqlite3.Error, pickle.PickleError):
