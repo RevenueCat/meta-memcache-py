@@ -35,7 +35,7 @@ from meta_memcache.stats import (
 _log: logging.Logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
+@dataclass(slots=True)
 class HotCacheLookup:
     """
     What the hot cache holds for a key, and what the caller has to do.
@@ -50,7 +50,8 @@ class HotCacheLookup:
     value: Any
     must_revalidate: bool
     size: int
-    # Opaque to the base class: the store's record, for _store_entry()
+    # Opaque to the base class: the store's record, managed by _store_entry()
+    # and _refresh_entry()
     stored: Any = field(default=None, compare=False, repr=False)
     # Spent unserializing the value, when the lookup was timed
     deserialize_duration_ns: int = field(default=0, compare=False)
@@ -275,28 +276,29 @@ class ProbabilisticHotCache(ClientWrapper):
         if found is None:
             return self._miss()
 
-        now = int(time.time())
-        if now >= found.expiration + self._max_stale_while_revalidate_seconds:
-            # Past the grace window: nobody managed to revalidate it, so the
-            # value is too stale to serve. Drop it and treat the key as cold,
-            # it has to be detected as hot again.
-            self._clear_hot_cache_if_necessary(key)
-            return self._miss()
-
         must_revalidate = False
-        if now >= found.expiration and now >= found.revalidate_at:
-            # Stale, and nobody is refreshing it: use stale-while-revalidate
-            # to avoid thundering herds. Only one thread gets elected, by
-            # pushing the retry clock forward, while the rest serve the stale
-            # value. If the elected one fails to refresh it, another is
-            # elected once the retry clock arrives, until the grace window
-            # runs out.
-            with self._lock:
-                # Check again in case another thread won the election while
-                # we were waiting for the lock.
-                if now >= found.revalidate_at:
-                    found.revalidate_at = now + self._revalidation_retry_seconds
-                    must_revalidate = True
+        now = int(time.time())
+        # Checked first, so that a fresh value takes a single comparison
+        if now >= found.expiration:
+            if now >= found.expiration + self._max_stale_while_revalidate_seconds:
+                # Past the grace window: nobody managed to revalidate it, so
+                # the value is too stale to serve. Drop it and treat the key
+                # as cold, it has to be detected as hot again.
+                self._clear_hot_cache_if_necessary(key)
+                return self._miss()
+            if now >= found.revalidate_at:
+                # Stale, and nobody is refreshing it: use
+                # stale-while-revalidate to avoid thundering herds. Only one
+                # thread gets elected, by pushing the retry clock forward,
+                # while the rest serve the stale value. If the elected one
+                # fails to refresh it, another is elected once the retry
+                # clock arrives, until the grace window runs out.
+                with self._lock:
+                    # Check again in case another thread won the election
+                    # while we were waiting for the lock.
+                    if now >= found.revalidate_at:
+                        found.revalidate_at = now + self._revalidation_retry_seconds
+                        must_revalidate = True
 
         start_ns = time.time_ns() if timed else 0
         value = found.get_cloned_value()
@@ -304,7 +306,7 @@ class ProbabilisticHotCache(ClientWrapper):
             value,
             must_revalidate,
             found.size,
-            found if must_revalidate else None,
+            found,
             time.time_ns() - start_ns if timed else 0,
         )
 
@@ -327,11 +329,7 @@ class ProbabilisticHotCache(ClientWrapper):
             "misses" if must_revalidate else "hits"
         )
         return HotCacheLookup(
-            value=value,
-            must_revalidate=must_revalidate,
-            size=size,
-            stored=stored,
-            deserialize_duration_ns=deserialize_duration_ns,
+            value, must_revalidate, size, stored, deserialize_duration_ns
         )
 
     def _store_in_hot_cache_if_necessary(
